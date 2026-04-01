@@ -1,5 +1,7 @@
 use zellij_tile::prelude::*;
 
+mod state;
+
 #[derive(Default)]
 struct State;
 
