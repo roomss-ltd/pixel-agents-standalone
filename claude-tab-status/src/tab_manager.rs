@@ -69,7 +69,17 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
         None => base.clone(),
     };
 
-    rename_tab(tab_index as u32, &new_name);
+    // Only rename if the name actually changed — otherwise we create
+    // an infinite loop: rename_tab → TabUpdate → update_all_tab_names → rename_tab → ...
+    let current_name = state
+        .tabs
+        .iter()
+        .find(|t| t.position == tab_index)
+        .map(|t| t.name.as_str());
+
+    if current_name != Some(new_name.as_str()) {
+        rename_tab(tab_index as u32, &new_name);
+    }
 }
 
 /// Update all tabs that have sessions.
