@@ -16,7 +16,7 @@ pub const DONE_TIMEOUT: u64 = 30;
 pub const STALE_TIMEOUT: u64 = 60;
 
 /// Timer tick interval (seconds).
-pub const TIMER_INTERVAL: f64 = 1.0;
+pub const TIMER_INTERVAL: f64 = 5.0;
 
 /// Known status icons — used to strip our own suffixes when detecting base names.
 pub const STATUS_ICONS: &[&str] = &["\u{26A1}", "\u{2699}", "\u{23F3}", "\u{2713}"];

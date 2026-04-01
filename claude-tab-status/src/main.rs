@@ -14,7 +14,6 @@ impl ZellijPlugin for PluginState {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
-            PermissionType::ReadCliPipes,
         ]);
         subscribe(&[
             EventType::TabUpdate,
@@ -31,7 +30,7 @@ impl ZellijPlugin for PluginState {
                 self.tabs = tabs;
                 tab_manager::rebuild_pane_map(self);
                 tab_manager::update_all_tab_names(self);
-                false // no rendering needed — we're invisible
+                false
             }
             Event::PaneUpdate(manifest) => {
                 self.pane_manifest = Some(manifest);
@@ -48,12 +47,10 @@ impl ZellijPlugin for PluginState {
                 false
             }
             Event::PermissionRequestResult(_) => {
-                // Permissions granted — re-subscribe now that we have access.
-                subscribe(&[
-                    EventType::TabUpdate,
-                    EventType::PaneUpdate,
-                    EventType::Timer,
-                ]);
+                // No-op. We already subscribed in load().
+                // DO NOT re-subscribe here — duplicate subscriptions cause
+                // exponential timer growth (each Timer fires N events,
+                // each calling set_timeout, doubling every tick).
                 false
             }
             _ => false,
