@@ -1,5 +1,6 @@
 use zellij_tile::prelude::*;
 
+mod event_handler;
 mod state;
 mod tab_manager;
 
