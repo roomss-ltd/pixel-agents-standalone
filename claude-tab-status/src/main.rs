@@ -1,6 +1,7 @@
 use zellij_tile::prelude::*;
 
 mod state;
+mod tab_manager;
 
 #[derive(Default)]
 struct State;
