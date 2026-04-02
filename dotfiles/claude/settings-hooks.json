@@ -1,0 +1,86 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude/settings-schema.json",
+  "_comment": "Claude Code hooks for claude-tab-status. Replace __HOME__ with your home directory, then merge into ~/.claude/settings.json. The claude-tab-status/install.sh handles this automatically.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.config/zellij/plugins/claude-zj-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
