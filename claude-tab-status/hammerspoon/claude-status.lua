@@ -117,6 +117,23 @@ local function loadSessions()
         end
     end
     table.sort(sessions, function(a, b) return (a.tab_num or 0) < (b.tab_num or 0) end)
+
+    -- Assign display labels: "3" for single panes, "3.1"/"3.2" for multiple panes per tab
+    local tabCounts = {}
+    for _, s in ipairs(sessions) do
+        local t = s.tab_num or 0
+        tabCounts[t] = (tabCounts[t] or 0) + 1
+    end
+    local tabSeen = {}
+    for _, s in ipairs(sessions) do
+        local t = s.tab_num or 0
+        if tabCounts[t] > 1 then
+            tabSeen[t] = (tabSeen[t] or 0) + 1
+            s._display_num = t .. "." .. tabSeen[t]
+        else
+            s._display_num = tostring(t)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -245,8 +262,9 @@ local function redraw()
 
             local mid = y + (ROW_HEIGHT / 2)
 
-            -- Tab number badge
-            local badge_w = 22
+            -- Tab number badge (wider for multi-pane labels like "3.1")
+            local label = s._display_num or tostring(s.tab_num or 0)
+            local badge_w = #label > 2 and 30 or 22
             local badge_h = 18
             canvas:appendElements({
                 type = "rectangle",
@@ -257,7 +275,7 @@ local function redraw()
             canvas:appendElements({
                 type = "text",
                 frame = { x = PX, y = mid - badge_h/2 + 2, w = badge_w, h = badge_h },
-                text = hs.styledtext.new(tostring(s.tab_num or 0), {
+                text = hs.styledtext.new(label, {
                     font = FONT_BOLD, color = badgeFg(activity),
                     paragraphStyle = { alignment = "center" },
                 }),
@@ -329,8 +347,9 @@ local function redraw()
 
             local mid = y + (ROW_HEIGHT_COMPACT / 2)
 
-            -- Tab number badge (smaller for compact rows, +1 to center visually)
-            local badge_w = 20
+            -- Tab number badge (smaller for compact rows, wider for multi-pane labels)
+            local label = s._display_num or tostring(s.tab_num or 0)
+            local badge_w = #label > 2 and 28 or 20
             local badge_h = 16
             canvas:appendElements({
                 type = "rectangle",
@@ -341,7 +360,7 @@ local function redraw()
             canvas:appendElements({
                 type = "text",
                 frame = { x = PX, y = mid - badge_h/2 + 2, w = badge_w, h = badge_h },
-                text = hs.styledtext.new(tostring(s.tab_num or 0), {
+                text = hs.styledtext.new(label, {
                     font = FONT_BOLD, color = badgeFg(activity),
                     paragraphStyle = { alignment = "center" },
                 }),
