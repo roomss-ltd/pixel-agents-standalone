@@ -1,4 +1,5 @@
 use crate::state::{unix_now, Activity, HookPayload, PluginState, SessionInfo};
+use crate::status_writer;
 use crate::tab_manager;
 
 pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
@@ -7,10 +8,11 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     // SessionEnd → remove session, restore tab name.
     if event == "SessionEnd" {
         if let Some(session) = state.sessions.remove(&payload.pane_id) {
-            if let Some((tab_index, _)) = state.pane_to_tab.get(&session.pane_id) {
-                tab_manager::update_tab_name(state, *tab_index);
+            if let Some(&tab_index) = state.pane_to_tab.get(&session.pane_id) {
+                tab_manager::update_tab_name(state, tab_index);
             }
         }
+        status_writer::write_status_file(state);
         return;
     }
 
@@ -35,16 +37,42 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
             last_event_ts: 0,
         });
 
+    let activity_changed = session.activity != activity;
     session.activity = activity;
     session.last_event_ts = unix_now();
     if let Some(sid) = &payload.session_id {
         session.session_id = sid.clone();
     }
 
-    // Update the tab name for the pane that changed.
-    if let Some((tab_index, _)) = state.pane_to_tab.get(&payload.pane_id) {
-        tab_manager::update_tab_name(state, *tab_index);
+    // If pane_id is unknown, rebuild map — handles new panes that
+    // sent a hook event before PaneUpdate arrived.
+    if !state.pane_to_tab.contains_key(&payload.pane_id) {
+        tab_manager::rebuild_pane_map(state);
     }
+
+    // Update only the affected tab — not all tabs.
+    if let Some(&tab_index) = state.pane_to_tab.get(&payload.pane_id) {
+        tab_manager::update_tab_name(state, tab_index);
+    }
+
+    // Write status file on activity transitions (real-time updates).
+    if activity_changed {
+        status_writer::write_status_file(state);
+    }
+}
+
+/// Clear "Done" sessions on the given tab (called when user focuses a tab).
+pub fn clear_done_on_tab(state: &mut PluginState, tab_index: usize) -> bool {
+    let mut changed = false;
+    for session in state.sessions.values_mut() {
+        if session.activity == Activity::Done {
+            if state.pane_to_tab.get(&session.pane_id) == Some(&tab_index) {
+                session.activity = Activity::Idle;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 /// Clean up stale sessions. Returns true if any state changed.

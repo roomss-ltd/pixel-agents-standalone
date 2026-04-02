@@ -94,6 +94,8 @@ impl ZellijPlugin for PluginState {
                 if event_handler::cleanup_stale_sessions(self) {
                     tab_manager::update_all_tab_names(self);
                 }
+                // Always write status file on timer — keeps relative times fresh.
+                status_writer::write_status_file(self);
                 set_timeout(TIMER_INTERVAL);
                 false
             }
