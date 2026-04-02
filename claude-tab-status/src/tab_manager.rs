@@ -1,7 +1,42 @@
+use std::collections::HashSet;
+
 use crate::state::{PluginState, STATUS_ICONS};
 use zellij_tile::prelude::*;
 
-/// Rebuild the pane_id → (tab_index, tab_name) mapping from current tabs + pane manifest.
+/// Returns true if user is in a mode where we must not rename tabs.
+fn is_rename_mode(state: &PluginState) -> bool {
+    matches!(state.input_mode, InputMode::RenameTab | InputMode::RenamePane)
+}
+
+/// Count total non-plugin panes across all tabs.
+pub fn count_terminal_panes(manifest: &PaneManifest) -> usize {
+    manifest
+        .panes
+        .values()
+        .flat_map(|panes| panes.iter())
+        .filter(|p| !p.is_plugin)
+        .count()
+}
+
+/// Refresh tab_base_names from current tab list.
+/// Cheap O(tabs) — only allocates when a base name actually changed.
+pub fn refresh_base_names(state: &mut PluginState) {
+    // Remove entries for tabs that no longer exist.
+    let positions: HashSet<usize> = state.tabs.iter().map(|t| t.position).collect();
+    state.tab_base_names.retain(|k, _| positions.contains(k));
+
+    for tab in &state.tabs {
+        let base = strip_status_suffix(&tab.name);
+        match state.tab_base_names.get(&tab.position) {
+            Some(existing) if existing == &base => {} // unchanged
+            _ => {
+                state.tab_base_names.insert(tab.position, base);
+            }
+        }
+    }
+}
+
+/// Rebuild pane_id → tab_index mapping from current tabs + pane manifest.
 pub fn rebuild_pane_map(state: &mut PluginState) {
     state.pane_to_tab.clear();
 
@@ -11,22 +46,10 @@ pub fn rebuild_pane_map(state: &mut PluginState) {
     };
 
     for tab in &state.tabs {
-        let tab_index = tab.position;
-        let tab_name = &tab.name;
-
-        // Capture base name (strip any status icon suffix we may have added).
-        let base = strip_status_suffix(tab_name);
-        state.tab_base_names.insert(tab_index, base);
-
-        // Map all panes in this tab to the tab.
-        // PaneManifest.panes is keyed by tab_index.
-        if let Some(panes) = manifest.panes.get(&tab_index) {
+        if let Some(panes) = manifest.panes.get(&tab.position) {
             for pane in panes {
                 if !pane.is_plugin {
-                    state.pane_to_tab.insert(
-                        pane.id,
-                        (tab_index, tab_name.clone()),
-                    );
+                    state.pane_to_tab.insert(pane.id, tab.position);
                 }
             }
         }
@@ -46,6 +69,11 @@ fn strip_status_suffix(name: &str) -> String {
 
 /// Determine the highest-priority icon for a given tab and rename it.
 pub fn update_tab_name(state: &PluginState, tab_index: usize) {
+    // Never interfere while user is typing a tab/pane name.
+    if is_rename_mode(state) {
+        return;
+    }
+
     let base = match state.tab_base_names.get(&tab_index) {
         Some(b) => b,
         None => return,
@@ -55,13 +83,7 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
     let best_activity = state
         .sessions
         .values()
-        .filter(|s| {
-            state
-                .pane_to_tab
-                .get(&s.pane_id)
-                .map(|(idx, _)| *idx == tab_index)
-                .unwrap_or(false)
-        })
+        .filter(|s| state.pane_to_tab.get(&s.pane_id) == Some(&tab_index))
         .max_by_key(|s| s.activity.priority());
 
     let new_name = match best_activity.and_then(|s| s.activity.icon()) {
@@ -69,8 +91,8 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
         None => base.clone(),
     };
 
-    // Only rename if the name actually changed — otherwise we create
-    // an infinite loop: rename_tab → TabUpdate → update_all_tab_names → rename_tab → ...
+    // Only rename if the name actually changed — avoids triggering
+    // a TabUpdate cascade from our own renames.
     let current_name = state
         .tabs
         .iter()
@@ -78,11 +100,12 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
         .map(|t| t.name.as_str());
 
     if current_name != Some(new_name.as_str()) {
-        rename_tab(tab_index as u32, &new_name);
+        // rename_tab uses 1-based positions, but TabInfo.position is 0-based.
+        rename_tab((tab_index + 1) as u32, &new_name);
     }
 }
 
-/// Update all tabs that have sessions.
+/// Update all tabs that have tracked base names.
 pub fn update_all_tab_names(state: &PluginState) {
     let tab_indices: Vec<usize> = state.tab_base_names.keys().copied().collect();
     for tab_index in tab_indices {

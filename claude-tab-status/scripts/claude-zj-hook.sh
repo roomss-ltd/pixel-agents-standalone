@@ -10,25 +10,17 @@
 INPUT=$(cat 2>/dev/null) || exit 0
 [ -z "$INPUT" ] && exit 0
 
-# Extract fields with jq (required dependency), suppress errors
-HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null) || exit 0
-[ -z "$HOOK_EVENT" ] && exit 0
-
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || exit 0
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null) || exit 0
-
-# Build compact JSON payload, suppress errors
-PAYLOAD=$(jq -nc \
-  --arg pane_id "$ZELLIJ_PANE_ID" \
-  --arg session_id "$SESSION_ID" \
-  --arg hook_event "$HOOK_EVENT" \
-  --arg tool_name "$TOOL_NAME" \
-  '{
-    pane_id: ($pane_id | tonumber),
-    session_id: (if $session_id == "" then null else $session_id end),
-    hook_event: $hook_event,
-    tool_name: (if $tool_name == "" then null else $tool_name end)
-  }' 2>/dev/null) || exit 0
+# Single jq invocation: validate hook_event, reshape payload
+PAYLOAD=$(echo "$INPUT" | jq -c --arg pid "$ZELLIJ_PANE_ID" '
+  select(.hook_event_name != null and .hook_event_name != "") |
+  {
+    pane_id: ($pid | tonumber),
+    session_id: .session_id,
+    hook_event: .hook_event_name,
+    tool_name: .tool_name
+  }
+' 2>/dev/null) || exit 0
+[ -z "$PAYLOAD" ] && exit 0
 
 # Send to plugin via zellij pipe, suppress all output and errors
 zellij pipe --name "claude-tab-status" -- "$PAYLOAD" 2>/dev/null >/dev/null || exit 0
