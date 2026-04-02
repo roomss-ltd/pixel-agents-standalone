@@ -6,10 +6,20 @@ use crate::state::{unix_now, Activity, PluginState};
 /// Write aggregated session status to /tmp/claude-tab-status/{session}.json.
 /// Uses run_command to execute a bash write-then-mv for atomicity.
 pub fn write_status_file(state: &PluginState) {
-    let session_name = if state.zellij_session_name.is_empty() {
+    let raw_name = if state.zellij_session_name.is_empty() {
         "default"
     } else {
         &state.zellij_session_name
+    };
+    // Sanitize session name for safe use in file paths and shell commands.
+    let session_name: String = raw_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let session_name = if session_name.is_empty() {
+        "default".to_string()
+    } else {
+        session_name
     };
 
     let json = build_status_json(state);
@@ -74,7 +84,7 @@ fn build_status_json(state: &PluginState) -> String {
         let detail_json = if detail.is_empty() {
             "null".to_string()
         } else {
-            format!("\"{}\"", detail)
+            format!("\"{}\"", escape_json_string(&detail))
         };
 
         sessions_json.push(format!(

@@ -24,6 +24,7 @@ local CORNER_RADIUS = 8
 -- State
 local canvas = nil
 local pathwatcher = nil
+local hotkey = nil
 local visible = true
 local expanded = false
 local sessions = {}
@@ -254,14 +255,16 @@ function M.start()
     pathwatcher:start()
 
     -- Bind hotkey: Ctrl+Option+C
-    hs.hotkey.bind({ "ctrl", "alt" }, "c", toggleVisibility)
+    hotkey = hs.hotkey.bind({ "ctrl", "alt" }, "c", toggleVisibility)
 end
 
 function M.stop()
+    if hotkey then hotkey:delete() end
     if pathwatcher then pathwatcher:stop() end
     if canvas then canvas:delete() end
     canvas = nil
     pathwatcher = nil
+    hotkey = nil
 end
 
 -- Auto-start
