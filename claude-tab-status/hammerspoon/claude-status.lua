@@ -315,7 +315,7 @@ local function redraw()
         end
 
         -- === Inactive tier (compact, dimmed rows) ===
-        local DIM_WHITE = { red = 1, green = 1, blue = 1, alpha = 0.55 }
+        local DIM_WHITE = { red = 1, green = 1, blue = 1, alpha = 0.65 }
         for i, s in ipairs(inactiveSessions) do
             local activity = s.activity or "Idle"
 
@@ -357,12 +357,10 @@ local function redraw()
                 text = hs.styledtext.new(name, { font = FONT_SMALL, color = DIM_WHITE }),
             })
 
-            -- Status (right-aligned, dimmed)
+            -- Status (right-aligned, uniform dimmed green for all inactive)
             local icon = s.icon or ""
             local detail = s.detail or ""
-            local sc = ACTIVITY_COLOR[activity] or DIM
-            -- Dim the activity color for inactive tier
-            sc = { red = sc.red, green = sc.green, blue = sc.blue, alpha = (sc.alpha or 1) * 0.6 }
+            local sc = { red = 0.45, green = 0.82, blue = 0.50, alpha = 0.65 }
             local has_detail = detail ~= nil and detail ~= "" and detail ~= "null"
             local status
             if has_detail then
