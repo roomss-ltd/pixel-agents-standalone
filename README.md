@@ -18,7 +18,8 @@ The `dotfiles/` directory contains a complete, reproducible dev environment conf
 
 | Component | Purpose |
 |-----------|---------|
-| **Ghostty** | Terminal emulator config with Catppuccin Mocha theme |
+| **Zsh + Oh My Zsh** | Shell with Powerlevel10k prompt, autosuggestions, syntax highlighting |
+| **Ghostty** | Terminal emulator config with Catppuccin Mocha theme, Monaco font |
 | **Zellij** | Terminal multiplexer config with custom keybinds and mocha-custom theme |
 | **zjstatus** | Zellij status bar plugin with Catppuccin Mocha palette |
 | **room** | Fuzzy tab switcher plugin for Zellij (`Ctrl+R`) |
@@ -95,7 +96,9 @@ Multiple Claude Code panes in the same tab display as `3.1`, `3.2`, etc.
 ```
 dotfiles/
   install.sh                      # One-command setup script
-  ghostty/config                  # Catppuccin Mocha theme, macOS option-as-alt
+  zsh/.zshrc                      # Oh My Zsh + p10k + plugins config (template)
+  zsh/.p10k.zsh                   # Powerlevel10k prompt theme (nerdfont-v3 mode)
+  ghostty/config                  # Catppuccin Mocha theme, Monaco font, macOS option-as-alt
   zellij/config.kdl               # Keybinds, mocha-custom theme, plugin loading
   zellij/layouts/default.kdl      # zjstatus bar with Catppuccin Mocha palette
   claude/settings-hooks.json      # Claude Code hooks template for claude-tab-status
