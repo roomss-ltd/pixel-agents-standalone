@@ -13,7 +13,9 @@ local OFFSET_Y = 0
 local PILL_WIDTH = 120
 local EXPANDED_WIDTH = 300
 local ROW_HEIGHT = 30
+local ROW_HEIGHT_COMPACT = 26
 local HEADER_HEIGHT = 30
+local SEPARATOR_HEIGHT = 16
 local CORNER_RADIUS = 12
 local PX = 14
 
@@ -126,13 +128,47 @@ local function screenBottomRight()
     return f.x + f.w, f.y + f.h
 end
 
+-- Split sessions into active (needs attention) and inactive (done/idle) tiers.
+local function partitionSessions()
+    local active, inactive = {}, {}
+    for _, s in ipairs(sessions) do
+        local a = s.activity or "Init"
+        if a == "Thinking" or a == "Tool" or a == "Waiting" or a == "Init" then
+            table.insert(active, s)
+        else
+            table.insert(inactive, s)
+        end
+    end
+    -- Sort inactive by most recent first (detail contains elapsed time like "38s ago")
+    -- Parse the numeric portion to sort properly
+    table.sort(inactive, function(a, b)
+        local function parseElapsed(d)
+            if not d or d == "" or d == "null" then return 999999 end
+            local n, unit = d:match("^(%d+)(%a)")
+            if not n then return 999999 end
+            n = tonumber(n)
+            if unit == "s" then return n
+            elseif unit == "m" then return n * 60
+            elseif unit == "h" then return n * 3600
+            end
+            return 999999
+        end
+        return parseElapsed(a.detail) < parseElapsed(b.detail)
+    end)
+    return active, inactive
+end
+
 local function redraw()
     if not canvas then return end
 
     local w = expanded and EXPANDED_WIDTH or PILL_WIDTH
+    local activeSessions, inactiveSessions = partitionSessions()
     local h = HEADER_HEIGHT
     if expanded and #sessions > 0 then
-        h = HEADER_HEIGHT + (#sessions * ROW_HEIGHT) + 6
+        local activeH = #activeSessions * ROW_HEIGHT
+        local sepH = (#activeSessions > 0 and #inactiveSessions > 0) and SEPARATOR_HEIGHT or 0
+        local inactiveH = #inactiveSessions * ROW_HEIGHT_COMPACT
+        h = HEADER_HEIGHT + activeH + sepH + inactiveH + 6
     end
 
     local cx, cy
@@ -194,32 +230,22 @@ local function redraw()
         if not any then st = hs.styledtext.new("idle", { font = FONT_HEADER, color = DIM }) end
         canvas:appendElements({ type = "text", frame = { x = PX, y = 7, w = w - PX*2, h = 20 }, text = st })
 
-        -- Session rows
-        for i, s in ipairs(sessions) do
-            local y = HEADER_HEIGHT + (i - 1) * ROW_HEIGHT
+        -- === Active tier (full-size rows) ===
+        local y = HEADER_HEIGHT
+        for i, s in ipairs(activeSessions) do
             local activity = s.activity or "Init"
-            local isActive = (activity == "Thinking" or activity == "Tool" or activity == "Waiting")
 
-            -- Alternating row backgrounds + highlight for active rows
-            local rowBg
-            if isActive then
-                rowBg = ROW_HIGHLIGHT
-            elseif i % 2 == 0 then
-                rowBg = ROW_EVEN
-            end
-            if rowBg then
-                canvas:appendElements({
-                    type = "rectangle",
-                    frame = { x = 4, y = y + 1, w = w - 8, h = ROW_HEIGHT - 1 },
-                    fillColor = rowBg, strokeWidth = 0,
-                    roundedRectRadii = { xRadius = 6, yRadius = 6 },
-                })
-            end
+            -- Highlight for active rows
+            canvas:appendElements({
+                type = "rectangle",
+                frame = { x = 4, y = y + 1, w = w - 8, h = ROW_HEIGHT - 1 },
+                fillColor = ROW_HIGHLIGHT, strokeWidth = 0,
+                roundedRectRadii = { xRadius = 6, yRadius = 6 },
+            })
 
-            -- All elements vertically centered in ROW_HEIGHT
             local mid = y + (ROW_HEIGHT / 2)
 
-            -- Tab number badge — colored by activity
+            -- Tab number badge
             local badge_w = 22
             local badge_h = 18
             canvas:appendElements({
@@ -237,17 +263,17 @@ local function redraw()
                 }),
             })
 
-            -- Tab name
+            -- Tab name (+1 to compensate for text top-padding)
             local text_h = 18
             local name = s.tab_name or "?"
             if #name > 22 then name = name:sub(1, 20) .. "\u{2026}" end
             canvas:appendElements({
                 type = "text",
-                frame = { x = PX + badge_w + 8, y = mid - text_h/2, w = w - 160, h = text_h },
+                frame = { x = PX + badge_w + 8, y = mid - text_h/2 + 2, w = w - 160, h = text_h },
                 text = hs.styledtext.new(name, { font = FONT_BODY, color = WHITE }),
             })
 
-            -- Status (right-aligned)
+            -- Status (right-aligned, +1 to match tab name)
             local icon = s.icon or ""
             local detail = s.detail or ""
             local sc = ACTIVITY_COLOR[activity] or DIM
@@ -262,12 +288,100 @@ local function redraw()
             end
             canvas:appendElements({
                 type = "text",
-                frame = { x = w - 116, y = mid - text_h/2, w = 102, h = text_h },
+                frame = { x = w - 116, y = mid - text_h/2 + 2, w = 102, h = text_h },
                 text = hs.styledtext.new(status, {
                     font = FONT_SMALL, color = sc,
                     paragraphStyle = { alignment = "right" },
                 }),
             })
+
+            y = y + ROW_HEIGHT
+        end
+
+        -- === Separator between tiers ===
+        if #activeSessions > 0 and #inactiveSessions > 0 then
+            local sepY = y + math.floor(SEPARATOR_HEIGHT / 2)
+            canvas:appendElements({
+                type = "segments",
+                coordinates = {
+                    { x = PX + 4, y = sepY },
+                    { x = w - PX - 4, y = sepY },
+                },
+                strokeColor = { red = 1, green = 1, blue = 1, alpha = 0.50 },
+                strokeWidth = 0.5,
+                strokeDashPattern = { 4, 3 },
+            })
+            y = y + SEPARATOR_HEIGHT
+        end
+
+        -- === Inactive tier (compact, dimmed rows) ===
+        local DIM_WHITE = { red = 1, green = 1, blue = 1, alpha = 0.55 }
+        for i, s in ipairs(inactiveSessions) do
+            local activity = s.activity or "Idle"
+
+            -- Uniform subtle background for all inactive rows
+            canvas:appendElements({
+                type = "rectangle",
+                frame = { x = 4, y = y + 1, w = w - 8, h = ROW_HEIGHT_COMPACT - 1 },
+                fillColor = ROW_EVEN, strokeWidth = 0,
+                roundedRectRadii = { xRadius = 6, yRadius = 6 },
+            })
+
+            local mid = y + (ROW_HEIGHT_COMPACT / 2)
+
+            -- Tab number badge (smaller for compact rows, +1 to center visually)
+            local badge_w = 20
+            local badge_h = 16
+            canvas:appendElements({
+                type = "rectangle",
+                frame = { x = PX, y = mid - badge_h/2 + 1, w = badge_w, h = badge_h },
+                fillColor = badgeBg(activity), strokeWidth = 0,
+                roundedRectRadii = { xRadius = 4, yRadius = 4 },
+            })
+            canvas:appendElements({
+                type = "text",
+                frame = { x = PX, y = mid - badge_h/2 + 2, w = badge_w, h = badge_h },
+                text = hs.styledtext.new(tostring(s.tab_num or 0), {
+                    font = FONT_BOLD, color = badgeFg(activity),
+                    paragraphStyle = { alignment = "center" },
+                }),
+            })
+
+            -- Tab name (dimmed, +2 to compensate for text top-padding)
+            local text_h = 16
+            local name = s.tab_name or "?"
+            if #name > 22 then name = name:sub(1, 20) .. "\u{2026}" end
+            canvas:appendElements({
+                type = "text",
+                frame = { x = PX + badge_w + 8, y = mid - text_h/2 + 2, w = w - 150, h = text_h },
+                text = hs.styledtext.new(name, { font = FONT_SMALL, color = DIM_WHITE }),
+            })
+
+            -- Status (right-aligned, dimmed)
+            local icon = s.icon or ""
+            local detail = s.detail or ""
+            local sc = ACTIVITY_COLOR[activity] or DIM
+            -- Dim the activity color for inactive tier
+            sc = { red = sc.red, green = sc.green, blue = sc.blue, alpha = (sc.alpha or 1) * 0.6 }
+            local has_detail = detail ~= nil and detail ~= "" and detail ~= "null"
+            local status
+            if has_detail then
+                local d = detail
+                if #d > 10 then d = d:sub(1, 8) .. "\u{2026}" end
+                status = icon .. " " .. d
+            else
+                status = icon .. " " .. activity
+            end
+            canvas:appendElements({
+                type = "text",
+                frame = { x = w - 110, y = mid - text_h/2 + 2, w = 96, h = text_h },
+                text = hs.styledtext.new(status, {
+                    font = FONT_SMALL, color = sc,
+                    paragraphStyle = { alignment = "right" },
+                }),
+            })
+
+            y = y + ROW_HEIGHT_COMPACT
         end
     end
 
@@ -291,13 +405,35 @@ end
 
 local function dismissSessionAtY(mouseY)
     if not expanded or #sessions == 0 then return false end
+    local activeSessions, inactiveSessions = partitionSessions()
     local f = canvas:frame()
     local localY = mouseY - f.y
-    -- Only target row area, not header
     if localY < HEADER_HEIGHT then return false end
-    local idx = math.floor((localY - HEADER_HEIGHT) / ROW_HEIGHT) + 1
-    if idx < 1 or idx > #sessions then return false end
-    local s = sessions[idx]
+
+    -- Walk the layout to find which session was hit
+    local y = HEADER_HEIGHT
+    local s = nil
+
+    -- Check active tier
+    for _, sess in ipairs(activeSessions) do
+        if localY >= y and localY < y + ROW_HEIGHT then s = sess; break end
+        y = y + ROW_HEIGHT
+    end
+
+    -- Separator
+    if not s and #activeSessions > 0 and #inactiveSessions > 0 then
+        y = y + SEPARATOR_HEIGHT
+    end
+
+    -- Check inactive tier
+    if not s then
+        for _, sess in ipairs(inactiveSessions) do
+            if localY >= y and localY < y + ROW_HEIGHT_COMPACT then s = sess; break end
+            y = y + ROW_HEIGHT_COMPACT
+        end
+    end
+
+    if not s then return false end
     if not s._zj_session then return false end
 
     -- 1. Try signaling the live plugin (works if Zellij session is alive)
