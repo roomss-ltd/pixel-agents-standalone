@@ -13,9 +13,6 @@ pub fn unix_now() -> u64 {
 /// How long a "Done" status lingers before clearing (seconds).
 pub const DONE_TIMEOUT: u64 = 30;
 
-/// How long before a session with no events is considered stale (seconds).
-pub const STALE_TIMEOUT: u64 = 120;
-
 /// Timer tick interval (seconds).
 pub const TIMER_INTERVAL: f64 = 5.0;
 
@@ -63,6 +60,8 @@ pub struct SessionInfo {
     pub pane_id: u32,
     pub activity: Activity,
     pub last_event_ts: u64,
+    /// Last tool name used — carried across Tool→Thinking transitions.
+    pub last_tool_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

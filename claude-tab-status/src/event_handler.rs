@@ -35,7 +35,19 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
             pane_id: payload.pane_id,
             activity: Activity::Init,
             last_event_ts: 0,
+            last_tool_name: None,
         });
+
+    // Track last tool name across transitions.
+    match &activity {
+        Activity::Tool(name) => session.last_tool_name = Some(name.clone()),
+        Activity::Init => session.last_tool_name = None,
+        _ => {} // Thinking/Done/Waiting/Idle preserve last_tool_name
+    }
+    // UserPromptSubmit → Thinking resets tool context (new turn).
+    if event == "UserPromptSubmit" {
+        session.last_tool_name = None;
+    }
 
     let activity_changed = session.activity != activity;
     session.activity = activity;
@@ -76,12 +88,13 @@ pub fn clear_done_on_tab(state: &mut PluginState, tab_index: usize) -> bool {
 }
 
 /// Clean up stale sessions. Returns true if any state changed.
+/// Done → Idle transition still happens (for tab icon clearing),
+/// but Idle sessions persist until SessionEnd — the overlay keeps showing them.
 pub fn cleanup_stale_sessions(state: &mut PluginState) -> bool {
     let now = unix_now();
     let mut changed = false;
-    let mut to_remove: Vec<u32> = Vec::new();
 
-    for (pane_id, session) in state.sessions.iter_mut() {
+    for (_pane_id, session) in state.sessions.iter_mut() {
         let elapsed = now.saturating_sub(session.last_event_ts);
         match session.activity {
             Activity::Done => {
@@ -90,18 +103,8 @@ pub fn cleanup_stale_sessions(state: &mut PluginState) -> bool {
                     changed = true;
                 }
             }
-            Activity::Idle => {
-                if elapsed >= crate::state::STALE_TIMEOUT {
-                    to_remove.push(*pane_id);
-                    changed = true;
-                }
-            }
             _ => {}
         }
-    }
-
-    for pane_id in to_remove {
-        state.sessions.remove(&pane_id);
     }
 
     changed

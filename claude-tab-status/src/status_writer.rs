@@ -47,18 +47,20 @@ fn build_status_json(state: &PluginState) -> String {
     let mut count_done: u32 = 0;
 
     for session in state.sessions.values() {
-        // Resolve tab name for this session.
-        let tab_name = state
-            .pane_to_tab
-            .get(&session.pane_id)
-            .and_then(|idx| state.tab_base_names.get(idx))
+        // Resolve tab name and index for this session.
+        let tab_index = state.pane_to_tab.get(&session.pane_id).copied();
+        let tab_name = tab_index
+            .and_then(|idx| state.tab_base_names.get(&idx))
             .map(|s| s.as_str())
             .unwrap_or("unknown");
+        // Zellij tab positions are 0-based; display as 1-based.
+        let tab_num = tab_index.map(|i| i + 1).unwrap_or(0);
 
         let (icon, detail, activity_str) = match &session.activity {
             Activity::Thinking => {
                 count_active += 1;
-                ("\u{25CF}", String::new(), "Thinking")
+                let detail = session.last_tool_name.clone().unwrap_or_default();
+                ("\u{25CF}", detail, "Thinking")
             }
             Activity::Tool(name) => {
                 count_active += 1;
@@ -78,7 +80,12 @@ fn build_status_json(state: &PluginState) -> String {
                 count_active += 1;
                 ("\u{25CB}", String::new(), "Init")
             }
-            Activity::Idle => continue, // Don't include idle sessions in output
+            Activity::Idle => {
+                count_done += 1;
+                let elapsed = now.saturating_sub(session.last_event_ts);
+                let detail = format_elapsed(elapsed);
+                ("\u{2713}", detail, "Idle")
+            }
         };
 
         let detail_json = if detail.is_empty() {
@@ -88,7 +95,9 @@ fn build_status_json(state: &PluginState) -> String {
         };
 
         sessions_json.push(format!(
-            "{{\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\"}}",
+            "{{\"pane_id\":{},\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\"}}",
+            session.pane_id,
+            tab_num,
             escape_json_string(tab_name),
             icon,
             detail_json,
