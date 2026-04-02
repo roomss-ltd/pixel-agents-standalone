@@ -50,7 +50,8 @@ if [ -f "$ZELLIJ_DIR/config.kdl" ] && ! diff -q "$SCRIPT_DIR/zellij/config.kdl" 
     echo "  Backing up existing config.kdl"
     cp "$ZELLIJ_DIR/config.kdl" "$ZELLIJ_DIR/config.kdl.bak"
 fi
-cp "$SCRIPT_DIR/zellij/config.kdl" "$ZELLIJ_DIR/config.kdl"
+# Replace __HOME__ placeholder with actual home directory
+sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/zellij/config.kdl" > "$ZELLIJ_DIR/config.kdl"
 cp "$SCRIPT_DIR/zellij/layouts/default.kdl" "$ZELLIJ_DIR/layouts/default.kdl"
 echo "  Installed."
 
@@ -97,19 +98,15 @@ else
     echo "  WARNING: claude-tab-status/install.sh not found — skipping."
 fi
 
-# ── 6. Claude Code hooks ─────────────────────────────────────────────
-echo "[6/6] Claude Code hooks..."
+# ── 6. Verify Claude Code hooks ──────────────────────────────────────
+echo "[6/6] Verifying Claude Code hooks..."
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-HOOK_SCRIPT="$ZELLIJ_DIR/plugins/claude-zj-hook.sh"
 
-if [ -f "$CLAUDE_SETTINGS" ]; then
-    echo "  Claude settings already exist — hooks were registered by claude-tab-status installer."
+if [ -f "$CLAUDE_SETTINGS" ] && jq -e '.hooks.PreToolUse' "$CLAUDE_SETTINGS" &>/dev/null; then
+    echo "  Hooks registered successfully."
 else
-    echo "  No existing settings.json — creating from template."
-    mkdir -p "$HOME/.claude"
-    # Rewrite ~ to absolute path in the template
-    sed "s|~/.config/zellij/plugins/claude-zj-hook.sh|$HOOK_SCRIPT|g" \
-        "$SCRIPT_DIR/claude/settings-hooks.json" > "$CLAUDE_SETTINGS"
+    echo "  WARNING: Hooks not found in $CLAUDE_SETTINGS"
+    echo "  You may need to manually merge dotfiles/claude/settings-hooks.json into your settings."
 fi
 
 echo ""
