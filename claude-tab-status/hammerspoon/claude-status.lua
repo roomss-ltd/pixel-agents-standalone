@@ -16,6 +16,7 @@ local ROW_HEIGHT = 30
 local ROW_HEIGHT_COMPACT = 26
 local HEADER_HEIGHT = 30
 local SEPARATOR_HEIGHT = 16
+local ROW_GAP = 4
 local CORNER_RADIUS = 12
 local PX = 14
 
@@ -43,6 +44,23 @@ local ACTIVITY_COLOR = {
     Idle     = { red = 0.45, green = 0.82, blue = 0.50, alpha = 0.5 },
 }
 
+-- Row background tinted by activity color
+local function rowBg(activity, alpha)
+    local c = ACTIVITY_COLOR[activity]
+    if c then
+        return { red = c.red, green = c.green, blue = c.blue, alpha = alpha or 0.10 }
+    end
+    return { red = 1, green = 1, blue = 1, alpha = 0.04 }
+end
+
+local function rowBorder(activity, alpha)
+    local c = ACTIVITY_COLOR[activity]
+    if c then
+        return { red = c.red, green = c.green, blue = c.blue, alpha = alpha or 0.25 }
+    end
+    return { red = 1, green = 1, blue = 1, alpha = 0.08 }
+end
+
 -- Badge gets tinted by activity color (low alpha)
 local function badgeBg(activity)
     local c = ACTIVITY_COLOR[activity]
@@ -65,6 +83,20 @@ local PILL_ICONS = {
     { key = "waiting", icon = "\u{23F8}", color = ACTIVITY_COLOR.Waiting },
     { key = "done",    icon = "\u{2713}", color = ACTIVITY_COLOR.Done },
 }
+
+-- Spinner animation
+local SPINNER_FRAMES = { "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280F}" }
+local spinnerIndex = 1
+local spinnerTimer = nil
+
+-- Exit code flash: pane_id -> { color, expires_at }
+local flashState = {}
+local FLASH_DURATION = 1.5
+local FLASH_GREEN = { red = 0.30, green = 0.90, blue = 0.40, alpha = 0.25 }
+local FLASH_RED   = { red = 0.95, green = 0.30, blue = 0.30, alpha = 0.25 }
+
+-- Previous activity state for detecting transitions
+local prevActivities = {}  -- pane_id -> activity
 
 -- State
 local canvas = nil
@@ -134,6 +166,28 @@ local function loadSessions()
             s._display_num = tostring(t)
         end
     end
+
+    -- Detect activity transitions for exit code flash
+    local now2 = hs.timer.secondsSinceEpoch()
+    local newActivities = {}
+    for _, s in ipairs(sessions) do
+        local id = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+        local activity = s.activity or "Init"
+        local prev = prevActivities[id]
+        newActivities[id] = activity
+        -- Flash when transitioning from active state to Done/Idle
+        if prev and prev ~= activity then
+            if (activity == "Done" or activity == "Idle") and (prev == "Thinking" or prev == "Tool" or prev == "Waiting") then
+                flashState[id] = { color = FLASH_GREEN, expires = now2 + FLASH_DURATION }
+            end
+        end
+    end
+    prevActivities = newActivities
+
+    -- Clean up expired flashes
+    for id, f in pairs(flashState) do
+        if now2 > f.expires then flashState[id] = nil end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -182,9 +236,9 @@ local function redraw()
     local activeSessions, inactiveSessions = partitionSessions()
     local h = HEADER_HEIGHT
     if expanded and #sessions > 0 then
-        local activeH = #activeSessions * ROW_HEIGHT
+        local activeH = #activeSessions * (ROW_HEIGHT + ROW_GAP)
         local sepH = (#activeSessions > 0 and #inactiveSessions > 0) and SEPARATOR_HEIGHT or 0
-        local inactiveH = #inactiveSessions * ROW_HEIGHT_COMPACT
+        local inactiveH = #inactiveSessions * (ROW_HEIGHT_COMPACT + ROW_GAP)
         h = HEADER_HEIGHT + activeH + sepH + inactiveH + 6
     end
 
@@ -214,8 +268,8 @@ local function redraw()
         trackMouseUp = true,
     })
 
-    if not expanded then
-        -- === COLLAPSED PILL — summary with colored icons ===
+    -- Build header counts (centered)
+    local function buildHeaderCounts()
         local st = hs.styledtext.new("")
         local any = false
         for _, e in ipairs(PILL_ICONS) do
@@ -228,35 +282,43 @@ local function redraw()
             end
         end
         if not any then st = hs.styledtext.new("idle", { font = FONT_HEADER, color = DIM }) end
-        canvas:appendElements({ type = "text", frame = { x = PX, y = 7, w = w - PX*2, h = 20 }, text = st })
+        st = st:setStyle({ paragraphStyle = { alignment = "center" } }, 1, #tostring(st))
+        return st
+    end
+
+    -- Spinner element (far left, separate from counts)
+    local function drawSpinner()
+        if (counts.active or 0) > 0 then
+            local frame = SPINNER_FRAMES[spinnerIndex] or SPINNER_FRAMES[1]
+            canvas:appendElements({
+                type = "text",
+                frame = { x = PX, y = 7, w = 20, h = 20 },
+                text = hs.styledtext.new(frame, { font = FONT_HEADER, color = ACTIVITY_COLOR.Thinking }),
+            })
+        end
+    end
+
+    if not expanded then
+        -- === COLLAPSED PILL ===
+        drawSpinner()
+        canvas:appendElements({ type = "text", frame = { x = 0, y = 7, w = w, h = 20 }, text = buildHeaderCounts() })
     else
         -- === EXPANDED — summary header + session rows ===
-
-        -- Header: show pill-style summary instead of "N sessions"
-        local st = hs.styledtext.new("")
-        local any = false
-        for _, e in ipairs(PILL_ICONS) do
-            local n = counts[e.key] or 0
-            if n > 0 then
-                if any then st = st .. hs.styledtext.new("  ", { font = FONT_HEADER, color = DIM }) end
-                st = st .. hs.styledtext.new(e.icon .. " ", { font = FONT_HEADER, color = e.color })
-                st = st .. hs.styledtext.new(tostring(n), { font = FONT_HEADER, color = WHITE })
-                any = true
-            end
-        end
-        if not any then st = hs.styledtext.new("idle", { font = FONT_HEADER, color = DIM }) end
-        canvas:appendElements({ type = "text", frame = { x = PX, y = 7, w = w - PX*2, h = 20 }, text = st })
+        drawSpinner()
+        canvas:appendElements({ type = "text", frame = { x = 0, y = 7, w = w, h = 20 }, text = buildHeaderCounts() })
 
         -- === Active tier (full-size rows) ===
         local y = HEADER_HEIGHT
         for i, s in ipairs(activeSessions) do
             local activity = s.activity or "Init"
 
-            -- Highlight for active rows
+            -- Activity-tinted row background
+            local rowX, rowW = 8, w - 16
             canvas:appendElements({
                 type = "rectangle",
-                frame = { x = 4, y = y + 1, w = w - 8, h = ROW_HEIGHT - 1 },
-                fillColor = ROW_HIGHLIGHT, strokeWidth = 0,
+                frame = { x = rowX, y = y + 1, w = rowW, h = ROW_HEIGHT - 1 },
+                fillColor = rowBg(activity, 0.12),
+                strokeColor = rowBorder(activity, 0.25), strokeWidth = 0.5,
                 roundedRectRadii = { xRadius = 6, yRadius = 6 },
             })
 
@@ -313,7 +375,19 @@ local function redraw()
                 }),
             })
 
-            y = y + ROW_HEIGHT
+            -- Exit code flash overlay
+            local sid = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+            local flash = flashState[sid]
+            if flash then
+                canvas:appendElements({
+                    type = "rectangle",
+                    frame = { x = rowX, y = y + 1, w = rowW, h = ROW_HEIGHT - 1 },
+                    fillColor = flash.color, strokeWidth = 0,
+                    roundedRectRadii = { xRadius = 6, yRadius = 6 },
+                })
+            end
+
+            y = y + ROW_HEIGHT + ROW_GAP
         end
 
         -- === Separator between tiers ===
@@ -337,11 +411,12 @@ local function redraw()
         for i, s in ipairs(inactiveSessions) do
             local activity = s.activity or "Idle"
 
-            -- Uniform subtle background for all inactive rows
+            -- Activity-tinted row background (dimmer for inactive)
             canvas:appendElements({
                 type = "rectangle",
-                frame = { x = 4, y = y + 1, w = w - 8, h = ROW_HEIGHT_COMPACT - 1 },
-                fillColor = ROW_EVEN, strokeWidth = 0,
+                frame = { x = 8, y = y + 1, w = w - 16, h = ROW_HEIGHT_COMPACT - 1 },
+                fillColor = rowBg(activity, 0.06),
+                strokeColor = rowBorder(activity, 0.12), strokeWidth = 0.5,
                 roundedRectRadii = { xRadius = 6, yRadius = 6 },
             })
 
@@ -398,12 +473,39 @@ local function redraw()
                 }),
             })
 
-            y = y + ROW_HEIGHT_COMPACT
+            -- Exit code flash overlay
+            local sid = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+            local flash = flashState[sid]
+            if flash then
+                canvas:appendElements({
+                    type = "rectangle",
+                    frame = { x = 8, y = y + 1, w = w - 16, h = ROW_HEIGHT_COMPACT - 1 },
+                    fillColor = flash.color, strokeWidth = 0,
+                    roundedRectRadii = { xRadius = 6, yRadius = 6 },
+                })
+            end
+
+            y = y + ROW_HEIGHT_COMPACT + ROW_GAP
         end
     end
 
     -- Hide entirely when no sessions, show when there are
     if visible and #sessions > 0 then canvas:show() else canvas:hide() end
+end
+
+-- Manage animation timers based on whether active sessions exist
+local function updateSpinnerTimer()
+    local hasActive = (counts.active or 0) > 0
+    if hasActive and not spinnerTimer then
+        spinnerTimer = hs.timer.doEvery(0.08, function()
+            spinnerIndex = (spinnerIndex % #SPINNER_FRAMES) + 1
+            redraw()
+        end)
+    elseif not hasActive and spinnerTimer then
+        spinnerTimer:stop(); spinnerTimer = nil
+        spinnerIndex = 1
+    end
+
 end
 
 ---------------------------------------------------------------------------
@@ -412,12 +514,12 @@ end
 
 local function onFileChange()
     if os.time() < ignoreUpdatesUntil then return end
-    loadSessions(); redraw()
+    loadSessions(); redraw(); updateSpinnerTimer()
 end
 
 local function toggleVisibility()
     visible = not visible
-    if visible then loadSessions(); redraw(); canvas:show() else canvas:hide() end
+    if visible then loadSessions(); redraw(); updateSpinnerTimer(); canvas:show() else canvas:hide(); updateSpinnerTimer() end
 end
 
 local function dismissSessionAtY(mouseY)
@@ -434,7 +536,7 @@ local function dismissSessionAtY(mouseY)
     -- Check active tier
     for _, sess in ipairs(activeSessions) do
         if localY >= y and localY < y + ROW_HEIGHT then s = sess; break end
-        y = y + ROW_HEIGHT
+        y = y + ROW_HEIGHT + ROW_GAP
     end
 
     -- Separator
@@ -446,7 +548,7 @@ local function dismissSessionAtY(mouseY)
     if not s then
         for _, sess in ipairs(inactiveSessions) do
             if localY >= y and localY < y + ROW_HEIGHT_COMPACT then s = sess; break end
-            y = y + ROW_HEIGHT_COMPACT
+            y = y + ROW_HEIGHT_COMPACT + ROW_GAP
         end
     end
 
@@ -501,7 +603,7 @@ local function dismissSessionAtY(mouseY)
 
     -- Ignore pathwatcher updates for 7s to let the plugin process the pipe
     ignoreUpdatesUntil = os.time() + 7
-    loadSessions(); redraw()
+    loadSessions(); redraw(); updateSpinnerTimer()
     return true
 end
 
@@ -515,7 +617,7 @@ local function resetSessions()
             end
         end
     end
-    loadSessions(); redraw()
+    loadSessions(); redraw(); updateSpinnerTimer()
     hs.alert.show("Claude status reset", 1)
 end
 
@@ -584,16 +686,16 @@ function M.start()
                 -- Single click: toggle pin
                 pinned = not pinned
                 expanded = pinned
-                loadSessions(); redraw()
+                loadSessions(); redraw(); updateSpinnerTimer()
             end
         elseif msg == "mouseEnter" then
-            if not pinned then expanded = true; loadSessions(); redraw() end
+            if not pinned then expanded = true; loadSessions(); redraw(); updateSpinnerTimer() end
         elseif msg == "mouseExit" then
-            if not pinned then expanded = false; loadSessions(); redraw() end
+            if not pinned then expanded = false; loadSessions(); redraw(); updateSpinnerTimer() end
         end
     end)
 
-    loadSessions(); redraw()
+    loadSessions(); redraw(); updateSpinnerTimer()
 
     pathwatcher = hs.pathwatcher.new(STATUS_DIR, onFileChange)
     pathwatcher:start()
@@ -602,6 +704,7 @@ function M.start()
 end
 
 function M.stop()
+    if spinnerTimer then spinnerTimer:stop(); spinnerTimer = nil end
     if hotkey then hotkey:delete() end
     if hotkeyReset then hotkeyReset:delete() end
     if pathwatcher then pathwatcher:stop() end

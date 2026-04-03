@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=== Dev Environment Setup ==="
-echo "This installs: Ghostty config, Zellij config + plugins, Claude Code hooks, Hammerspoon overlay"
+echo "This installs: Zsh + p10k, Ghostty, Zellij + plugins, Claude Code hooks, Hammerspoon overlay"
 echo ""
 
 # ── Prerequisites check ───────────────────────────────────────────────
@@ -30,8 +30,66 @@ fi
 
 echo ""
 
-# ── 1. Ghostty ────────────────────────────────────────────────────────
-echo "[1/6] Ghostty config..."
+# ── 1. Oh My Zsh + Powerlevel10k + plugins ───────────────────────────
+echo "[1/8] Zsh shell setup..."
+
+# Install Oh My Zsh if not present
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+    echo "  Installing Oh My Zsh..."
+    RUNZSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+else
+    echo "  Oh My Zsh already installed."
+fi
+
+ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+
+# Install Powerlevel10k theme
+if [ ! -d "$ZSH_CUSTOM/themes/powerlevel10k" ]; then
+    echo "  Installing Powerlevel10k..."
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$ZSH_CUSTOM/themes/powerlevel10k"
+else
+    echo "  Powerlevel10k already installed."
+fi
+
+# Install zsh plugins
+declare -A ZSH_PLUGINS=(
+    ["zsh-autosuggestions"]="https://github.com/zsh-users/zsh-autosuggestions"
+    ["fast-syntax-highlighting"]="https://github.com/zdharma-continuum/fast-syntax-highlighting"
+    ["you-should-use"]="https://github.com/MichaelAqworthy/you-should-use"
+    ["zsh-bat"]="https://github.com/fdellwing/zsh-bat"
+)
+
+for plugin in "${!ZSH_PLUGINS[@]}"; do
+    if [ ! -d "$ZSH_CUSTOM/plugins/$plugin" ]; then
+        echo "  Installing $plugin..."
+        git clone --depth=1 "${ZSH_PLUGINS[$plugin]}" "$ZSH_CUSTOM/plugins/$plugin"
+    fi
+done
+
+echo "  Plugins installed."
+
+# ── 2. Zsh config files ─────────────────────────────────────────────
+echo "[2/8] Zsh config files..."
+
+# .zshrc — only install if user doesn't have one, otherwise warn
+if [ -f "$HOME/.zshrc" ]; then
+    echo "  .zshrc already exists — not overwriting."
+    echo "  Review dotfiles/zsh/.zshrc and merge relevant parts manually."
+else
+    cp "$SCRIPT_DIR/zsh/.zshrc" "$HOME/.zshrc"
+    echo "  Installed .zshrc"
+fi
+
+# .p10k.zsh — Powerlevel10k prompt config
+if [ -f "$HOME/.p10k.zsh" ]; then
+    echo "  Backing up existing .p10k.zsh"
+    cp "$HOME/.p10k.zsh" "$HOME/.p10k.zsh.bak"
+fi
+cp "$SCRIPT_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
+echo "  Installed .p10k.zsh"
+
+# ── 3. Ghostty ────────────────────────────────────────────────────────
+echo "[3/8] Ghostty config..."
 GHOSTTY_DIR="$HOME/.config/ghostty"
 mkdir -p "$GHOSTTY_DIR"
 if [ -f "$GHOSTTY_DIR/config" ] && ! diff -q "$SCRIPT_DIR/ghostty/config" "$GHOSTTY_DIR/config" &>/dev/null; then
@@ -41,8 +99,8 @@ fi
 cp "$SCRIPT_DIR/ghostty/config" "$GHOSTTY_DIR/config"
 echo "  Installed."
 
-# ── 2. Zellij config ─────────────────────────────────────────────────
-echo "[2/6] Zellij config..."
+# ── 4. Zellij config ─────────────────────────────────────────────────
+echo "[4/8] Zellij config..."
 ZELLIJ_DIR="$HOME/.config/zellij"
 mkdir -p "$ZELLIJ_DIR/layouts" "$ZELLIJ_DIR/plugins"
 
@@ -55,8 +113,8 @@ sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/zellij/config.kdl" > "$ZELLIJ_DIR/config.k
 cp "$SCRIPT_DIR/zellij/layouts/default.kdl" "$ZELLIJ_DIR/layouts/default.kdl"
 echo "  Installed."
 
-# ── 3. zjstatus plugin ───────────────────────────────────────────────
-echo "[3/6] zjstatus (status bar plugin)..."
+# ── 5. zjstatus plugin ───────────────────────────────────────────────
+echo "[5/8] zjstatus (status bar plugin)..."
 ZJSTATUS_DIR="$HOME/zellij-plugins"
 mkdir -p "$ZJSTATUS_DIR"
 if [ ! -f "$ZJSTATUS_DIR/zjstatus.wasm" ]; then
@@ -73,8 +131,8 @@ else
     echo "  Already installed."
 fi
 
-# ── 4. room plugin (fuzzy tab switcher) ──────────────────────────────
-echo "[4/6] room plugin (fuzzy tab switcher)..."
+# ── 6. room plugin (fuzzy tab switcher) ──────────────────────────────
+echo "[6/8] room plugin (fuzzy tab switcher)..."
 if [ ! -f "$ZELLIJ_DIR/plugins/room.wasm" ]; then
     echo "  Downloading latest room..."
     ROOM_URL=$(curl -s https://api.github.com/repos/rvcas/room/releases/latest \
@@ -89,8 +147,8 @@ else
     echo "  Already installed."
 fi
 
-# ── 5. claude-tab-status (WASM plugin + hook + Hammerspoon) ──────────
-echo "[5/6] claude-tab-status plugin..."
+# ── 7. claude-tab-status (WASM plugin + hook + Hammerspoon) ──────────
+echo "[7/8] claude-tab-status plugin..."
 CTS_DIR="$REPO_DIR/claude-tab-status"
 if [ -f "$CTS_DIR/install.sh" ]; then
     bash "$CTS_DIR/install.sh"
@@ -98,8 +156,8 @@ else
     echo "  WARNING: claude-tab-status/install.sh not found — skipping."
 fi
 
-# ── 6. Verify Claude Code hooks ──────────────────────────────────────
-echo "[6/6] Verifying Claude Code hooks..."
+# ── 8. Verify Claude Code hooks ──────────────────────────────────────
+echo "[8/8] Verifying Claude Code hooks..."
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 
 if [ -f "$CLAUDE_SETTINGS" ] && jq -e '.hooks.PreToolUse' "$CLAUDE_SETTINGS" &>/dev/null; then
