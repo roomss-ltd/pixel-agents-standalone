@@ -286,9 +286,16 @@ local function redraw()
         return st
     end
 
+    -- Check if any session is truly running (not just Init)
+    local hasRunning = false
+    for _, s in ipairs(sessions) do
+        local a = s.activity or "Init"
+        if a == "Thinking" or a == "Tool" then hasRunning = true; break end
+    end
+
     -- Spinner element (far left, separate from counts)
     local function drawSpinner()
-        if (counts.active or 0) > 0 then
+        if hasRunning then
             local frame = SPINNER_FRAMES[spinnerIndex] or SPINNER_FRAMES[1]
             canvas:appendElements({
                 type = "text",
@@ -495,13 +502,17 @@ end
 
 -- Manage animation timers based on whether active sessions exist
 local function updateSpinnerTimer()
-    local hasActive = (counts.active or 0) > 0
-    if hasActive and not spinnerTimer then
+    local hasRunning = false
+    for _, s in ipairs(sessions) do
+        local a = s.activity or "Init"
+        if a == "Thinking" or a == "Tool" then hasRunning = true; break end
+    end
+    if hasRunning and not spinnerTimer then
         spinnerTimer = hs.timer.doEvery(0.08, function()
             spinnerIndex = (spinnerIndex % #SPINNER_FRAMES) + 1
             redraw()
         end)
-    elseif not hasActive and spinnerTimer then
+    elseif not hasRunning and spinnerTimer then
         spinnerTimer:stop(); spinnerTimer = nil
         spinnerIndex = 1
     end
