@@ -51,18 +51,21 @@ else
     echo "  Powerlevel10k already installed."
 fi
 
-# Install zsh plugins
-declare -A ZSH_PLUGINS=(
-    ["zsh-autosuggestions"]="https://github.com/zsh-users/zsh-autosuggestions"
-    ["fast-syntax-highlighting"]="https://github.com/zdharma-continuum/fast-syntax-highlighting"
-    ["you-should-use"]="https://github.com/MichaelAqworthy/you-should-use"
-    ["zsh-bat"]="https://github.com/fdellwing/zsh-bat"
+# Install zsh plugins (bash 3.2 compatible — no associative arrays)
+ZSH_PLUGIN_NAMES=("zsh-autosuggestions" "fast-syntax-highlighting" "you-should-use" "zsh-bat")
+ZSH_PLUGIN_URLS=(
+    "https://github.com/zsh-users/zsh-autosuggestions"
+    "https://github.com/zdharma-continuum/fast-syntax-highlighting"
+    "https://github.com/MichaelAqworthy/you-should-use"
+    "https://github.com/fdellwing/zsh-bat"
 )
 
-for plugin in "${!ZSH_PLUGINS[@]}"; do
+for i in "${!ZSH_PLUGIN_NAMES[@]}"; do
+    plugin="${ZSH_PLUGIN_NAMES[$i]}"
+    url="${ZSH_PLUGIN_URLS[$i]}"
     if [ ! -d "$ZSH_CUSTOM/plugins/$plugin" ]; then
         echo "  Installing $plugin..."
-        git clone --depth=1 "${ZSH_PLUGINS[$plugin]}" "$ZSH_CUSTOM/plugins/$plugin"
+        git clone --depth=1 "$url" "$ZSH_CUSTOM/plugins/$plugin"
     fi
 done
 
@@ -110,7 +113,7 @@ if [ -f "$ZELLIJ_DIR/config.kdl" ] && ! diff -q "$SCRIPT_DIR/zellij/config.kdl" 
 fi
 # Replace __HOME__ placeholder with actual home directory
 sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/zellij/config.kdl" > "$ZELLIJ_DIR/config.kdl"
-cp "$SCRIPT_DIR/zellij/layouts/default.kdl" "$ZELLIJ_DIR/layouts/default.kdl"
+sed "s|__HOME__|$HOME|g" "$SCRIPT_DIR/zellij/layouts/default.kdl" > "$ZELLIJ_DIR/layouts/default.kdl"
 echo "  Installed."
 
 # ── 5. zjstatus plugin ───────────────────────────────────────────────
@@ -120,7 +123,7 @@ mkdir -p "$ZJSTATUS_DIR"
 if [ ! -f "$ZJSTATUS_DIR/zjstatus.wasm" ]; then
     echo "  Downloading latest zjstatus..."
     ZJSTATUS_URL=$(curl -s https://api.github.com/repos/dj95/zjstatus/releases/latest \
-        | jq -r '.assets[] | select(.name | endswith(".wasm")) | .browser_download_url' | head -1)
+        | jq -r '.assets[] | select(.name == "zjstatus.wasm") | .browser_download_url')
     if [ -n "$ZJSTATUS_URL" ]; then
         curl -sL "$ZJSTATUS_URL" -o "$ZJSTATUS_DIR/zjstatus.wasm"
         echo "  Downloaded."
