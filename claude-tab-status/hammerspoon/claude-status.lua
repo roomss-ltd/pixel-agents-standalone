@@ -172,7 +172,7 @@ local function loadSessions()
     local now2 = hs.timer.secondsSinceEpoch()
     local newActivities = {}
     for _, s in ipairs(sessions) do
-        local id = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+        local id = s.pane_id or (s._zj_session .. "_" .. s._display_num)
         local activity = s.activity or "Init"
         local prev = prevActivities[id]
         newActivities[id] = activity
@@ -384,7 +384,7 @@ local function redraw()
             })
 
             -- Exit code flash overlay
-            local sid = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+            local sid = s.pane_id or (s._zj_session .. "_" .. s._display_num)
             local flash = flashState[sid]
             if flash then
                 canvas:appendElements({
@@ -482,7 +482,7 @@ local function redraw()
             })
 
             -- Exit code flash overlay
-            local sid = s.pane_id or (s.tab_name .. "_" .. (s.tab_num or 0))
+            local sid = s.pane_id or (s._zj_session .. "_" .. s._display_num)
             local flash = flashState[sid]
             if flash then
                 canvas:appendElements({
