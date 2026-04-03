@@ -113,6 +113,7 @@ local counts = { active = 0, waiting = 0, done = 0 }
 local ignoreUpdatesUntil = 0
 local dragTap = nil
 local longPressTimer = nil
+local dragging = false
 local dragStart = nil -- { mx, my, cx, cy } mouse + canvas origin at mouseDown
 local customPos = nil -- { x, y } user-chosen position, nil = default bottom-right
 
@@ -510,7 +511,7 @@ local function updateSpinnerTimer()
     if hasRunning and not spinnerTimer then
         spinnerTimer = hs.timer.doEvery(0.08, function()
             spinnerIndex = (spinnerIndex % #SPINNER_FRAMES) + 1
-            redraw()
+            if not dragging then redraw() end
         end)
     elseif not hasRunning and spinnerTimer then
         spinnerTimer:stop(); spinnerTimer = nil
@@ -668,7 +669,8 @@ function M.start()
                 local dx = cur.x - dragStart.mx
                 local dy = cur.y - dragStart.my
                 if math.abs(dx) > 3 or math.abs(dy) > 3 then
-                    -- Cancel long-press on drag
+                    -- Cancel long-press on drag and pause animations
+                    dragging = true
                     if longPressTimer then longPressTimer:stop(); longPressTimer = nil end
                     local f = canvas:frame()
                     canvas:frame({ x = dragStart.cx + dx, y = dragStart.cy + dy, w = f.w, h = f.h })
@@ -690,6 +692,7 @@ function M.start()
                 end
             end
             dragStart = nil
+            dragging = false
             stopDrag()
             -- Cancel long-press if released before 3s
             if longPressTimer then longPressTimer:stop(); longPressTimer = nil end
