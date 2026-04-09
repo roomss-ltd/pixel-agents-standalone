@@ -90,6 +90,10 @@ pub struct PluginState {
     pub known_tab_count: usize,
     /// Tracked pane count for structural change detection
     pub known_pane_count: usize,
+    /// position → Zellij internal tab key.
+    /// Workaround for Zellij bug: rename_tab() uses BTreeMap keys (internal indices)
+    /// instead of visual positions. We extract keys from auto-named tabs ("Tab #N").
+    pub tab_internal_keys: HashMap<usize, usize>,
     /// Current input mode — suppress renames during RenameTab/RenamePane
     pub input_mode: InputMode,
     /// Zellij session name — used for status file naming

@@ -37,9 +37,10 @@ impl ZellijPlugin for PluginState {
                 self.active_tab_index = new_active;
                 self.tabs = tabs;
 
-                // Always refresh base names — cheap O(tabs) comparison
-                // catches user-initiated tab renames.
+                // Always refresh base names and internal key mapping —
+                // cheap O(tabs) comparison catches user-initiated tab renames.
                 tab_manager::refresh_base_names(self);
+                tab_manager::refresh_tab_keys(self);
 
                 if structure_changed {
                     // Tabs added/removed: pane mapping is stale.
