@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::state::{PluginState, STATUS_ICONS};
 use zellij_tile::prelude::*;
@@ -64,7 +64,7 @@ fn parse_tab_key(base_name: &str) -> Option<usize> {
         .map(|n| n.saturating_sub(1))
 }
 
-/// Rebuild internal key mapping after a TabUpdate.
+/// Look up the internal BTreeMap key for a tab by parsing its current name.
 ///
 /// Zellij's `rename_tab` API has a bug (as of 0.43.1): the server handler at
 /// `screen.rs:5069` does `screen.tabs.get_mut(&tab_index.saturating_sub(1))`,
@@ -72,59 +72,14 @@ fn parse_tab_key(base_name: &str) -> Option<usize> {
 /// When tabs are closed, keys stay (never reused) while positions compact,
 /// so key != position+1 and the wrong tab gets renamed.
 ///
-/// We work around this by tracking internal keys for every tab we've seen:
-///  - Auto-named tabs ("Tab #N") expose their key directly (N-1).
-///  - For user-renamed tabs, we carry keys across events by matching
-///    base names. If a tab's key is unknown (it was already renamed when
-///    the plugin loaded), we never rename it — safer than guessing.
-///
-/// `old_tabs` and `old_keys` are the previous snapshot, captured before
-/// `state.tabs` was replaced with the new TabUpdate payload.
-pub fn refresh_tab_keys(
-    state: &mut PluginState,
-    old_tabs: &[TabInfo],
-    old_keys: &HashMap<usize, usize>,
-) {
-    // Build name → key map from the previous snapshot. Used to carry keys
-    // across structural changes (add/delete/move) by matching base names.
-    let mut old_name_to_key: HashMap<String, usize> = HashMap::new();
-    for t in old_tabs {
-        let base = strip_status_suffix(&t.name);
-        if let Some(k) = old_keys.get(&t.position) {
-            old_name_to_key.insert(base, *k);
-        }
-    }
-
-    let structure_changed = state.tabs.len() != old_tabs.len();
-
-    state.tab_internal_keys.clear();
-
-    for tab in &state.tabs {
-        let base = strip_status_suffix(&tab.name);
-
-        // 1) Auto-named tabs reveal their key directly — most authoritative.
-        if let Some(key) = parse_tab_key(&base) {
-            state.tab_internal_keys.insert(tab.position, key);
-            continue;
-        }
-
-        // 2) Match by base name against previous snapshot (survives
-        //    deletions, insertions, and tab moves).
-        if let Some(k) = old_name_to_key.get(&base) {
-            state.tab_internal_keys.insert(tab.position, *k);
-            continue;
-        }
-
-        // 3) No name match. If structure is unchanged, positions didn't
-        //    shift — assume user renamed this tab in place and carry the
-        //    old key at this position.
-        if !structure_changed {
-            if let Some(k) = old_keys.get(&tab.position) {
-                state.tab_internal_keys.insert(tab.position, *k);
-            }
-        }
-        // Otherwise: unknown key. update_tab_name will skip this tab.
-    }
+/// To guarantee we never rename an unrelated tab, we only operate on tabs
+/// whose name still matches the auto-generated "Tab #N" format (possibly
+/// with our status icon appended). That name is a direct, verifiable
+/// signal of the tab's real internal key. User-renamed tabs have no such
+/// signal, so we leave them alone entirely.
+pub fn verified_tab_key(tab: &TabInfo) -> Option<usize> {
+    let base = strip_status_suffix(&tab.name);
+    parse_tab_key(&base)
 }
 
 /// Strip any trailing status icon we may have appended.
@@ -172,10 +127,15 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
 
     if current_name != Some(new_name.as_str()) {
         // Zellij bug workaround: rename_tab's server handler looks up by
-        // internal BTreeMap key, not visual position. Only rename when we
-        // know the key — guessing (e.g. position + 1) risks renaming the
-        // wrong tab once any tab has been closed or moved.
-        if let Some(&key) = state.tab_internal_keys.get(&tab_index) {
+        // internal BTreeMap key, not visual position. Only rename if the
+        // tab's current name still encodes its key ("Tab #N" or "Tab #N <icon>").
+        // User-renamed tabs have no verifiable key, so we never touch them —
+        // this guarantees creating a new tab can't cascade-rename user tabs.
+        let tab = match state.tabs.iter().find(|t| t.position == tab_index) {
+            Some(t) => t,
+            None => return,
+        };
+        if let Some(key) = verified_tab_key(tab) {
             rename_tab((key + 1) as u32, &new_name);
         }
     }

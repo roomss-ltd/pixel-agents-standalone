@@ -34,19 +34,13 @@ impl ZellijPlugin for PluginState {
                 let tab_switched = new_active != self.active_tab_index;
                 let structure_changed = tabs.len() != self.known_tab_count;
 
-                // Snapshot old state BEFORE replacing — refresh_tab_keys
-                // needs the previous tab list and key map to carry keys
-                // across deletions, insertions, and renames.
-                let old_tabs = std::mem::take(&mut self.tabs);
-                let old_keys = std::mem::take(&mut self.tab_internal_keys);
-
                 self.active_tab_index = new_active;
                 self.tabs = tabs;
 
-                // Always refresh base names and internal key mapping —
-                // cheap O(tabs) comparison catches user-initiated tab renames.
+                // Refresh base names so status-icon construction uses the
+                // latest names. Internal keys are derived on-demand from
+                // each tab's current name in verified_tab_key.
                 tab_manager::refresh_base_names(self);
-                tab_manager::refresh_tab_keys(self, &old_tabs, &old_keys);
 
                 if structure_changed {
                     // Tabs added/removed: pane mapping is stale.
