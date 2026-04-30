@@ -6,7 +6,7 @@ mod state;
 mod status_writer;
 mod tab_manager;
 
-use state::{HookPayload, PluginState, TIMER_INTERVAL};
+use state::{BootstrapPhase, HookPayload, PluginState, TIMER_INTERVAL};
 
 register_plugin!(PluginState);
 
@@ -37,9 +37,29 @@ impl ZellijPlugin for PluginState {
                 self.active_tab_index = new_active;
                 self.tabs = tabs;
 
-                // Refresh base names so status-icon construction uses the
-                // latest names. Internal keys are derived on-demand from
-                // each tab's current name in verified_tab_key.
+                // Bootstrap state machine. We must discover internal keys
+                // before any rename activity, otherwise rename_tab's bug
+                // (lookup by internal key, not position) corrupts wrong tabs.
+                match &self.bootstrap {
+                    BootstrapPhase::NotStarted => {
+                        tab_manager::start_bootstrap(self);
+                        // Fast-path may have set Complete; otherwise we're
+                        // now Probing and must wait for the next TabUpdate.
+                        if matches!(self.bootstrap, BootstrapPhase::Probing { .. }) {
+                            return false;
+                        }
+                    }
+                    BootstrapPhase::Probing { .. } => {
+                        tab_manager::finish_bootstrap(self);
+                        // finish_bootstrap issued restore renames; let the
+                        // resulting TabUpdate drive normal flow.
+                        return false;
+                    }
+                    BootstrapPhase::Complete => {}
+                }
+
+                // Always refresh base names and internal key mapping —
+                // cheap O(tabs) comparison catches user-initiated tab renames.
                 tab_manager::refresh_base_names(self);
 
                 if structure_changed {
@@ -85,8 +105,18 @@ impl ZellijPlugin for PluginState {
                     self.zellij_session_name = name;
                 }
 
+                let now_renaming = matches!(
+                    self.input_mode,
+                    InputMode::RenameTab | InputMode::RenamePane
+                );
+
+                // If we deferred bootstrap because user was mid-rename, retry now.
+                if matches!(self.bootstrap, BootstrapPhase::NotStarted) && !now_renaming {
+                    tab_manager::start_bootstrap(self);
+                }
+
                 // Re-apply icons after user finishes renaming.
-                if was_renaming && !matches!(self.input_mode, InputMode::RenameTab | InputMode::RenamePane) {
+                if was_renaming && !now_renaming {
                     tab_manager::update_all_tab_names(self);
                 }
                 false

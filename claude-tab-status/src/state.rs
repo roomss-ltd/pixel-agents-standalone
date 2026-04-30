@@ -20,6 +20,31 @@ pub const TIMER_INTERVAL: f64 = 5.0;
 pub const STATUS_ICONS: &[&str] = &["\u{25CF}", "\u{26A1}", "\u{23F8}", "\u{2713}"];
 // ●, ⚡, ⏸, ✓
 
+/// Marker prefix used during bootstrap probing to discover Zellij's internal
+/// BTreeMap keys. Must not collide with anything a user would type.
+pub const PROBE_PREFIX: &str = "__zts_probe_";
+
+/// Highest internal key we'll probe at startup. Covers sessions that have
+/// ever created up to this many tabs (including deleted ones). Bumping this
+/// is cheap — Zellij no-ops renames for non-existent keys.
+pub const PROBE_MAX: usize = 100;
+
+/// Bootstrap state machine — see `tab_manager::start_bootstrap` for rationale.
+/// We exploit Zellij's buggy `rename_tab` (looks up by internal BTreeMap key)
+/// as a discovery mechanism: probe each candidate key with a unique marker
+/// name, then read back which visual position got which marker. After this,
+/// the position→key map is complete and renames are deterministic.
+#[derive(Debug, Default)]
+pub enum BootstrapPhase {
+    #[default]
+    NotStarted,
+    Probing {
+        /// Pre-probe tab names by visual position, keyed for restore.
+        saved_names: HashMap<usize, String>,
+    },
+    Complete,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Activity {
     Init,
@@ -94,4 +119,6 @@ pub struct PluginState {
     pub input_mode: InputMode,
     /// Zellij session name — used for status file naming
     pub zellij_session_name: String,
+    /// Bootstrap phase — gates rename activity until internal keys are mapped.
+    pub bootstrap: BootstrapPhase,
 }
