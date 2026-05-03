@@ -122,6 +122,9 @@ test("mini idle loader slot renders a muted coffee icon instead of the active bl
   assert.match(styles, /42%\s*\{[\s\S]*opacity: 0\.72;[\s\S]*stroke-dashoffset: 2\.8;/);
   assert.match(styles, /72%\s*\{[\s\S]*opacity: 0\.45;[\s\S]*stroke-dashoffset: 0;/);
   assert.match(styles, /100%\s*\{[\s\S]*opacity: 0;[\s\S]*stroke-dashoffset: 0;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-1,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-1\s*\{[\s\S]*stroke-width: 1\.45px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-2,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-2\s*\{[\s\S]*stroke-width: 2\.15px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-3,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-3\s*\{[\s\S]*stroke-width: 1\.55px;/);
   assert.doesNotMatch(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\)::before/);
 });
 

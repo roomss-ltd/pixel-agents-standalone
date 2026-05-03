@@ -239,6 +239,21 @@ function M.css()
       transform-origin: center;
     }
 
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-1,
+    .peek-ticker.idle .coffee-smoke-1 {
+      stroke-width: 1.45px;
+    }
+
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2,
+    .peek-ticker.idle .coffee-smoke-2 {
+      stroke-width: 2.15px;
+    }
+
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3,
+    .peek-ticker.idle .coffee-smoke-3 {
+      stroke-width: 1.55px;
+    }
+
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2 {
       animation-delay: -1.1s;
     }
