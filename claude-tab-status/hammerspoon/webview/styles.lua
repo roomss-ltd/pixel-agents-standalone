@@ -239,18 +239,15 @@ function M.css()
       transform-origin: center;
     }
 
-    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-1,
-    .peek-ticker.idle .coffee-smoke-1 {
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-1 {
       stroke-width: 1.45px;
     }
 
-    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2,
-    .peek-ticker.idle .coffee-smoke-2 {
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2 {
       stroke-width: 2.15px;
     }
 
-    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3,
-    .peek-ticker.idle .coffee-smoke-3 {
+    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3 {
       stroke-width: 1.55px;
     }
 
@@ -583,6 +580,18 @@ function M.css()
       animation: coffeeSteam 3.6s ease-in-out infinite;
       transform-box: fill-box;
       transform-origin: center;
+    }
+
+    .peek-ticker.idle .coffee-smoke-1 {
+      stroke-width: 1.45px;
+    }
+
+    .peek-ticker.idle .coffee-smoke-2 {
+      stroke-width: 2.15px;
+    }
+
+    .peek-ticker.idle .coffee-smoke-3 {
+      stroke-width: 1.55px;
     }
 
     .peek-ticker.idle .coffee-smoke-2 {

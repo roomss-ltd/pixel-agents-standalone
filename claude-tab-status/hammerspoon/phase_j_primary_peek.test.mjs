@@ -122,9 +122,9 @@ test("mini idle loader slot renders a muted coffee icon instead of the active bl
   assert.match(styles, /42%\s*\{[\s\S]*opacity: 0\.72;[\s\S]*stroke-dashoffset: 2\.8;/);
   assert.match(styles, /72%\s*\{[\s\S]*opacity: 0\.45;[\s\S]*stroke-dashoffset: 0;/);
   assert.match(styles, /100%\s*\{[\s\S]*opacity: 0;[\s\S]*stroke-dashoffset: 0;/);
-  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-1,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-1\s*\{[\s\S]*stroke-width: 1\.45px;/);
-  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-2,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-2\s*\{[\s\S]*stroke-width: 2\.15px;/);
-  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-3,[\s\S]*\.peek-ticker\.idle \.coffee-smoke-3\s*\{[\s\S]*stroke-width: 1\.55px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-1\s*\{[\s\S]*stroke-width: 1\.45px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-2\s*\{[\s\S]*stroke-width: 2\.15px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke-3\s*\{[\s\S]*stroke-width: 1\.55px;/);
   assert.doesNotMatch(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\)::before/);
 });
 
@@ -232,6 +232,9 @@ test("idle peek renders useful all-clear context instead of an empty card", () =
   assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon\s*\{[^}]*width: 17px;[^}]*height: 17px;[^}]*color: rgba\(115, 166, 255, 0\.82\);/);
   assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon svg\s*\{[^}]*width: 17px;[^}]*height: 17px;/);
   assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*animation: coffeeSteam 3\.6s ease-in-out infinite;/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*stroke-width: 1\.65px;[\s\S]*\.peek-ticker\.idle \.coffee-smoke-1\s*\{[\s\S]*stroke-width: 1\.45px;/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*stroke-width: 1\.65px;[\s\S]*\.peek-ticker\.idle \.coffee-smoke-2\s*\{[\s\S]*stroke-width: 2\.15px;/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*stroke-width: 1\.65px;[\s\S]*\.peek-ticker\.idle \.coffee-smoke-3\s*\{[\s\S]*stroke-width: 1\.55px;/);
   assert.doesNotMatch(styles, /\.peek-ticker\.idle \.coffee-smoke-1\s*\{[^}]*display: none;/);
   assert.doesNotMatch(styles, /@keyframes peekCoffeeSteam/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-badge\s*\{[\s\S]*display: none;/);
