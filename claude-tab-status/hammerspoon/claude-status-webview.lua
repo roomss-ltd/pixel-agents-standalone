@@ -67,7 +67,7 @@ local SETTINGS_ROW_HEIGHT = 28
 local SETTINGS_ROW_GAP = 6
 local SETTINGS_VERTICAL_PADDING = 16
 local SETTINGS_BORDER_SAFETY = 4
-local EVENT_POPOVER_SIZE = { width = 244, height = 118 }
+local EVENT_POPOVER_SIZE = { width = 244, height = 108 }
 
 local webview = nil
 local settingsWebview = nil

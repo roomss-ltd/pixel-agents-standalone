@@ -366,7 +366,7 @@ function M.css()
       justify-self: start;
       min-width: 26px;
       height: 20px;
-      margin-right: -5px;
+      margin-right: -6px;
       padding: 2px 6px;
       border-radius: 6px;
       color: rgba(115, 166, 255, 0.92);
@@ -1242,8 +1242,8 @@ function M.css()
     .event-panel {
       width: 244px;
       display: grid;
-      gap: 4px;
-      padding: 5px;
+      gap: 3px;
+      padding: 4px;
       border: 1.5px solid var(--panel-border);
       border-radius: var(--panel-radius);
       background: var(--panel-bg);
@@ -1253,12 +1253,12 @@ function M.css()
 
     .event-row {
       position: relative;
-      min-height: 36px;
+      min-height: 32px;
       display: grid;
-      grid-template-columns: 34px minmax(0, 1fr) 20px 18px;
+      grid-template-columns: 30px minmax(0, 1fr) 18px 16px;
       align-items: center;
-      gap: 7px;
-      padding: 5px 5px 5px 6px;
+      gap: 6px;
+      padding: 4px 4px 4px 6px;
       border: 0.5px solid rgba(255, 255, 255, 0.07);
       border-radius: 7px;
       background: rgba(255, 255, 255, 0.035);
@@ -1321,7 +1321,7 @@ function M.css()
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       color: rgba(255, 255, 255, 0.86);
     }
 
@@ -1329,7 +1329,7 @@ function M.css()
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: 10px;
+      font-size: 9.5px;
       color: rgba(255, 255, 255, 0.48);
     }
 
@@ -1344,20 +1344,20 @@ function M.css()
     }
 
     .event-dismiss {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       padding: 0;
       border: 0;
       border-radius: 5px;
       background: transparent;
       color: rgba(255, 255, 255, 0.42);
-      opacity: 0.34;
-      font-size: 13px;
-      line-height: 18px;
+      opacity: 0.12;
+      font-size: 12px;
+      line-height: 16px;
     }
 
     .event-row:hover .event-dismiss {
-      opacity: 1;
+      opacity: 0.46;
     }
 
     .event-dismiss:hover {
