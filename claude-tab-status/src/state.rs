@@ -89,6 +89,7 @@ pub struct SessionInfo {
 pub struct HookPayload {
     pub pane_id: u32,
     pub session_id: Option<String>,
+    pub run_id: Option<String>,
     pub hook_event: String,
     pub tool_name: Option<String>,
 }

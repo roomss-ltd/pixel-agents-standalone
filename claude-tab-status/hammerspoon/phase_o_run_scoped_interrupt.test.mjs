@@ -37,3 +37,9 @@ test("interrupt blocks only the current run_id and leaves new pane runs visible"
   assert.match(webview, /if interruptedAt then[\s\S]*activity = "Done"[\s\S]*manual_state = "cancelled"/);
   assert.match(interruptBody, /if run_id and run_id ~= "" then[\s\S]*addInterruptedRun\(run_id\)[\s\S]*else[\s\S]*addToDenylist\(zj_session, pane_id\)/);
 });
+
+test("run-scoped interrupt asks the live Zellij plugin to clear the tab working state", () => {
+  assert.match(interruptBody, /local payload = hs\.json\.encode\(\{ hook_event = "ManualInterrupt", pane_id = pane_id, run_id = run_id \}\)/);
+  assert.match(interruptBody, /zellij -s %q pipe --name "claude-tab-status" -- %q/);
+  assert.match(interruptBody, /hs\.execute\(cmd, true\)/);
+});

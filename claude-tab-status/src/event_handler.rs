@@ -47,6 +47,32 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         return;
     }
 
+    if event == "ManualInterrupt" {
+        let now = unix_now();
+        let payload_run_id = payload.run_id.as_deref().unwrap_or("");
+        let mut tab_to_update = None;
+        let mut changed = false;
+
+        if let Some(session) = state.sessions.get_mut(&payload.pane_id) {
+            if payload_run_id.is_empty() || payload_run_id == session.run_id {
+                if session.activity != Activity::Done {
+                    session.activity = Activity::Done;
+                    changed = true;
+                }
+                session.last_event_ts = now;
+                tab_to_update = state.pane_to_tab.get(&session.pane_id).copied();
+            }
+        }
+
+        if let Some(tab_index) = tab_to_update {
+            tab_manager::update_tab_name(state, tab_index);
+        }
+        if changed {
+            status_writer::write_status_file(state);
+        }
+        return;
+    }
+
     // Drop any other hook event for a pane_id currently blocked.
     if let Some(&until) = state.dismissed_until.get(&payload.pane_id) {
         if unix_now() < until {

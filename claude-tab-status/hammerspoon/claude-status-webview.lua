@@ -618,6 +618,9 @@ function interruptSession(zj_session, pane_id, run_id)
 
     if run_id and run_id ~= "" then
         addInterruptedRun(run_id)
+        local payload = hs.json.encode({ hook_event = "ManualInterrupt", pane_id = pane_id, run_id = run_id })
+        local cmd = string.format('zellij -s %q pipe --name "claude-tab-status" -- %q', zj_session, payload)
+        hs.execute(cmd, true)
     else
         addToDenylist(zj_session, pane_id)
         local payload = string.format('{"hook_event":"Dismiss","pane_id":%d}', pane_id)
