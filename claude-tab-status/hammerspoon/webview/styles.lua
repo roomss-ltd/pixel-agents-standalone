@@ -541,6 +541,7 @@ function M.css()
 
     .peek-ticker.idle .peek-card {
       grid-template-columns: 18px minmax(0, 1fr);
+      column-gap: 14px;
       border-color: rgba(255, 255, 255, 0.08);
       background: rgba(255, 255, 255, 0.022);
     }
@@ -1490,6 +1491,8 @@ function M.css()
 
     .event-copy {
       min-width: 0;
+      display: grid;
+      gap: 2px;
     }
 
     .event-title {

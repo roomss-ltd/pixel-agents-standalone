@@ -224,7 +224,7 @@ test("idle peek renders useful all-clear context instead of an empty card", () =
   assert.match(html, /renderPeekMeta\(meta, header, isIdle\);/);
   assert.match(html, /if \(compact && activeTotal < 1\) \{[\s\S]*meta\.innerHTML = "";/);
   assert.match(html, /if \(activeTotal > 0\) \{[\s\S]*peek-stat-active/);
-  assert.match(styles, /\.peek-ticker\.idle \.peek-card\s*\{[\s\S]*grid-template-columns: 18px minmax\(0, 1fr\);/);
+  assert.match(styles, /\.peek-ticker\.idle \.peek-card\s*\{[\s\S]*grid-template-columns: 18px minmax\(0, 1fr\);[\s\S]*column-gap: 14px;/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-copy\s*\{[\s\S]*grid-column: 2;[\s\S]*grid-row: 1;/);
   assert.match(html, /if \(item && item\.kind === "idle"\) \{[\s\S]*setClass\(kind, "is-loader", false\);[\s\S]*kind\.setAttribute\("data-peek-kind-mode", "idle"\);[\s\S]*renderCoffeeSteamInto\(kind\);/);
   assert.doesNotMatch(html, /clearPeekKind\(kind\);\s*if \(item && item\.kind === "idle"\)/);

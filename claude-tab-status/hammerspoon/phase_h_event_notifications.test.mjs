@@ -116,6 +116,7 @@ test("event notification polish uses row-native badge layout and quiet dismiss",
   assert.match(styles, /\.event-panel\s*\{[\s\S]*gap: 3px;[\s\S]*padding: 4px;/);
   assert.match(styles, /\.event-row\s*\{[\s\S]*min-height: 32px;[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) 18px 22px;/);
   assert.doesNotMatch(styles, /\.event-row::before/);
+  assert.match(styles, /\.event-copy\s*\{[\s\S]*display: grid;[\s\S]*gap: 2px;/);
   assert.match(styles, /\.event-title\s*\{[^}]*font-weight: 500;/);
   assert.match(styles, /\.event-detail\s*\{[^}]*font-size: 9\.5px;/);
   assert.match(styles, /\.event-dismiss\s*\{[\s\S]*border: 0\.5px solid rgba\(255, 255, 255, 0\.16\);[\s\S]*background: rgba\(255, 255, 255, 0\.075\);[\s\S]*opacity: 0\.9;/);
