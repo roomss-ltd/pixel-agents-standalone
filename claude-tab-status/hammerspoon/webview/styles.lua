@@ -252,11 +252,11 @@ function M.css()
     }
 
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2 {
-      animation-delay: -1.1s;
+      animation-delay: -0.55s;
     }
 
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3 {
-      animation-delay: -2.2s;
+      animation-delay: -1.1s;
     }
 
     @keyframes coffeeSteam {
@@ -265,14 +265,15 @@ function M.css()
         stroke-dashoffset: 9;
       }
       18% {
-        opacity: 0;
+        opacity: 0.24;
+        stroke-dashoffset: 6.2;
       }
       42% {
-        opacity: 0.72;
+        opacity: 0.76;
         stroke-dashoffset: 2.8;
       }
-      72% {
-        opacity: 0.45;
+      78% {
+        opacity: 0.38;
         stroke-dashoffset: 0;
       }
       100% {
@@ -595,11 +596,11 @@ function M.css()
     }
 
     .peek-ticker.idle .coffee-smoke-2 {
-      animation-delay: -1.1s;
+      animation-delay: -0.55s;
     }
 
     .peek-ticker.idle .coffee-smoke-3 {
-      animation-delay: -2.2s;
+      animation-delay: -1.1s;
     }
 
     .peek-ticker.idle .peek-badge {
