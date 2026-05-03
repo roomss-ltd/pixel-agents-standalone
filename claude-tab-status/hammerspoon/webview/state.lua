@@ -300,8 +300,8 @@ end
 
 local function compactViewMode(input, activeTotal)
     if input.viewMode == "compact" then return "compact" end
+    if input.viewMode == "peek" and (activeTotal > 0 or input.idlePeekRequested == true) then return "peek" end
     if activeTotal <= 0 then return "compact" end
-    if input.viewMode == "peek" then return "peek" end
     return DEFAULT_COMPACT_MODE
 end
 

@@ -90,6 +90,7 @@ local expanded = false
 local pinned = false
 local settingsOpen = false
 local viewMode = "peek"
+local idlePeekRequested = false
 local peekHover = false
 local peekPinned = false
 local editMode = false
@@ -361,6 +362,7 @@ local function handleBridgeMessage(message)
     elseif body.type == "compact.mode.set" then
         if body.mode == "peek" or body.mode == "compact" then
             viewMode = body.mode
+            idlePeekRequested = body.mode == "peek"
             expanded = false
             peekHover = false
             peekPinned = false
@@ -1105,6 +1107,7 @@ local function buildViewState()
         settingsItems = SETTINGS_ITEMS,
         expanded = expanded,
         viewMode = viewMode,
+        idlePeekRequested = idlePeekRequested,
         peekHover = peekHover,
         peekPinned = peekPinned,
         pinned = pinned,

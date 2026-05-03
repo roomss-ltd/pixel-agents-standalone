@@ -19,8 +19,8 @@ test("idle non-expanded state falls back to coffee mini while active work uses p
   assert.match(state, /local DEFAULT_COMPACT_MODE = "peek"/);
   assert.match(state, /local function compactViewMode\(input, activeTotal\)/);
   assert.match(state, /if input\.viewMode == "compact" then return "compact" end/);
+  assert.match(state, /if input\.viewMode == "peek" and \(activeTotal > 0 or input\.idlePeekRequested == true\) then return "peek" end/);
   assert.match(state, /if activeTotal <= 0 then return "compact" end/);
-  assert.match(state, /if input\.viewMode == "peek" then return "peek" end/);
   assert.match(state, /return DEFAULT_COMPACT_MODE/);
   assert.match(state, /local viewMode = input\.expanded == true and "expanded" or compactViewMode\(input, activeTotal\)/);
   assert.doesNotMatch(state, /shouldUsePeekMode/);
@@ -40,6 +40,8 @@ test("mini and peek are controlled by a dedicated compact mode bridge action", (
   assert.match(webview, /local function saveCompactMode\(\)/);
   assert.match(webview, /body\.type == "compact\.mode\.set"/);
   assert.match(webview, /if body\.mode == "peek" or body\.mode == "compact" then/);
+  assert.match(webview, /idlePeekRequested = body\.mode == "peek"/);
+  assert.match(webview, /idlePeekRequested = idlePeekRequested,/);
 });
 
 test("mini hover does not auto-expand into the detailed pane", () => {
