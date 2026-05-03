@@ -99,5 +99,9 @@
     "webview-ui/src/**/*.{ts,tsx}": "eslint --fix",
     "*.{ts,tsx,js,mjs,css,json,md}": "prettier --write",
     "webview-ui/**/*.{ts,tsx,js,css,json}": "prettier --write"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.89",
+    "ldrs": "1.1.9"
   }
 }

@@ -37,29 +37,17 @@ impl ZellijPlugin for PluginState {
                 self.active_tab_index = new_active;
                 self.tabs = tabs;
 
-                // Bootstrap state machine. We must discover internal keys
-                // before any rename activity, otherwise rename_tab's bug
-                // (lookup by internal key, not position) corrupts wrong tabs.
+                // Bootstrap state machine. With patched Zellij, this only
+                // gates rename activity until initial tab state exists.
                 match &self.bootstrap {
                     BootstrapPhase::NotStarted => {
                         tab_manager::start_bootstrap(self);
-                        // Fast-path may have set Complete; otherwise we're
-                        // now Probing and must wait for the next TabUpdate.
-                        if matches!(self.bootstrap, BootstrapPhase::Probing { .. }) {
-                            return false;
-                        }
-                    }
-                    BootstrapPhase::Probing { .. } => {
-                        tab_manager::finish_bootstrap(self);
-                        // finish_bootstrap issued restore renames; let the
-                        // resulting TabUpdate drive normal flow.
-                        return false;
                     }
                     BootstrapPhase::Complete => {}
                 }
 
-                // Always refresh base names and internal key mapping —
-                // cheap O(tabs) comparison catches user-initiated tab renames.
+                // Always refresh base names — cheap O(tabs) comparison catches
+                // user-initiated tab renames.
                 tab_manager::refresh_base_names(self);
 
                 if structure_changed {

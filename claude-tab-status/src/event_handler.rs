@@ -1,9 +1,42 @@
 use crate::state::{unix_now, Activity, HookPayload, PluginState, SessionInfo};
 use crate::status_writer;
 use crate::tab_manager;
+use zellij_tile::prelude::focus_terminal_pane;
 
 pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     let event = payload.hook_event.as_str();
+
+    // Focus → switch the current client to the tracked terminal pane. This is
+    // driven by clicking a row in the Hammerspoon widget and must not mutate
+    // status state.
+    if event == "Focus" {
+        focus_terminal_pane(payload.pane_id, false);
+        return;
+    }
+
+    // Dismiss → remove session + block this pane_id from re-creation.
+    // Sent by the overlay's long-press handler. Distinct from SessionEnd so
+    // legitimate session restarts within the same pane still work.
+    if event == "Dismiss" {
+        if let Some(session) = state.sessions.remove(&payload.pane_id) {
+            if let Some(&tab_index) = state.pane_to_tab.get(&session.pane_id) {
+                tab_manager::update_tab_name(state, tab_index);
+            }
+        }
+        state.dismissed_until.insert(
+            payload.pane_id,
+            unix_now() + crate::state::DISMISS_BLOCK_SECS,
+        );
+        status_writer::write_status_file(state);
+        return;
+    }
+
+    // Drop any other hook event for a pane_id currently blocked.
+    if let Some(&until) = state.dismissed_until.get(&payload.pane_id) {
+        if unix_now() < until {
+            return;
+        }
+    }
 
     // SessionEnd → remove session, restore tab name.
     if event == "SessionEnd" {
@@ -88,24 +121,34 @@ pub fn clear_done_on_tab(state: &mut PluginState, tab_index: usize) -> bool {
 }
 
 /// Clean up stale sessions. Returns true if any state changed.
-/// Done → Idle transition still happens (for tab icon clearing),
-/// but Idle sessions persist until SessionEnd — the overlay keeps showing them.
 pub fn cleanup_stale_sessions(state: &mut PluginState) -> bool {
     let now = unix_now();
     let mut changed = false;
 
     for (_pane_id, session) in state.sessions.iter_mut() {
         let elapsed = now.saturating_sub(session.last_event_ts);
-        match session.activity {
-            Activity::Done => {
-                if elapsed >= crate::state::DONE_TIMEOUT {
-                    session.activity = Activity::Idle;
-                    changed = true;
-                }
-            }
-            _ => {}
+        if matches!(session.activity, Activity::Done) && elapsed >= crate::state::DONE_TIMEOUT {
+            session.activity = Activity::Idle;
+            changed = true;
         }
     }
+
+    let ghost_ids: Vec<u32> = state
+        .sessions
+        .iter()
+        .filter(|(pane_id, session)| {
+            !state.pane_to_tab.contains_key(pane_id)
+                && now.saturating_sub(session.last_event_ts) >= crate::state::GHOST_TIMEOUT
+        })
+        .map(|(pid, _)| *pid)
+        .collect();
+
+    for pid in ghost_ids {
+        state.sessions.remove(&pid);
+        changed = true;
+    }
+
+    state.dismissed_until.retain(|_, until| now < *until);
 
     changed
 }

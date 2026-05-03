@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::state::{BootstrapPhase, PluginState, PROBE_MAX, PROBE_PREFIX, STATUS_ICONS};
+use crate::state::{BootstrapPhase, PluginState, STATUS_ICONS};
 use zellij_tile::prelude::*;
 
 /// Returns true if user is in a mode where we must not rename tabs.
@@ -56,32 +56,6 @@ pub fn rebuild_pane_map(state: &mut PluginState) {
     }
 }
 
-/// Extract internal tab key from Zellij's auto-generated name "Tab #N" → Some(N-1).
-fn parse_tab_key(base_name: &str) -> Option<usize> {
-    base_name
-        .strip_prefix("Tab #")
-        .and_then(|n| n.parse::<usize>().ok())
-        .map(|n| n.saturating_sub(1))
-}
-
-/// Look up the internal BTreeMap key for a tab by parsing its current name.
-///
-/// Zellij's `rename_tab` API has a bug (as of 0.43.1): the server handler at
-/// `screen.rs:5069` does `screen.tabs.get_mut(&tab_index.saturating_sub(1))`,
-/// looking up by BTreeMap key (internal index) instead of visual position.
-/// When tabs are closed, keys stay (never reused) while positions compact,
-/// so key != position+1 and the wrong tab gets renamed.
-///
-/// To guarantee we never rename an unrelated tab, we only operate on tabs
-/// whose name still matches the auto-generated "Tab #N" format (possibly
-/// with our status icon appended). That name is a direct, verifiable
-/// signal of the tab's real internal key. User-renamed tabs have no such
-/// signal, so we leave them alone entirely.
-pub fn verified_tab_key(tab: &TabInfo) -> Option<usize> {
-    let base = strip_status_suffix(&tab.name);
-    parse_tab_key(&base)
-}
-
 /// Strip any trailing status icon we may have appended.
 fn strip_status_suffix(name: &str) -> String {
     let trimmed = name.trim_end();
@@ -95,7 +69,7 @@ fn strip_status_suffix(name: &str) -> String {
 
 /// Determine the highest-priority icon for a given tab and rename it.
 pub fn update_tab_name(state: &PluginState, tab_index: usize) {
-    // Don't fire renames until we've discovered internal keys.
+    // Don't fire renames until the first TabUpdate initialized tab state.
     if !matches!(state.bootstrap, BootstrapPhase::Complete) {
         return;
     }
@@ -130,18 +104,8 @@ pub fn update_tab_name(state: &PluginState, tab_index: usize) {
         .map(|t| t.name.as_str());
 
     if current_name != Some(new_name.as_str()) {
-        // Zellij bug workaround: rename_tab's server handler looks up by
-        // internal BTreeMap key, not visual position. Only rename if the
-        // tab's current name still encodes its key ("Tab #N" or "Tab #N <icon>").
-        // User-renamed tabs have no verifiable key, so we never touch them —
-        // this guarantees creating a new tab can't cascade-rename user tabs.
-        let tab = match state.tabs.iter().find(|t| t.position == tab_index) {
-            Some(t) => t,
-            None => return,
-        };
-        if let Some(key) = verified_tab_key(tab) {
-            rename_tab((key + 1) as u32, &new_name);
-        }
+        // Patched Zellij resolves this one-based index by visual tab position.
+        rename_tab((tab_index + 1) as u32, &new_name);
     }
 }
 
@@ -153,102 +117,14 @@ pub fn update_all_tab_names(state: &PluginState) {
     }
 }
 
-/// Begin bootstrap probing to discover Zellij's internal BTreeMap keys.
+/// Mark rename bootstrap complete.
 ///
-/// `rename_tab(N)` looks up by `tabs.get_mut(&(N-1))` — internal key, not
-/// visual position. We turn that bug into a discovery tool: probe every
-/// candidate key with a unique marker, then on the next TabUpdate read which
-/// visual position got each marker. After `finish_bootstrap`, the
-/// position→key map is complete and renames are deterministic forever.
-///
-/// Fast-path: if every current tab is still auto-named "Tab #N", we skip
-/// probing entirely — keys are recoverable from names.
+/// This plugin is deployed with a patched Zellij whose `rename_tab(N)` resolves
+/// N by one-based visual position. The old probe workaround targeted Zellij
+/// 0.43.1's internal-key bug and must not run against the patched host.
 pub fn start_bootstrap(state: &mut PluginState) {
     if !matches!(state.bootstrap, BootstrapPhase::NotStarted) {
         return;
     }
-    // Defer if user is typing — we'll retry from ModeUpdate on exit.
-    if matches!(
-        state.input_mode,
-        InputMode::RenameTab | InputMode::RenamePane
-    ) {
-        return;
-    }
-    if state.tabs.is_empty() {
-        state.bootstrap = BootstrapPhase::Complete;
-        return;
-    }
-
-    // Fast-path: every tab still has its auto-generated "Tab #N" name.
-    let all_auto_named = state.tabs.iter().all(|t| {
-        let base = strip_status_suffix(&t.name);
-        parse_tab_key(&base).is_some()
-    });
-    if all_auto_named {
-        refresh_tab_keys(state);
-        state.bootstrap = BootstrapPhase::Complete;
-        return;
-    }
-
-    let saved_names: HashMap<usize, String> = state
-        .tabs
-        .iter()
-        .map(|t| (t.position, t.name.clone()))
-        .collect();
-
-    // Issue probe renames. Only valid internal keys produce visible renames;
-    // others no-op. Plugin's own update_tab_name is gated on Complete, so it
-    // won't fire during this window.
-    for k in 0..PROBE_MAX {
-        rename_tab((k + 1) as u32, &format!("{}{}", PROBE_PREFIX, k));
-    }
-
-    state.bootstrap = BootstrapPhase::Probing { saved_names };
-}
-
-/// Read back probe results, populate `tab_internal_keys`, and restore each
-/// probed tab to its original name. Called from the next TabUpdate after
-/// `start_bootstrap` issued the probes.
-pub fn finish_bootstrap(state: &mut PluginState) {
-    let saved_names = match std::mem::replace(&mut state.bootstrap, BootstrapPhase::Complete) {
-        BootstrapPhase::Probing { saved_names } => saved_names,
-        other => {
-            state.bootstrap = other;
-            return;
-        }
-    };
-
-    // Parse probe markers → position-to-key map.
-    for tab in &state.tabs {
-        if let Some(rest) = tab.name.strip_prefix(PROBE_PREFIX) {
-            if let Ok(k) = rest.parse::<usize>() {
-                state.tab_internal_keys.insert(tab.position, k);
-            }
-        }
-    }
-
-    // Pre-populate base_names from saved (pre-probe) names so that activity
-    // events arriving immediately after bootstrap have the right base.
-    for (pos, name) in &saved_names {
-        let base = strip_status_suffix(name);
-        state.tab_base_names.insert(*pos, base);
-    }
-
-    // Restore each probed tab to its original name using the discovered key.
-    // Tabs whose internal key fell outside PROBE_MAX kept their original
-    // names (probe never landed on them) and need no restore.
-    for tab in &state.tabs {
-        if !tab.name.starts_with(PROBE_PREFIX) {
-            continue;
-        }
-        let original = match saved_names.get(&tab.position) {
-            Some(n) => n,
-            None => continue,
-        };
-        let key = match state.tab_internal_keys.get(&tab.position) {
-            Some(k) => *k,
-            None => continue,
-        };
-        rename_tab((key + 1) as u32, original);
-    }
+    state.bootstrap = BootstrapPhase::Complete;
 }

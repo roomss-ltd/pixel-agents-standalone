@@ -9,25 +9,11 @@ local STALE_THRESHOLD = 120
 local DENYLIST_PATH = os.getenv("HOME") .. "/.hammerspoon/claude-status-denylist.json"
 local DENYLIST_TTL = 30 * 24 * 60 * 60  -- 30 days
 
-local function currentFileDir()
-    local source = debug.getinfo(1, "S").source
-    if source:sub(1, 1) == "@" then source = source:sub(2) end
-
-    if hs and hs.fs and hs.fs.symlinkAttributes then
-        local attrs = hs.fs.symlinkAttributes(source)
-        if attrs and attrs.target then source = attrs.target end
-    end
-
-    return source:match("^(.*)/[^/]+$") or "."
-end
-
-local SOURCE_DIR = currentFileDir()
-
 -- Sounds are intentionally owned by Hammerspoon so Claude Code and Codex share
 -- one Mac-only notification path. Use either `name` for a system sound or
 -- `file` for an absolute path to an audio file.
 local SOUND_ENABLED = true
-local SOUND_DONE = { file = SOURCE_DIR .. "/sounds/mixkit-correct-answer-tone-2870.wav" }
+local SOUND_DONE = { name = "Glass" }
 local SOUND_WAITING = { name = "Ping" }
 local SOUND_COOLDOWN = 0.75
 local WAITING_SOUND_REMINDER_INTERVAL = 30.0

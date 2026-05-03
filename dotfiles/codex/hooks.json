@@ -1,0 +1,49 @@
+{
+  "_comment": "Codex CLI hooks for claude-tab-status. Replace __HOME__ with your home directory, then merge into ~/.codex/hooks.json. Codex CLI has 6 hook events (no SessionEnd, no SubagentStop). Use codex-wrapper.sh to synthesise SessionEnd on process exit.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.config/zellij/plugins/codex-zj-hook.sh" }
+        ]
+      }
+    ]
+  }
+}
