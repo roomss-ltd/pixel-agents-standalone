@@ -222,5 +222,9 @@ test("compact debug bridge reports computed mini layout geometry", () => {
   assert.match(webview, /local function debugEnabled\(\)/);
   assert.match(webview, /return value == true or value == "true" or value == 1 or value == "1"/);
   assert.match(webview, /debug = debugEnabled\(\)/);
+  assert.match(webview, /local function compactLayoutDebugScript\(\)/);
+  assert.match(webview, /miniButton: node\("\.mini-enlarge-toggle"\)/);
+  assert.match(webview, /return JSON\.stringify\(payload\);/);
+  assert.match(webview, /if debugEnabled\(\) and viewState\.viewMode == "compact" then[\s\S]*webview:evaluateJavaScript\(compactLayoutDebugScript\(\), function\(layout\)/);
   assert.match(webview, /elseif body\.type == "debug\.layout" then[\s\S]*debugLog\("layout " \.\. hs\.inspect\(body\.layout\)\)/);
 });

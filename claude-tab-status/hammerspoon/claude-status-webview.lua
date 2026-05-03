@@ -999,6 +999,62 @@ local function rendererScript()
     return webviewHtml.script(BRIDGE_SCHEME)
 end
 
+local function compactLayoutDebugScript()
+    return [[
+(function() {
+  try {
+    function node(selector) {
+      var element = document.querySelector(selector);
+      if (!element) return { selector: selector, exists: false };
+      var style = window.getComputedStyle(element);
+      var rect = element.getBoundingClientRect();
+      return {
+        selector: selector,
+        exists: true,
+        className: element.className || "",
+        display: style.display,
+        position: style.position,
+        gridColumnStart: style.gridColumnStart,
+        gridColumnEnd: style.gridColumnEnd,
+        justifySelf: style.justifySelf,
+        alignSelf: style.alignSelf,
+        opacity: style.opacity,
+        pointerEvents: style.pointerEvents,
+        width: Math.round(rect.width * 10) / 10,
+        height: Math.round(rect.height * 10) / 10,
+        left: Math.round(rect.left * 10) / 10,
+        top: Math.round(rect.top * 10) / 10,
+        right: Math.round(rect.right * 10) / 10,
+        bottom: Math.round(rect.bottom * 10) / 10,
+        offsetWidth: element.offsetWidth,
+        offsetHeight: element.offsetHeight
+      };
+    }
+    var widget = document.querySelector(".widget");
+    var payload = {
+      widgetClass: widget ? widget.className : "",
+      viewport: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        clientWidth: document.documentElement ? document.documentElement.clientWidth : null,
+        clientHeight: document.documentElement ? document.documentElement.clientHeight : null
+      },
+      widget: node(".widget"),
+      header: node(".header"),
+      loader: node(".loader-slot"),
+      counts: node(".header-counts"),
+      peekTicker: node(".peek-ticker"),
+      miniButton: node(".mini-enlarge-toggle"),
+      collapseButton: node(".collapse-toggle")
+    };
+    return JSON.stringify(payload);
+  } catch (error) {
+    return "error:" + (error && error.name ? error.name : "unknown") + ":" + (error && error.message ? error.message : String(error));
+  }
+})();
+]]
+end
+
 local function buildSettingsHtml()
     return webviewHtml.buildSettings({
         styles = webviewStyles.css(),
@@ -1494,6 +1550,11 @@ function refreshWebview()
     webview:evaluateJavaScript(script, function(result)
         debugLog("render eval result=" .. tostring(result))
     end)
+    if debugEnabled() and viewState.viewMode == "compact" then
+        webview:evaluateJavaScript(compactLayoutDebugScript(), function(layout)
+            debugLog("layout " .. tostring(layout))
+        end)
+    end
 
     local shouldShow = false
     if visible and #sessions > 0 then
