@@ -353,6 +353,11 @@ function M.css()
       filter: drop-shadow(0 0 6px rgba(115, 166, 255, 0.5));
     }
 
+    .peek-kind .peek-warning-icon svg {
+      width: 13px;
+      height: 13px;
+    }
+
     .peek-badge {
       justify-self: start;
       min-width: 26px;

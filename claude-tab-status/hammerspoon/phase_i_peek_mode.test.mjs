@@ -90,13 +90,16 @@ test("peek mode renders as an independent compact row-native card instead of a s
   assert.match(html, /<span class="peek-badge" data-peek-badge><\/span>/);
   assert.match(html, /<span class="peek-meta peek-stats" data-peek-meta><\/span>/);
   assert.match(html, /function peekKindLabel\(kind\)/);
-  assert.match(html, /kind\.textContent = item \? peekKindLabel\(item\.kind\) : ""/);
+  assert.match(html, /var waitingIcon = document\.getElementById\("triangle-alert-icon-template"\)/);
+  assert.match(html, /kind\.innerHTML = waitingIcon \? waitingIcon\.innerHTML : peekKindLabel\(item\.kind\)/);
+  assert.doesNotMatch(html, /if \(kind === "waiting"\) return "!"/);
   assert.match(html, /badge\.textContent = item \? \(item\.display_label \|\| ""\) : ""/);
   assert.match(html, /renderPeekMeta\(meta, header\)/);
   assert.match(styles, /\.widget\.peek \.header\s*\{[\s\S]*height: 64px;[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
   assert.match(styles, /\.widget\.peek \.loader-slot,\s*\.widget\.peek \.header-counts\s*\{[\s\S]*display: none;/);
   assert.match(styles, /\.peek-card\s*\{[\s\S]*grid-template-columns: 24px 34px minmax\(0, 1fr\) auto;[\s\S]*column-gap: 10px;[\s\S]*row-gap: 7px;/);
   assert.match(styles, /\.peek-kind\s*\{[\s\S]*border-radius: 999px;/);
+  assert.match(styles, /\.peek-kind \.peek-warning-icon svg\s*\{[\s\S]*width: 13px;[\s\S]*height: 13px;/);
   assert.match(styles, /\.peek-badge\s*\{[\s\S]*background: var\(--badge-active-bg\);/);
   assert.match(styles, /\.peek-ticker\.finished \.peek-kind/);
 });

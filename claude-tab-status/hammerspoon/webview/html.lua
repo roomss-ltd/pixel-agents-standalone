@@ -318,7 +318,6 @@ function M.script(bridgeScheme)
       }
 
       function peekKindLabel(kind) {
-        if (kind === "waiting") return "!";
         if (kind === "finished") return "✓";
         return "●";
       }
@@ -387,6 +386,11 @@ function M.script(bridgeScheme)
         if (item && item.kind === "idle") {
           var idleIcon = document.getElementById("coffee-idle-icon-template");
           kind.innerHTML = idleIcon ? idleIcon.innerHTML : "";
+          return;
+        }
+        if (item && item.kind === "waiting") {
+          var waitingIcon = document.getElementById("triangle-alert-icon-template");
+          kind.innerHTML = waitingIcon ? waitingIcon.innerHTML : peekKindLabel(item.kind);
           return;
         }
         kind.textContent = item ? peekKindLabel(item.kind) : "";
@@ -1172,6 +1176,7 @@ function M.build(options)
     local pencilIcon = icons.svg("pencil", "control-icon pencil-icon")
     local banIcon = icons.svg("ban", "control-icon ban-icon")
     local unlinkIcon = icons.svg("unlink", "control-icon unlink-icon")
+    local triangleAlertIcon = icons.svg("triangle-alert", "control-icon peek-warning-icon")
     local enlargeIcon = maximizeIcon
     local miniControls = miniView.headerControls({
         enlargeIcon = enlargeIcon,
@@ -1188,6 +1193,7 @@ function M.build(options)
         sharedView.iconTemplate("pencil-icon-template", pencilIcon),
         sharedView.iconTemplate("ban-icon-template", banIcon),
         sharedView.iconTemplate("unlink-icon-template", unlinkIcon),
+        sharedView.iconTemplate("triangle-alert-icon-template", triangleAlertIcon),
     }, "\n    ")
     return [[
 <!doctype html>
