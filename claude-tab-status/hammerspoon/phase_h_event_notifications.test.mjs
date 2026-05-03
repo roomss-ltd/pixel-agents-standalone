@@ -37,6 +37,7 @@ test("event popover is a separate collapsed-only webview placed through the shar
   assert.match(webview, /eventWebview = hs\.webview\.new\(eventFrame\)/);
   assert.match(webview, /eventWebview:html\(buildEventsHtml\(\)\)/);
   assert.match(webview, /webviewPlacement\.placePopover\(screenFrame\(\), mainFrame, EVENT_POPOVER_SIZE/);
+  assert.match(webview, /gap = EVENT_POPOVER_GAP/);
   assert.match(webview, /local showEvents = shouldShow and settings\.notificationsEnabled ~= false and not expanded and #eventQueue > 0/);
   assert.match(webview, /window\.renderEvents\(/);
   assert.match(webview, /if eventWebview then eventWebview:delete\(\) end/);
@@ -67,6 +68,7 @@ test("event popover renders compact cards with focus and dismiss bridge actions"
 
 test("event notification polish uses row-native badge layout and quiet dismiss", () => {
   assert.match(webview, /local EVENT_POPOVER_SIZE = \{ width = 244, height = 108 \}/);
+  assert.match(webview, /local EVENT_POPOVER_GAP = 5/);
   assert.match(webview, /return tostring\(name\) \.\. " needs input"/);
   assert.match(webview, /return tostring\(name\) \.\. " finished"/);
   assert.match(webview, /event\.detail = kind == "waiting" and tostring\(event\.display_label\) \.\. " · Waiting for approval" or tostring\(event\.display_label\) \.\. " · Click to focus"/);
@@ -77,7 +79,7 @@ test("event notification polish uses row-native badge layout and quiet dismiss",
   assert.match(styles, /\.event-panel\s*\{[\s\S]*gap: 3px;[\s\S]*padding: 4px;/);
   assert.match(styles, /\.event-row\s*\{[\s\S]*min-height: 32px;[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) 18px 16px;/);
   assert.match(styles, /\.event-row::before/);
-  assert.match(styles, /\.event-title\s*\{[^}]*font-weight: 600;/);
+  assert.match(styles, /\.event-title\s*\{[^}]*font-weight: 500;/);
   assert.match(styles, /\.event-detail\s*\{[^}]*font-size: 9\.5px;/);
   assert.match(styles, /\.event-dismiss\s*\{[\s\S]*background: transparent;[\s\S]*opacity: 0\.12;/);
   assert.match(styles, /\.event-row:hover \.event-dismiss\s*\{[\s\S]*opacity: 0\.46;/);

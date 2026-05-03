@@ -1321,7 +1321,7 @@ function M.css()
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       color: rgba(255, 255, 255, 0.86);
     }
 

@@ -68,6 +68,7 @@ local SETTINGS_ROW_GAP = 6
 local SETTINGS_VERTICAL_PADDING = 16
 local SETTINGS_BORDER_SAFETY = 4
 local EVENT_POPOVER_SIZE = { width = 244, height = 108 }
+local EVENT_POPOVER_GAP = 5
 
 local webview = nil
 local settingsWebview = nil
@@ -1611,7 +1612,7 @@ function refreshWebview()
         if not eventWebview then
             local eventFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, EVENT_POPOVER_SIZE, {
                 padding = WINDOW_PADDING,
-                gap = POPOVER_GAP,
+                gap = EVENT_POPOVER_GAP,
                 order = { "below", "above", "left", "right" },
                 clampCrossAxis = true,
             })
@@ -1627,7 +1628,7 @@ function refreshWebview()
 
         local eventFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, EVENT_POPOVER_SIZE, {
             padding = WINDOW_PADDING,
-            gap = POPOVER_GAP,
+            gap = EVENT_POPOVER_GAP,
             order = { "below", "above", "left", "right" },
             clampCrossAxis = true,
         })
