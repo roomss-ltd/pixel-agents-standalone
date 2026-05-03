@@ -79,7 +79,10 @@ test("mini layout gives loader counts and enlarge control distinct spacing", () 
   assert.match(styles, /\.widget\.compact \.header\s*\{[\s\S]*grid-template-columns: 24px 1fr 28px;[\s\S]*padding: 0 10px;[\s\S]*column-gap: 8px;/);
   assert.match(styles, /\.widget\.compact \.loader-slot\s*\{[\s\S]*grid-column: 1;/);
   assert.match(styles, /\.widget\.compact \.header-counts\s*\{[\s\S]*grid-column: 2;[\s\S]*justify-self: center;[\s\S]*gap: 8px;[\s\S]*max-width: 100%;[\s\S]*overflow: hidden;/);
-  assert.match(styles, /\.widget\.compact \.mini-enlarge-toggle\s*\{[\s\S]*width: 26px;[\s\S]*height: 26px;[\s\S]*border: 0\.5px solid transparent;[\s\S]*background: transparent;[\s\S]*color: rgba\(255, 255, 255, 0\.62\);[\s\S]*opacity: 0\.78;/);
+  assert.match(styles, /\.widget\.compact \.mini-enlarge-toggle\s*\{[\s\S]*position: static;[\s\S]*inset: auto;[\s\S]*grid-column: 3;[\s\S]*width: 26px;[\s\S]*height: 26px;[\s\S]*border: 0\.5px solid transparent;[\s\S]*background: transparent;[\s\S]*color: rgba\(255, 255, 255, 0\.62\);[\s\S]*opacity: 0\.78;/);
+  assert.doesNotMatch(styles, /\.compact-mode-toggle\s*\{[^}]*position: absolute;/);
+  assert.doesNotMatch(styles, /\.header-icon-button\.compact-mode-toggle\s*\{[^}]*position: absolute;/);
+  assert.doesNotMatch(styles, /\.widget:not\(\.peek\):not\(\.expanded\) \.mini-enlarge-toggle\s*\{[^}]*top:/);
   assert.match(styles, /\.widget\.compact \.mini-enlarge-toggle:hover\s*\{[\s\S]*border-color: rgba\(115, 166, 255, 0\.20\);[\s\S]*background: rgba\(115, 166, 255, 0\.08\);[\s\S]*color: rgba\(255, 255, 255, 0\.78\);/);
   assert.match(styles, /\.widget\.compact \.mini-enlarge-toggle \.maximize-icon\s*\{[\s\S]*width: 15px;[\s\S]*height: 15px;/);
   assert.match(styles, /\.widget\.compact \.mini-enlarge-toggle \.maximize-icon svg\s*\{[\s\S]*width: 15px;[\s\S]*height: 15px;/);

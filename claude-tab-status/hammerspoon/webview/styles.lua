@@ -102,12 +102,9 @@ function M.css()
 
     .compact-mode-toggle {
       display: none;
-      position: absolute;
-      top: 6px;
-      right: 7px;
       z-index: 4;
       opacity: 0.72;
-      transition: opacity 120ms ease, transform 120ms ease;
+      transition: opacity 120ms ease;
     }
 
     .widget.peek .peek-minimize-toggle {
@@ -121,11 +118,11 @@ function M.css()
 
     .widget:not(.peek):not(.expanded) .mini-enlarge-toggle {
       display: grid;
-      top: 3px;
     }
 
     .widget.compact .mini-enlarge-toggle {
       position: static;
+      inset: auto;
       grid-column: 3;
       justify-self: end;
       width: 26px;
@@ -174,7 +171,6 @@ function M.css()
 
     .compact-mode-toggle:hover {
       opacity: 0.95;
-      transform: translateY(-1px);
     }
 
     /* Header */
@@ -823,9 +819,6 @@ function M.css()
 
     .header-icon-button.compact-mode-toggle {
       display: none;
-      position: absolute;
-      top: 6px;
-      right: 7px;
       z-index: 4;
       opacity: 0.72;
     }
