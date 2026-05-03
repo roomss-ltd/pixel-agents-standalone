@@ -719,7 +719,7 @@ function M.css()
     }
 
     .widget.peek.peek-has-active-stack .peek-history-list {
-      max-height: 150px;
+      max-height: 220px;
     }
 
     .peek-history-row {

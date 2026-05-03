@@ -109,7 +109,7 @@ test("peek view mode controls live in a bottom action row with window icons", ()
   assert.match(icons, /\["pin"\] = \[\[<path d="M12 17v5"\/>/);
   assert.doesNotMatch(icons, /M18\.5 5\.5 13 11/);
   assert.match(state, /local PEEK_HISTORY_MAX_VISIBLE_ROWS = 8/);
-  assert.match(state, /local PEEK_MAX_HOVER_FRAME_HEIGHT = 420/);
+  assert.match(state, /local PEEK_MAX_HOVER_FRAME_HEIGHT = 520/);
   assert.match(state, /local PEEK_HOVER_BORDER_SAFETY = BORDER_SHADOW_SAFETY \+ \d+/);
   assert.match(state, /local function peekHoverFrameHeight\(sections\)/);
   assert.match(state, /math\.min\(historyCount, PEEK_HISTORY_MAX_VISIBLE_ROWS\)/);

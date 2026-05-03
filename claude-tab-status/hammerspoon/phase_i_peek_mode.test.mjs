@@ -37,6 +37,7 @@ test("non-hover peek keeps closed visible height but reserves transparent border
 });
 
 test("hovered peek reserves enough native frame space for the bottom border", () => {
+  assert.match(state, /local PEEK_MAX_HOVER_FRAME_HEIGHT = 520/);
   assert.match(state, /local PEEK_HOVER_BORDER_SAFETY = BORDER_SHADOW_SAFETY \+ 20/);
   assert.match(state, /height = height \+ PEEK_HOVER_BORDER_SAFETY/);
   assert.match(state, /return math\.min\(height, PEEK_MAX_HOVER_FRAME_HEIGHT\)/);
@@ -44,11 +45,11 @@ test("hovered peek reserves enough native frame space for the bottom border", ()
 
 test("peek hover caps scrollable history instead of clipping bottom actions", () => {
   assert.match(html, /setClass\(widget, "peek-has-active-stack", activePeekItems\(state\.header \|\| \{\}\)\.length > 0\)/);
-  assert.match(state, /local PEEK_HISTORY_ACTIVE_STACK_MAX_HEIGHT = 150/);
+  assert.match(state, /local PEEK_HISTORY_ACTIVE_STACK_MAX_HEIGHT = 220/);
   assert.match(state, /local function peekHistoryListHeight\(historyCount, hasActiveStack\)/);
   assert.match(state, /if hasActiveStack then[\s\S]*return math\.min\(height, PEEK_HISTORY_ACTIVE_STACK_MAX_HEIGHT\)/);
   assert.match(state, /height = height \+ peekHistoryListHeight\(historyCount, stackCount > 0\)/);
-  assert.match(styles, /\.widget\.peek\.peek-has-active-stack \.peek-history-list\s*\{[\s\S]*max-height: 150px;/);
+  assert.match(styles, /\.widget\.peek\.peek-has-active-stack \.peek-history-list\s*\{[\s\S]*max-height: 220px;/);
   assert.match(styles, /\.peek-history-list\s*\{[\s\S]*overflow-y: auto;/);
   assert.match(styles, /\.peek-actions\s*\{[\s\S]*min-height: 24px;/);
 });
