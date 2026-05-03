@@ -41,6 +41,7 @@ function M.script(bridgeScheme)
       var peekSignature = "";
       var peekTimer = null;
       var lastPeekHeader = {};
+      var lastPostedPeekHover = null;
 
       function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function(ch) {
@@ -197,6 +198,8 @@ function M.script(bridgeScheme)
         var related = event && event.relatedTarget;
         if (widget && related && widget.contains(related)) return;
         if (widget.classList.contains("peek")) {
+          if (lastPostedPeekHover === hovering) return;
+          lastPostedPeekHover = hovering;
           postAction({ type: "peek.hover.set", hovering: hovering });
           return;
         }

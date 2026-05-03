@@ -64,6 +64,14 @@ test("older-finished toggle click is robust in older WebKit and does not start d
   assert.match(html, /if \(closestTarget\(event\.target, "\.bottom-actions"\)\) return/);
 });
 
+test("peek hover refreshes are idempotent so action clicks are not re-rendered away", () => {
+  assert.match(html, /var lastPostedPeekHover = null/);
+  assert.match(html, /if \(lastPostedPeekHover === hovering\) return/);
+  assert.match(html, /lastPostedPeekHover = hovering/);
+  assert.match(webview, /local nextPeekHover = body\.hovering == true/);
+  assert.match(webview, /if peekHover ~= nextPeekHover then[\s\S]*peekHover = nextPeekHover[\s\S]*if refreshWebview then refreshWebview\(\) end/);
+});
+
 test("bridge and Lua own the older-finished expanded state", () => {
   assert.match(bridge, /\["older\.toggle"\] = true/);
   assert.match(webview, /local olderFinishedExpanded = false/);

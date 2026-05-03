@@ -165,6 +165,8 @@ test("peek primary click focuses zellij without opening the dormant detail view"
   assert.match(html, /document\.addEventListener\("mouseout", function\(event\)/);
   assert.match(html, /var related = event && event\.relatedTarget;/);
   assert.match(html, /if \(widget && related && widget\.contains\(related\)\) return;/);
+  assert.match(html, /var lastPostedPeekHover = null/);
+  assert.match(html, /if \(lastPostedPeekHover === hovering\) return/);
   assert.match(html, /postAction\(\{ type: "peek\.hover\.set", hovering: hovering \}\);/);
   assert.match(html, /handleWidgetHover\(true, event\);/);
   assert.match(html, /handleWidgetHover\(false, event\);/);
@@ -173,7 +175,8 @@ test("peek primary click focuses zellij without opening the dormant detail view"
   assert.doesNotMatch(html, /ensurePeekActionButton\(peekActions, "peek-expand-button"/);
   assert.match(webview, /local peekHover = false/);
   assert.match(webview, /body\.type == "peek\.hover\.set"/);
-  assert.match(webview, /peekHover = body\.hovering == true/);
+  assert.match(webview, /local nextPeekHover = body\.hovering == true/);
+  assert.match(webview, /if peekHover ~= nextPeekHover then[\s\S]*peekHover = nextPeekHover/);
   assert.match(webview, /peekHover = false/);
   assert.match(webview, /peekHover = peekHover,/);
   assert.match(webview, /refreshWebview\(\)/);

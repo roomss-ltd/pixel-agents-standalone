@@ -50,7 +50,7 @@ local MAX_EVENT_ROWS = 3
 -- Sounds stay owned by Hammerspoon so the webview renderer keeps the same
 -- Mac-only notification path as the canvas fallback.
 local SOUND_ENABLED = true
-local SOUND_DONE = { file = SOURCE_DIR .. "/sounds/mixkit-correct-answer-tone-2870.wav" }
+local SOUND_DONE = { file = SOURCE_DIR .. "/sounds/Glass.wav" }
 local SOUND_WAITING = { name = "Ping" }
 local SOUND_COOLDOWN = 0.75
 local WAITING_SOUND_REMINDER_INTERVAL = 30.0
@@ -311,7 +311,12 @@ local function handleBridgeMessage(message)
         if expanded or pinned or peekPinned then
             peekHover = false
         else
-            peekHover = body.hovering == true
+            local nextPeekHover = body.hovering == true
+            if peekHover ~= nextPeekHover then
+                peekHover = nextPeekHover
+                if refreshWebview then refreshWebview() end
+            end
+            return
         end
         if refreshWebview then refreshWebview() end
     elseif body.type == "peek.pin.toggle" then
