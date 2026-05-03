@@ -253,6 +253,21 @@ function M.script(bridgeScheme)
         return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
       }
 
+      function renderCoffeeSteamInto(container) {
+        if (!container) return;
+        var existing = container.firstElementChild;
+        if (existing && existing.getAttribute("data-coffee-steam") === "true") return;
+
+        var template = document.getElementById("coffee-idle-icon-template");
+        container.innerHTML = "";
+        if (!template) return;
+
+        var element = document.createElement("span");
+        element.setAttribute("data-coffee-steam", "true");
+        element.innerHTML = template.innerHTML;
+        container.appendChild(element);
+      }
+
       function renderLoaderInto(slot, loader) {
         loader = loader || {};
         if (!slot) return;
@@ -260,9 +275,8 @@ function M.script(bridgeScheme)
         setClass(slot, "is-active", !!loader.active);
         if (!loader.active) {
           var widget = closestTarget(slot, ".widget");
-          var idleIcon = document.getElementById("coffee-idle-icon-template");
           if (!loader.active && widget && widget.classList.contains("compact")) {
-            slot.innerHTML = idleIcon ? idleIcon.innerHTML : "";
+            renderCoffeeSteamInto(slot);
           } else {
             slot.innerHTML = "";
           }
@@ -382,12 +396,13 @@ function M.script(bridgeScheme)
           renderPeekLoader(kind, header);
           return;
         }
-        clearPeekKind(kind);
         if (item && item.kind === "idle") {
-          var idleIcon = document.getElementById("coffee-idle-icon-template");
-          kind.innerHTML = idleIcon ? idleIcon.innerHTML : "";
+          setClass(kind, "is-loader", false);
+          kind.setAttribute("data-peek-kind-mode", "idle");
+          renderCoffeeSteamInto(kind);
           return;
         }
+        clearPeekKind(kind);
         if (item && item.kind === "waiting") {
           var waitingIcon = document.getElementById("triangle-alert-icon-template");
           kind.innerHTML = waitingIcon ? waitingIcon.innerHTML : peekKindLabel(item.kind);

@@ -232,30 +232,40 @@ function M.css()
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke {
       opacity: 0.52;
       stroke-width: 1.65px;
-      animation: coffeeSteam 3.1s ease-in-out infinite;
+      stroke-dasharray: 9;
+      stroke-dashoffset: 9;
+      animation: coffeeSteam 3.6s ease-in-out infinite;
       transform-box: fill-box;
       transform-origin: center;
     }
 
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2 {
-      animation-delay: 0.55s;
+      animation-delay: -1.1s;
     }
 
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3 {
-      animation-delay: 1.1s;
+      animation-delay: -2.2s;
     }
 
     @keyframes coffeeSteam {
       0% {
-        opacity: 0.14;
-        transform: translateY(0.8px);
+        opacity: 0;
+        stroke-dashoffset: 9;
       }
-      35% {
+      18% {
+        opacity: 0;
+      }
+      42% {
         opacity: 0.72;
+        stroke-dashoffset: 2.8;
+      }
+      72% {
+        opacity: 0.45;
+        stroke-dashoffset: 0;
       }
       100% {
-        opacity: 0.14;
-        transform: translateY(-1.8px);
+        opacity: 0;
+        stroke-dashoffset: 0;
       }
     }
 
@@ -553,17 +563,19 @@ function M.css()
     .peek-ticker.idle .coffee-smoke {
       opacity: 0.52;
       stroke-width: 1.65px;
-      animation: coffeeSteam 3.1s ease-in-out infinite;
+      stroke-dasharray: 9;
+      stroke-dashoffset: 9;
+      animation: coffeeSteam 3.6s ease-in-out infinite;
       transform-box: fill-box;
       transform-origin: center;
     }
 
     .peek-ticker.idle .coffee-smoke-2 {
-      animation-delay: 0.55s;
+      animation-delay: -1.1s;
     }
 
     .peek-ticker.idle .coffee-smoke-3 {
-      animation-delay: 1.1s;
+      animation-delay: -2.2s;
     }
 
     .peek-ticker.idle .peek-badge {
