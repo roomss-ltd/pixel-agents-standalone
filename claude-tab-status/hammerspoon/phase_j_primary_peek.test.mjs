@@ -129,10 +129,12 @@ test("peek view mode controls live in a bottom action row with window icons", ()
   assert.match(styles, /\.widget\.peek\.peek-hovering \.peek-history,\s*\.widget\.peek:focus-within \.peek-history\s*\{[\s\S]*max-height: 320px;/);
   assert.match(styles, /\.peek-history-list\s*\{[\s\S]*max-height: 244px;[\s\S]*overflow-y: auto;/);
   assert.match(styles, /\.peek-actions\s*\{[\s\S]*display: grid;[\s\S]*grid-template-columns: 28px minmax\(0, 1fr\) 28px 28px;[\s\S]*align-items: center;/);
-  assert.match(styles, /\.peek-options-toggle\s*\{[^}]*grid-column: 1;/);
-  assert.match(styles, /\.peek-history-older-toggle-shell\s*\{[\s\S]*grid-column: 2;[\s\S]*justify-self: center;/);
-  assert.match(styles, /\.peek-pin-toggle\s*\{[^}]*grid-column: 3;/);
-  assert.match(styles, /\.peek-minimize-toggle\s*\{[^}]*grid-column: 4;/);
+  assert.match(styles, /\.peek-actions\.has-older-toggle\s*\{[\s\S]*grid-template-rows: 24px 24px;[\s\S]*min-height: 54px;/);
+  assert.match(styles, /\.peek-options-toggle\s*\{[^}]*grid-column: 1;[^}]*grid-row: 1;/);
+  assert.match(styles, /\.peek-history-older-toggle-shell\s*\{[\s\S]*grid-column: 1 \/ -1;[\s\S]*grid-row: 1;[\s\S]*justify-self: center;/);
+  assert.match(styles, /\.peek-actions\.has-older-toggle \.peek-options-toggle,\s*\.peek-actions\.has-older-toggle \.peek-pin-toggle,\s*\.peek-actions\.has-older-toggle \.peek-minimize-toggle\s*\{[\s\S]*grid-row: 2;/);
+  assert.match(styles, /\.peek-pin-toggle\s*\{[^}]*grid-column: 3;[^}]*grid-row: 1;/);
+  assert.match(styles, /\.peek-minimize-toggle\s*\{[^}]*grid-column: 4;[^}]*grid-row: 1;/);
   assert.match(styles, /\.peek-action-button\s*\{[\s\S]*width: 24px;[\s\S]*height: 22px;/);
   assert.match(styles, /\.peek-action-button\.is-pinned\s*\{[\s\S]*color: var\(--active-blue\);/);
 });

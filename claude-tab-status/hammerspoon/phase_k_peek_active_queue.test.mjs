@@ -73,6 +73,7 @@ test("peek history owns recent and older finished tiers behind the older toggle"
   assert.match(state, /olderFinished = \{[^\}]*count = #olderCompletedRows[\s\S]*expanded = olderExpanded[\s\S]*label = "Older finished"/);
   assert.match(html, /function renderPeekOlderFinishedControl\(peek\)/);
   assert.match(html, /data-peek-older-finished/);
+  assert.match(html, /setClass\(peekActions, "has-older-toggle", !!olderControl\)/);
   assert.match(html, /function renderPeekActions\(state\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*if \(olderControl\) peekActions\.appendChild\(olderControl\);/);
   assert.doesNotMatch(html, /renderPeekHistory\(header\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*list\.appendChild\(olderControl\);/);
   assert.match(html, /renderPeekHistoryRow\(item\)/);
@@ -81,6 +82,9 @@ test("peek history owns recent and older finished tiers behind the older toggle"
   assert.match(styles, /\.peek-history-row\s*\{[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) max-content;/);
   assert.match(styles, /\.peek-history-status\s*\{[\s\S]*justify-self: end;[\s\S]*font-variant-numeric: tabular-nums;/);
   assert.match(styles, /\.peek-history-row\.older-finished\s*\{[\s\S]*opacity: 0\.78;/);
+  assert.match(state, /local PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT = 54/);
+  assert.match(state, /local actionHeight = PEEK_ACTION_HEIGHT[\s\S]*if olderFinished\.count and olderFinished\.count > 0 then[\s\S]*actionHeight = PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT/);
+  assert.match(state, /height = height \+ PEEK_HISTORY_SECTION_GAP \+ actionHeight/);
 });
 
 test("closed peek removes reveal-only sections from layout so the primary card stays vertically centered", () => {

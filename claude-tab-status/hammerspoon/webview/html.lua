@@ -722,12 +722,13 @@ function M.script(bridgeScheme)
         peekActions.className = "peek-actions";
         var existingOlder = peekActions.querySelector("[data-peek-older-finished]");
         if (existingOlder) existingOlder.remove();
+        var olderControl = renderPeekOlderFinishedControl(peek);
+        setClass(peekActions, "has-older-toggle", !!olderControl);
         ensurePeekActionButton(peekActions, "peek-options-toggle", "settings.toggle", "Open options", "Options", "settings-icon-template");
         var pin = ensurePeekActionButton(peekActions, "peek-pin-toggle", "peek.pin.toggle", "Pin peek open", "Pin peek open", "pin-icon-template");
         setClass(pin, "is-pinned", !!(peek && peek.hoverPinned));
         pin.setAttribute("aria-pressed", peek && peek.hoverPinned ? "true" : "false");
         ensurePeekActionButton(peekActions, "peek-minimize-toggle", "compact.mode.set", "Shrink to mini status", "Shrink to mini", "minimize-icon-template", "compact");
-        var olderControl = renderPeekOlderFinishedControl(peek);
         if (olderControl) peekActions.appendChild(olderControl);
       }
 

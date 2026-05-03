@@ -817,7 +817,8 @@ function M.css()
     }
 
     .peek-history-older-toggle-shell {
-      grid-column: 2;
+      grid-column: 1 / -1;
+      grid-row: 1;
       justify-self: center;
       display: grid;
       justify-items: center;
@@ -841,19 +842,33 @@ function M.css()
       min-height: 24px;
     }
 
+    .peek-actions.has-older-toggle {
+      grid-template-rows: 24px 24px;
+      min-height: 54px;
+    }
+
     .peek-options-toggle {
       grid-column: 1;
+      grid-row: 1;
       justify-self: start;
     }
 
     .peek-pin-toggle {
       grid-column: 3;
+      grid-row: 1;
       justify-self: end;
     }
 
     .peek-minimize-toggle {
       grid-column: 4;
+      grid-row: 1;
       justify-self: end;
+    }
+
+    .peek-actions.has-older-toggle .peek-options-toggle,
+    .peek-actions.has-older-toggle .peek-pin-toggle,
+    .peek-actions.has-older-toggle .peek-minimize-toggle {
+      grid-row: 2;
     }
 
     .peek-action-button {

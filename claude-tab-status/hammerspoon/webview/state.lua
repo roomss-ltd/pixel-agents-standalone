@@ -21,7 +21,8 @@ local PEEK_HISTORY_ROW_GAP = 4
 local PEEK_HISTORY_EMPTY_HEIGHT = 14
 local PEEK_HISTORY_REVEAL_PADDING = 9
 local PEEK_HISTORY_SECTION_GAP = 5
-local PEEK_ACTION_HEIGHT = 22
+local PEEK_ACTION_HEIGHT = 24
+local PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT = 54
 local PEEK_HOVER_FRAME_SAFETY = 18
 local PEEK_MAX_HOVER_FRAME_HEIGHT = 420
 local BORDER_SHADOW_SAFETY = 6
@@ -79,7 +80,11 @@ local function peekHoverFrameHeight(sections)
         height = height + PEEK_HISTORY_OLDER_DIVIDER_HEIGHT
     end
     height = height + peekHistoryListHeight(historyCount)
-    height = height + PEEK_HISTORY_SECTION_GAP + PEEK_ACTION_HEIGHT
+    local actionHeight = PEEK_ACTION_HEIGHT
+    if olderFinished.count and olderFinished.count > 0 then
+        actionHeight = PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT
+    end
+    height = height + PEEK_HISTORY_SECTION_GAP + actionHeight
     height = height + PEEK_HISTORY_REVEAL_PADDING + PEEK_HOVER_FRAME_SAFETY
     height = height + PEEK_HOVER_BORDER_SAFETY
     return math.min(height, PEEK_MAX_HOVER_FRAME_HEIGHT)
