@@ -227,6 +227,7 @@ function M.css()
     .widget.compact .loader-slot:not(.is-active) .coffee-idle-icon svg {
       width: 14px;
       height: 14px;
+      overflow: visible;
     }
 
     .widget.compact .loader-slot:not(.is-active) .coffee-smoke {
@@ -234,7 +235,7 @@ function M.css()
       stroke-width: 1.65px;
       stroke-dasharray: 9;
       stroke-dashoffset: 9;
-      animation: coffeeSteam 3.6s ease-in-out infinite;
+      animation: coffeeSteam 4.8s ease-in-out infinite;
       transform-box: fill-box;
       transform-origin: center;
     }
@@ -251,34 +252,31 @@ function M.css()
       stroke-width: 1.55px;
     }
 
-    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-2 {
-      animation-delay: -0.55s;
-    }
-
-    .widget.compact .loader-slot:not(.is-active) .coffee-smoke-3 {
-      animation-delay: -1.1s;
-    }
-
     @keyframes coffeeSteam {
       0% {
         opacity: 0;
         stroke-dashoffset: 9;
+        transform: translateY(3px);
       }
       18% {
         opacity: 0.24;
         stroke-dashoffset: 6.2;
+        transform: translateY(1px);
       }
       42% {
         opacity: 0.76;
         stroke-dashoffset: 2.8;
+        transform: translateY(-3px);
       }
       78% {
-        opacity: 0.38;
+        opacity: 0.08;
         stroke-dashoffset: 0;
+        transform: translateY(-7px);
       }
       100% {
         opacity: 0;
         stroke-dashoffset: 0;
+        transform: translateY(-9px);
       }
     }
 
@@ -576,6 +574,7 @@ function M.css()
     .peek-ticker.idle .coffee-idle-icon svg {
       width: 17px;
       height: 17px;
+      overflow: visible;
     }
 
     .peek-ticker.idle .coffee-smoke {
@@ -583,7 +582,7 @@ function M.css()
       stroke-width: 1.65px;
       stroke-dasharray: 9;
       stroke-dashoffset: 9;
-      animation: coffeeSteam 3.6s ease-in-out infinite;
+      animation: coffeeSteam 4.8s ease-in-out infinite;
       transform-box: fill-box;
       transform-origin: center;
     }
@@ -598,14 +597,6 @@ function M.css()
 
     .peek-ticker.idle .coffee-smoke-3 {
       stroke-width: 1.55px;
-    }
-
-    .peek-ticker.idle .coffee-smoke-2 {
-      animation-delay: -0.55s;
-    }
-
-    .peek-ticker.idle .coffee-smoke-3 {
-      animation-delay: -1.1s;
     }
 
     .peek-ticker.idle .peek-badge {
