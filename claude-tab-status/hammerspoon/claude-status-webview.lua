@@ -138,8 +138,14 @@ local function settingsSize()
     }
 end
 
+local function debugEnabled()
+    if not (hs and hs.settings) then return false end
+    local value = hs.settings.get(DEBUG_KEY)
+    return value == true or value == "true" or value == 1 or value == "1"
+end
+
 local function debugLog(message)
-    if hs and hs.settings and hs.settings.get(DEBUG_KEY) then
+    if debugEnabled() then
         hs.printf("[claude-status-webview] %s", tostring(message))
         local f = io.open(DEBUG_LOG_PATH, "a")
         if f then
@@ -976,7 +982,7 @@ local function buildViewState()
         settingsOpen = settingsOpen,
         olderFinishedExpanded = olderFinishedExpanded,
         placementState = placementState,
-        debug = hs.settings.get(DEBUG_KEY) == true,
+        debug = debugEnabled(),
         events = eventState.events,
         eventOverflow = eventState.overflow,
     })

@@ -219,5 +219,8 @@ test("compact debug bridge reports computed mini layout geometry", () => {
   assert.match(html, /miniButton: compactLayoutNode\("\.mini-enlarge-toggle"\)/);
   assert.match(html, /window\.getComputedStyle\(element\)/);
   assert.match(html, /postAction\(\{ type: "debug\.layout", layout: payload \}\)/);
+  assert.match(webview, /local function debugEnabled\(\)/);
+  assert.match(webview, /return value == true or value == "true" or value == 1 or value == "1"/);
+  assert.match(webview, /debug = debugEnabled\(\)/);
   assert.match(webview, /elseif body\.type == "debug\.layout" then[\s\S]*debugLog\("layout " \.\. hs\.inspect\(body\.layout\)\)/);
 });
