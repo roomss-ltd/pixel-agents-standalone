@@ -32,7 +32,7 @@ test("canvas-parity style tokens exist for the panel and rows", () => {
   assert.match(styles, /--panel-border:\s*rgba\(128,\s*128,\s*148,\s*0\.55\)/);
   assert.match(styles, /--panel-radius:\s*12px/);
   assert.match(styles, /--active-row-height:\s*28px/);
-  assert.match(styles, /--completed-row-height:\s*24px/);
+  assert.match(styles, /--completed-row-height:\s*22px/);
   assert.match(styles, /--row-gap:\s*3px/);
   assert.match(styles, /--badge-active-bg:\s*rgba\(115,\s*166,\s*255,\s*0\.15\)/);
   assert.match(styles, /--badge-completed-bg:\s*rgba\(115,\s*210,\s*128,\s*0\.15\)/);
@@ -44,7 +44,7 @@ test("rows and divider match the subdued canvas hierarchy without a visible dism
   assert.match(styles, /\.row\.active-row\s*\{[\s\S]*background:\s*rgba\(115,\s*166,\s*255,\s*0\.12\)/);
   assert.match(styles, /\.row\.completed-row\s*\{[\s\S]*background:\s*rgba\(115,\s*210,\s*128,\s*0\.06\)/);
   assert.match(styles, /\.divider\s*\{[\s\S]*border-top:\s*1px dashed rgba\(255,\s*255,\s*255,\s*0\.50\)/);
-  assert.match(styles, /grid-template-columns:\s*34px minmax\(0,\s*1fr\) 102px;/);
+  assert.match(styles, /grid-template-columns:\s*34px minmax\(0,\s*1fr\) max-content;/);
   assert.doesNotMatch(styles, /\.dismiss-button/);
   assert.doesNotMatch(html, /dismiss-button/);
 });

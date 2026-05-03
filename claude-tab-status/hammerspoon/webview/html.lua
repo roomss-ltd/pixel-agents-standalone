@@ -580,7 +580,7 @@ function M.script(bridgeScheme)
           body.appendChild(detail);
 
           var status = document.createElement("div");
-          status.className = "status";
+          status.className = "status row-status";
           var statusIcon = row.icon || "";
           var statusDetail = row.detail || "";
           var statusText = statusIcon + (statusDetail ? " " + statusDetail : " " + (row.activity || "Init"));

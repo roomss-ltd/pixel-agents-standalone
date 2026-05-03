@@ -60,7 +60,7 @@ test("dynamic frame height includes rendered panel spacing instead of clipping r
   assert.match(state, /local PANEL_BOTTOM_PADDING = \d+/);
   assert.match(state, /local ROW_GAP = 3/);
   assert.match(state, /local ACTIVE_ROW_HEIGHT = 28/);
-  assert.match(state, /local COMPLETED_ROW_HEIGHT = 24/);
+  assert.match(state, /local COMPLETED_ROW_HEIGHT = 22/);
   assert.match(state, /local DIVIDER_HEIGHT = 16/);
   assert.match(state, /local BORDER_SHADOW_SAFETY = \d+/);
   assert.match(state, /local MAX_FRAME_HEIGHT = \d+/);

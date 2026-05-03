@@ -35,10 +35,10 @@ test("settings sidecar open state is Lua-owned and separate from main frame sizi
 
 test("row density tokens are slightly tighter while staying aligned with frame sizing", () => {
   assert.match(state, /local ACTIVE_ROW_HEIGHT = 28/);
-  assert.match(state, /local COMPLETED_ROW_HEIGHT = 24/);
+  assert.match(state, /local COMPLETED_ROW_HEIGHT = 22/);
   assert.match(state, /local ROW_GAP = 3/);
   assert.match(styles, /--active-row-height: 28px;/);
-  assert.match(styles, /--completed-row-height: 24px;/);
+  assert.match(styles, /--completed-row-height: 22px;/);
   assert.match(styles, /--row-gap: 3px;/);
 });
 

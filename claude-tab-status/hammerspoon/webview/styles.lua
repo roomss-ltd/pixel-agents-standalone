@@ -18,7 +18,7 @@ function M.css()
       --completed-green: rgb(115, 210, 128);
       --waiting-orange: rgb(255, 140, 89);
       --active-row-height: 28px;
-      --completed-row-height: 24px;
+      --completed-row-height: 22px;
       --row-gap: 3px;
       --badge-active-bg: rgba(115, 166, 255, 0.15);
       --badge-completed-bg: rgba(115, 210, 128, 0.15);
@@ -909,7 +909,7 @@ function M.css()
     .row {
       height: var(--active-row-height);
       display: grid;
-      grid-template-columns: 34px minmax(0, 1fr) 102px;
+      grid-template-columns: 34px minmax(0, 1fr) max-content;
       align-items: center;
       gap: 6px;
       border: 0.5px solid rgba(255, 255, 255, 0.08);
@@ -949,6 +949,7 @@ function M.css()
       height: var(--completed-row-height);
       border-color: rgba(115, 210, 128, 0.12);
       background: rgba(115, 210, 128, 0.06);
+      padding-right: 7px;
     }
 
     .waiting-pulse-enabled .row.waiting-row,
@@ -982,6 +983,7 @@ function M.css()
       border-radius: 5px;
       color: rgba(115, 166, 255, 0.85);
       background: var(--badge-active-bg);
+      box-shadow: inset 0 0 0 1px rgba(115, 166, 255, 0.22);
       font-size: 10px;
       font-weight: 700;
       line-height: 14px;
@@ -994,7 +996,13 @@ function M.css()
       border-radius: 4px;
       color: rgba(115, 210, 128, 0.85);
       background: var(--badge-completed-bg);
+      box-shadow: inset 0 0 0 1px rgba(115, 210, 128, 0.18);
       line-height: 12px;
+    }
+
+    .active-row .tab-badge,
+    .waiting-row .tab-badge {
+      box-shadow: inset 0 0 0 1px rgba(115, 166, 255, 0.22);
     }
 
     .row-main {
@@ -1012,6 +1020,7 @@ function M.css()
 
     .completed-row .title {
       font-size: 11px;
+      font-weight: 600;
       color: rgba(255, 255, 255, 0.65);
     }
 
@@ -1031,7 +1040,12 @@ function M.css()
     }
 
     .waiting-row .status { color: var(--waiting-orange); }
-    .completed-row .status { color: rgba(115, 210, 128, 0.65); }
+    .completed-row .status {
+      justify-self: end;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      color: rgba(115, 210, 128, 0.65);
+    }
 
     .older-finished-divider {
       opacity: 0.46;

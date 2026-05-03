@@ -27,7 +27,7 @@ test("state helper computes dynamic canvas-anchored frame size", () => {
   assert.match(state, /local PILL_WIDTH = 188/);
   assert.match(state, /local HEADER_HEIGHT = 30/);
   assert.match(state, /local ACTIVE_ROW_HEIGHT = 28/);
-  assert.match(state, /local COMPLETED_ROW_HEIGHT = 24/);
+  assert.match(state, /local COMPLETED_ROW_HEIGHT = 22/);
   assert.match(state, /local ROW_GAP = 3/);
   assert.match(state, /local DIVIDER_HEIGHT = 16/);
   assert.match(state, /local MAX_FRAME_HEIGHT = 700/);
@@ -56,6 +56,19 @@ test("styles expose canvas-parity sections and row treatments", () => {
   assert.match(styles, /\.waiting-pulse-enabled \.row\.waiting-row/);
   assert.match(styles, /\/\* Settings \*\//);
   assert.match(styles, /\.settings/);
+});
+
+test("expanded rows keep active work prominent and completed metadata compact", () => {
+  assert.match(state, /local ACTIVE_ROW_HEIGHT = 28/);
+  assert.match(state, /local COMPLETED_ROW_HEIGHT = 22/);
+  assert.match(styles, /--active-row-height: 28px;/);
+  assert.match(styles, /--completed-row-height: 22px;/);
+  assert.match(styles, /\.row\s*\{[\s\S]*grid-template-columns: 34px minmax\(0, 1fr\) max-content;[\s\S]*align-items: center;/);
+  assert.match(styles, /\.completed-row \.status\s*\{[\s\S]*justify-self: end;[\s\S]*font-size: 10px;[\s\S]*font-variant-numeric: tabular-nums;/);
+  assert.match(styles, /\.completed-row \.title\s*\{[\s\S]*font-size: 11px;[\s\S]*font-weight: 600;/);
+  assert.match(styles, /\.completed-row \.tab-badge\s*\{[\s\S]*box-shadow: inset 0 0 0 1px rgba\(115, 210, 128, 0\.18\);/);
+  assert.match(styles, /\.active-row \.tab-badge,\s*\.waiting-row \.tab-badge\s*\{[\s\S]*box-shadow: inset 0 0 0 1px rgba\(115, 166, 255, 0\.22\);/);
+  assert.match(html, /status\.className = "status row-status"/);
 });
 
 test("HTML renderer consumes render sections without moving bridge behavior", () => {
