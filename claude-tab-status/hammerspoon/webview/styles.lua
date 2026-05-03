@@ -127,6 +127,9 @@ function M.css()
       justify-self: end;
       width: 26px;
       height: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      box-sizing: border-box;
       border: 0.5px solid transparent;
       background: transparent;
       color: rgba(255, 255, 255, 0.62);
@@ -819,6 +822,10 @@ function M.css()
 
     .header-icon-button.compact-mode-toggle {
       display: none;
+      width: 26px;
+      height: 26px;
+      min-width: 26px;
+      min-height: 26px;
       z-index: 4;
       opacity: 0.72;
     }
