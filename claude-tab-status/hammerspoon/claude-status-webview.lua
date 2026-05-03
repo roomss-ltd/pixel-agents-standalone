@@ -855,7 +855,6 @@ local function enqueueStatusEvent(kind, session, now)
     for _, event in ipairs(eventQueue) do
         if event.key == key then
             event.created_at = now
-            event.expires = kind == "finished" and (now + EVENT_TTL) or nil
             event.title = sessionEventTitle(kind, session)
             event.display_label = session._display_num or session.display_label or session.tab_num
             event.run_id = session.run_id
@@ -882,11 +881,26 @@ local function enqueueStatusEvent(kind, session, now)
     nextEventId = nextEventId + 1
 end
 
+local function waitingEventPersistsInMini(event, waitingByKey)
+    if event.kind ~= "waiting" then return false end
+    if expanded or viewMode ~= "compact" then return false end
+    return waitingByKey[event.key] == true
+end
+
 local function cleanupExpiredEvents()
     local now = hs.timer.secondsSinceEpoch()
+    local waitingByKey = {}
+    if not expanded and viewMode == "compact" then
+        for _, s in ipairs(sessions) do
+            if (s.activity or "Init") == "Waiting" then
+                waitingByKey[eventIdentity(s, "waiting")] = true
+            end
+        end
+    end
+
     local kept = {}
     for _, event in ipairs(eventQueue) do
-        if not event.expires or now <= event.expires then
+        if waitingEventPersistsInMini(event, waitingByKey) or not event.expires or now <= event.expires then
             table.insert(kept, event)
         end
     end

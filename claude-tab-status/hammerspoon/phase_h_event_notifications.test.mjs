@@ -10,7 +10,7 @@ const bridge = readFileSync(new URL("./webview/bridge.lua", import.meta.url), "u
 const placement = readFileSync(new URL("./webview/placement.lua", import.meta.url), "utf8");
 const icons = readFileSync(new URL("./webview/icons.lua", import.meta.url), "utf8");
 
-test("collapsed status events are Lua-owned with expiring finished and waiting event pings", () => {
+test("collapsed status events expire except waiting pings shown while Mini is current", () => {
   assert.match(webview, /local EVENT_TTL = 15\.0/);
   assert.match(webview, /local MAX_EVENT_ROWS = 3/);
   assert.match(webview, /local EVENT_POPOVER_WIDTH = 244/);
@@ -20,9 +20,13 @@ test("collapsed status events are Lua-owned with expiring finished and waiting e
   assert.match(webview, /local function enqueueStatusEvent\(kind, session, now\)/);
   assert.match(webview, /expires = now \+ EVENT_TTL/);
   assert.doesNotMatch(webview, /sticky = kind == "waiting"/);
-  assert.doesNotMatch(webview, /if event\.kind == "waiting" then/);
   assert.match(webview, /local function cleanupExpiredEvents\(\)/);
-  assert.match(webview, /if not event\.expires or now <= event\.expires then/);
+  assert.match(webview, /local function waitingEventPersistsInMini\(event, waitingByKey\)/);
+  assert.match(webview, /if event\.kind ~= "waiting" then return false end/);
+  assert.match(webview, /if expanded or viewMode ~= "compact" then return false end/);
+  assert.match(webview, /return waitingByKey\[event\.key\] == true/);
+  assert.match(webview, /if not expanded and viewMode == "compact" then[\s\S]*waitingByKey\[eventIdentity\(s, "waiting"\)\] = true/);
+  assert.match(webview, /if waitingEventPersistsInMini\(event, waitingByKey\) or not event\.expires or now <= event\.expires then/);
 });
 
 test("activity transitions enqueue collapsed notifications while sounds stay Lua-owned", () => {
