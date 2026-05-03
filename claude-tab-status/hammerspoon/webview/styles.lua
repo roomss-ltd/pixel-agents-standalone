@@ -366,7 +366,7 @@ function M.css()
       justify-self: start;
       min-width: 26px;
       height: 20px;
-      margin-right: -3px;
+      margin-right: -5px;
       padding: 2px 6px;
       border-radius: 6px;
       color: rgba(115, 166, 255, 0.92);
