@@ -161,14 +161,14 @@ function M.script(bridgeScheme)
 
       function rowEditActionForActivity(activity) {
         var value = String(activity || "Init").toLowerCase();
-        var done = value === "done" || value === "idle" || value === "finished";
+        var done = value === "done" || value === "idle" || value === "finished" || value === "init";
         return done ? "row.dismiss" : "row.interrupt";
       }
 
       function rowEditActionForKind(kind) {
         var value = String(kind || "").toLowerCase();
         if (value === "idle") return "";
-        var done = value === "finished" || value === "done" || value === "idle";
+        var done = value === "finished" || value === "done" || value === "idle" || value === "init";
         return done ? "row.dismiss" : "row.interrupt";
       }
 
@@ -465,10 +465,6 @@ function M.script(bridgeScheme)
         var olderHistory = peek.olderHistory || [];
         list.innerHTML = "";
         if (!history.length && !(peek.olderFinished && peek.olderFinished.count)) {
-          var empty = document.createElement("div");
-          empty.className = "peek-history-empty";
-          empty.textContent = "No recent finishes";
-          list.appendChild(empty);
           return;
         }
         history.forEach(function(item) {
@@ -543,10 +539,9 @@ function M.script(bridgeScheme)
       function renderPeekQueueDivider(header) {
         var divider = document.querySelector("[data-peek-queue-divider]");
         if (!divider) return;
-        var hasActive = activePeekItems(header).length > 0;
         var peek = (header && header.peek) || {};
         var hasHistory = (peek.history || []).length > 0;
-        setClass(divider, "visible", hasActive && hasHistory);
+        setClass(divider, "visible", hasHistory);
       }
 
       function ensurePeekCardEditButton(card) {

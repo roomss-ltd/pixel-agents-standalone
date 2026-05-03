@@ -38,6 +38,8 @@ test("non-hover peek keeps closed visible height but reserves transparent border
 
 test("hovered peek reserves enough native frame space for the bottom border", () => {
   assert.match(state, /local PEEK_MAX_HOVER_FRAME_HEIGHT = 520/);
+  assert.match(state, /local PEEK_HISTORY_REVEAL_PADDING = 9/);
+  assert.match(state, /local PEEK_HISTORY_SECTION_GAP = 9/);
   assert.match(state, /local PEEK_HOVER_BORDER_SAFETY = BORDER_SHADOW_SAFETY \+ 20/);
   assert.match(state, /height = height \+ PEEK_HOVER_BORDER_SAFETY/);
   assert.match(state, /return math\.min\(height, PEEK_MAX_HOVER_FRAME_HEIGHT\)/);
@@ -170,8 +172,8 @@ test("peek hover reveals recent finished history without auto-expanding", () => 
   assert.doesNotMatch(html, /"Expand full status"/);
   assert.match(html, /history\.forEach\(function\(item\)/);
   assert.doesNotMatch(html, /history\.slice\(0, 3\)/);
-  assert.match(styles, /\.peek-history\s*\{[\s\S]*display: grid;[\s\S]*opacity: 0;[\s\S]*transform: translateY\(-6px\);[\s\S]*pointer-events: none;/);
-  assert.match(styles, /\.widget\.peek\.peek-hovering \.peek-history,\s*\.widget\.peek:focus-within \.peek-history\s*\{[\s\S]*opacity: 1;[\s\S]*transform: translateY\(0\);[\s\S]*pointer-events: auto;/);
+  assert.match(styles, /\.peek-history\s*\{[\s\S]*display: grid;[\s\S]*gap: 9px;[\s\S]*opacity: 0;[\s\S]*transform: translateY\(-6px\);[\s\S]*pointer-events: none;/);
+  assert.match(styles, /\.widget\.peek\.peek-hovering \.peek-history,\s*\.widget\.peek:focus-within \.peek-history\s*\{[\s\S]*padding-bottom: 9px;[\s\S]*opacity: 1;[\s\S]*transform: translateY\(0\);[\s\S]*pointer-events: auto;/);
   assert.match(styles, /\.peek-history-list\s*\{[\s\S]*max-height: 244px;[\s\S]*overflow-y: auto;/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.peek-history[\s\S]*transition: none;/);
 });

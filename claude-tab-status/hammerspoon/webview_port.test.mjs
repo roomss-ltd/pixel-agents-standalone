@@ -78,9 +78,9 @@ test("webview module loads real status JSON using the existing contract", () => 
 
 test("webview view state matches canvas counting and partitioning rules", () => {
   assert.match(source, /local function partitionSessions\(\)/);
-  assert.match(source, /a == "Thinking" or a == "Tool" or a == "Init"/);
+  assert.match(source, /a == "Thinking" or a == "Tool"/);
   assert.match(source, /a == "Waiting"/);
-  assert.match(source, /a == "Done" or a == "Idle"/);
+  assert.match(source, /a == "Done" or a == "Idle" or a == "Init"/);
   assert.match(source, /local function buildViewState\(\)/);
   assert.match(source, /local activeSessions, inactiveSessions = partitionSessions\(\)/);
   assert.match(source, /counts = counts/);

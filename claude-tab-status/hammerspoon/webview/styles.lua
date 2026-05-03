@@ -540,7 +540,7 @@ function M.css()
     }
 
     .peek-ticker.idle .peek-card {
-      grid-template-columns: 18px minmax(0, 1fr);
+      grid-template-columns: 30px minmax(0, 1fr);
       column-gap: 14px;
       border-color: rgba(255, 255, 255, 0.08);
       background: rgba(255, 255, 255, 0.022);
@@ -558,15 +558,19 @@ function M.css()
     .peek-ticker.idle .peek-kind {
       grid-column: 1;
       grid-row: 1;
+      width: 30px;
+      height: 30px;
       color: rgba(115, 166, 255, 0.7);
-      background: rgba(115, 166, 255, 0.08);
-      box-shadow: 0 0 14px rgba(115, 166, 255, 0.12);
+      background: radial-gradient(circle, rgba(115, 166, 255, 0.18) 0%, rgba(115, 166, 255, 0.10) 48%, rgba(115, 166, 255, 0.035) 72%);
+      box-shadow: inset 0 0 0 1px rgba(115, 166, 255, 0.14), 0 0 16px rgba(115, 166, 255, 0.18), 0 0 28px rgba(28, 48, 92, 0.20);
     }
 
     .peek-ticker.idle .coffee-idle-icon {
       width: 17px;
       height: 17px;
-      color: rgba(115, 166, 255, 0.82);
+      transform: translateX(-0.5px);
+      color: rgba(115, 166, 255, 0.86);
+      filter: drop-shadow(0 0 24px rgba(145, 190, 255, 0.52)) drop-shadow(0 0 6px rgba(80, 135, 230, 0.28)) drop-shadow(0 0 13px rgba(28, 48, 92, 0.24));
     }
 
     .peek-ticker.idle .coffee-idle-icon svg {
@@ -785,7 +789,7 @@ function M.css()
 
     .peek-history {
       display: grid;
-      gap: 5px;
+      gap: 9px;
       max-height: 0;
       overflow: hidden;
       padding: 0 9px;

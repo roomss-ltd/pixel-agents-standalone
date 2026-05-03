@@ -53,7 +53,7 @@ test("completed idle sessions stay rendered and counted", () => {
     source,
     /if not deny\[key\] then\s+s\._zj_session = zj_session\s+table\.insert\(sessions, s\)/,
   );
-  assert.match(source, /elseif a == "Done" or a == "Idle" then/);
+  assert.match(source, /elseif a == "Done" or a == "Idle" or a == "Init" then/);
 });
 
 test("hammerspoon owns separate done and input sounds", () => {

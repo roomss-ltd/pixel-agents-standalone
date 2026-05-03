@@ -224,12 +224,13 @@ test("idle peek renders useful all-clear context instead of an empty card", () =
   assert.match(html, /renderPeekMeta\(meta, header, isIdle\);/);
   assert.match(html, /if \(compact && activeTotal < 1\) \{[\s\S]*meta\.innerHTML = "";/);
   assert.match(html, /if \(activeTotal > 0\) \{[\s\S]*peek-stat-active/);
-  assert.match(styles, /\.peek-ticker\.idle \.peek-card\s*\{[\s\S]*grid-template-columns: 18px minmax\(0, 1fr\);[\s\S]*column-gap: 14px;/);
+  assert.match(styles, /\.peek-ticker\.idle \.peek-card\s*\{[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\);[\s\S]*column-gap: 14px;/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-copy\s*\{[\s\S]*grid-column: 2;[\s\S]*grid-row: 1;/);
   assert.match(html, /if \(item && item\.kind === "idle"\) \{[\s\S]*setClass\(kind, "is-loader", false\);[\s\S]*kind\.setAttribute\("data-peek-kind-mode", "idle"\);[\s\S]*renderCoffeeSteamInto\(kind\);/);
   assert.doesNotMatch(html, /clearPeekKind\(kind\);\s*if \(item && item\.kind === "idle"\)/);
-  assert.match(styles, /\.peek-ticker\.idle \.peek-kind\s*\{[\s\S]*grid-column: 1;[\s\S]*grid-row: 1;[\s\S]*color: rgba\(115, 166, 255, 0\.7\);[\s\S]*background: rgba\(115, 166, 255, 0\.08\);[\s\S]*box-shadow: 0 0 14px rgba\(115, 166, 255, 0\.12\);/);
-  assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon\s*\{[^}]*width: 17px;[^}]*height: 17px;[^}]*color: rgba\(115, 166, 255, 0\.82\);/);
+  assert.match(styles, /\.peek-ticker\.idle \.peek-kind\s*\{[\s\S]*grid-column: 1;[\s\S]*grid-row: 1;[\s\S]*width: 30px;[\s\S]*height: 30px;[\s\S]*color: rgba\(115, 166, 255, 0\.7\);[\s\S]*background: radial-gradient\(circle, rgba\(115, 166, 255, 0\.18\) 0%, rgba\(115, 166, 255, 0\.10\) 48%, rgba\(115, 166, 255, 0\.035\) 72%\);[\s\S]*box-shadow: inset 0 0 0 1px rgba\(115, 166, 255, 0\.14\), 0 0 16px rgba\(115, 166, 255, 0\.18\), 0 0 28px rgba\(28, 48, 92, 0\.20\);/);
+  assert.doesNotMatch(styles, /\.peek-ticker\.idle \.peek-kind\s*\{[^}]*transform: translateX/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon\s*\{[^}]*width: 17px;[^}]*height: 17px;[^}]*transform: translateX\(-0\.5px\);[^}]*color: rgba\(115, 166, 255, 0\.86\);[^}]*filter: drop-shadow\(0 0 24px rgba\(145, 190, 255, 0\.52\)\) drop-shadow\(0 0 6px rgba\(80, 135, 230, 0\.28\)\) drop-shadow\(0 0 13px rgba\(28, 48, 92, 0\.24\)\);/);
   assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon svg\s*\{[^}]*width: 17px;[^}]*height: 17px;/);
   assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*animation: coffeeSteam 3\.6s ease-in-out infinite;/);
   assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*stroke-width: 1\.65px;[\s\S]*\.peek-ticker\.idle \.coffee-smoke-1\s*\{[\s\S]*stroke-width: 1\.45px;/);

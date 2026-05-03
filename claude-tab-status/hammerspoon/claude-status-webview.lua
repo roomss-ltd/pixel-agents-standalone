@@ -540,12 +540,12 @@ end
 local function recountSessions(rows)
     local nextCounts = { active = 0, waiting = 0, done = 0 }
     for _, row in ipairs(rows) do
-        local a = row.activity
-        if a == "Thinking" or a == "Tool" or a == "Init" then
+        local a = row.activity or "Init"
+        if a == "Thinking" or a == "Tool" then
             nextCounts.active = nextCounts.active + 1
         elseif a == "Waiting" then
             nextCounts.waiting = nextCounts.waiting + 1
-        elseif a == "Done" or a == "Idle" then
+        elseif a == "Done" or a == "Idle" or a == "Init" then
             nextCounts.done = nextCounts.done + 1
         end
     end
@@ -805,12 +805,12 @@ local function startInteractionTap()
 end
 
 local function countActivity(activity)
-    local a = activity
-    if a == "Thinking" or a == "Tool" or a == "Init" then
+    local a = activity or "Init"
+    if a == "Thinking" or a == "Tool" then
         counts.active = counts.active + 1
     elseif a == "Waiting" then
         counts.waiting = counts.waiting + 1
-    elseif a == "Done" or a == "Idle" then
+    elseif a == "Done" or a == "Idle" or a == "Init" then
         counts.done = counts.done + 1
     end
 end
@@ -1053,7 +1053,7 @@ local function partitionSessions()
     local active, inactive = {}, {}
     for _, s in ipairs(sessions) do
         local a = s.activity or "Init"
-        if a == "Done" or a == "Idle" then
+        if a == "Done" or a == "Idle" or a == "Init" then
             table.insert(inactive, s)
         else
             table.insert(active, s)

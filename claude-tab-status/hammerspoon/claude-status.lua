@@ -385,12 +385,12 @@ local function loadSessions()
                         if not deny[key] then
                             s._zj_session = zj_session
                             table.insert(sessions, s)
-                            local a = s.activity
-                            if a == "Thinking" or a == "Tool" or a == "Init" then
+                            local a = s.activity or "Init"
+                            if a == "Thinking" or a == "Tool" then
                                 counts.active = counts.active + 1
                             elseif a == "Waiting" then
                                 counts.waiting = counts.waiting + 1
-                            elseif a == "Done" or a == "Idle" then
+                            elseif a == "Done" or a == "Idle" or a == "Init" then
                                 counts.done = counts.done + 1
                             end
                         end
@@ -460,10 +460,10 @@ local function partitionSessions()
     local active, inactive = {}, {}
     for _, s in ipairs(sessions) do
         local a = s.activity or "Init"
-        if a == "Thinking" or a == "Tool" or a == "Waiting" or a == "Init" then
-            table.insert(active, s)
-        else
+        if a == "Done" or a == "Idle" or a == "Init" then
             table.insert(inactive, s)
+        else
+            table.insert(active, s)
         end
     end
     -- Sort inactive by most recent first (detail contains elapsed time like "38s ago")
@@ -973,12 +973,12 @@ local function dismissSessionAtY(mouseY)
         -- Recount
         data.counts = { active = 0, waiting = 0, done = 0 }
         for _, existing in ipairs(kept) do
-            local a = existing.activity
-            if a == "Thinking" or a == "Tool" or a == "Init" then
+            local a = existing.activity or "Init"
+            if a == "Thinking" or a == "Tool" then
                 data.counts.active = data.counts.active + 1
             elseif a == "Waiting" then
                 data.counts.waiting = data.counts.waiting + 1
-            elseif a == "Done" or a == "Idle" then
+            elseif a == "Done" or a == "Idle" or a == "Init" then
                 data.counts.done = data.counts.done + 1
             end
         end

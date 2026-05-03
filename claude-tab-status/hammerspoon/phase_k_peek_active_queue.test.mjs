@@ -56,8 +56,8 @@ test("peek active stack uses transform-only animation and compact queue styling"
 test("peek active queue uses one subtle divider before finished history", () => {
   assert.match(html, /<div class="peek-queue-divider" data-peek-queue-divider><span class="peek-section-label">Recently active<\/span><\/div>/);
   assert.match(html, /function renderPeekQueueDivider\(header\)/);
-  assert.match(html, /var hasActive = activePeekItems\(header\)\.length > 0;/);
-  assert.match(html, /setClass\(divider, "visible", hasActive && hasHistory\)/);
+  assert.doesNotMatch(html, /var hasActive = activePeekItems\(header\)\.length > 0;/);
+  assert.match(html, /setClass\(divider, "visible", hasHistory\)/);
   assert.match(html, new RegExp("divider\\.innerHTML = '<span class=\"peek-section-label\">Older finished</span>';"));
   assert.match(styles, /\.peek-queue-divider\s*\{[\s\S]*height: 14px;[\s\S]*display: flex;[\s\S]*align-items: center;[\s\S]*border-top: 0;/);
   assert.match(styles, /\.peek-queue-divider::before,\s*\.peek-queue-divider::after\s*\{[\s\S]*border-top: 1px dashed rgba\(255, 255, 255, 0\.18\);/);
@@ -79,6 +79,7 @@ test("peek history owns recent and older finished tiers behind the older toggle"
   assert.doesNotMatch(html, /renderPeekHistory\(header\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*list\.appendChild\(olderControl\);/);
   assert.match(html, /renderPeekHistoryRow\(item, !!peek\.editMode\)/);
   assert.match(html, /function renderPeekHistoryRow\(item, editMode\)[\s\S]*peek-history-status/);
+  assert.doesNotMatch(html, /No recent finishes/);
   assert.match(html, /if \(peek\.olderFinished && peek\.olderFinished\.expanded\) \{[\s\S]*olderHistory\.forEach/);
   assert.match(styles, /\.peek-history-row\s*\{[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) max-content;/);
   assert.match(styles, /\.peek-history-row\.edit-mode\s*\{[\s\S]*grid-template-columns: 34px minmax\(0, 1fr\) auto 24px;/);
