@@ -53,12 +53,16 @@ test("peek active stack uses transform-only animation and compact queue styling"
 });
 
 test("peek active queue uses one subtle divider before finished history", () => {
-  assert.match(html, /<div class="peek-queue-divider" data-peek-queue-divider><\/div>/);
+  assert.match(html, /<div class="peek-queue-divider" data-peek-queue-divider><span class="peek-section-label">Recently active<\/span><\/div>/);
   assert.match(html, /function renderPeekQueueDivider\(header\)/);
-  assert.match(html, /setClass\(divider, "visible", hasQueue && hasHistory\)/);
-  assert.match(styles, /\.peek-queue-divider\s*\{[\s\S]*max-height: 0;[\s\S]*overflow: hidden;[\s\S]*border-top: 1px dashed rgba\(255, 255, 255, 0\.18\);/);
+  assert.match(html, /var hasActive = activePeekItems\(header\)\.length > 0;/);
+  assert.match(html, /setClass\(divider, "visible", hasActive && hasHistory\)/);
+  assert.match(html, new RegExp("divider\\.innerHTML = '<span class=\"peek-section-label\">Older finished</span>';"));
+  assert.match(styles, /\.peek-queue-divider\s*\{[\s\S]*height: 14px;[\s\S]*display: flex;[\s\S]*align-items: center;[\s\S]*border-top: 0;/);
+  assert.match(styles, /\.peek-queue-divider::before,\s*\.peek-queue-divider::after\s*\{[\s\S]*border-top: 1px dashed rgba\(255, 255, 255, 0\.18\);/);
+  assert.match(styles, /\.peek-section-label\s*\{[^}]*font-size: 8\.5px;[^}]*line-height: 10px;/);
   assert.match(styles, /\.peek-queue-divider\.visible\s*\{[\s\S]*opacity: 1;/);
-  assert.match(styles, /\.widget\.peek:not\(\.peek-hovering\):not\(:focus-within\) \.peek-queue-divider\s*\{[\s\S]*border-top-color: transparent;/);
+  assert.match(styles, /\.widget\.peek:not\(\.peek-hovering\):not\(:focus-within\) \.peek-queue-divider::before,\s*\.widget\.peek:not\(\.peek-hovering\):not\(:focus-within\) \.peek-queue-divider::after\s*\{[\s\S]*border-top-color: transparent;/);
 });
 
 test("peek history owns recent and older finished tiers behind the older toggle", () => {
@@ -69,6 +73,8 @@ test("peek history owns recent and older finished tiers behind the older toggle"
   assert.match(state, /olderFinished = \{[^\}]*count = #olderCompletedRows[\s\S]*expanded = olderExpanded[\s\S]*label = "Older finished"/);
   assert.match(html, /function renderPeekOlderFinishedControl\(peek\)/);
   assert.match(html, /data-peek-older-finished/);
+  assert.match(html, /function renderPeekActions\(state\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*if \(olderControl\) peekActions\.appendChild\(olderControl\);/);
+  assert.doesNotMatch(html, /renderPeekHistory\(header\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*list\.appendChild\(olderControl\);/);
   assert.match(html, /renderPeekHistoryRow\(item\)/);
   assert.match(html, /renderPeekHistoryRow\(item\)[\s\S]*peek-history-status/);
   assert.match(html, /if \(peek\.olderFinished && peek\.olderFinished\.expanded\) \{[\s\S]*olderHistory\.forEach/);

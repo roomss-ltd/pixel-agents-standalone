@@ -14,7 +14,8 @@ local PEEK_ACTIVE_STACK_MAX_ITEMS = 3
 local PEEK_ACTIVE_STACK_ROW_HEIGHT = 25
 local PEEK_ACTIVE_STACK_ROW_GAP = 4
 local PEEK_ACTIVE_STACK_OVERFLOW_HEIGHT = 16
-local PEEK_QUEUE_DIVIDER_HEIGHT = 10
+local PEEK_QUEUE_DIVIDER_HEIGHT = 14
+local PEEK_HISTORY_OLDER_DIVIDER_HEIGHT = 14
 local PEEK_HISTORY_ROW_HEIGHT = 27
 local PEEK_HISTORY_ROW_GAP = 4
 local PEEK_HISTORY_EMPTY_HEIGHT = 14
@@ -65,17 +66,17 @@ local function peekHoverFrameHeight(sections)
     local peek = header.peek or {}
     local historyCount = #(peek.history or {})
     local olderFinished = peek.olderFinished or {}
-    if olderFinished.count and olderFinished.count > 0 then
-        historyCount = historyCount + 1
-    end
     if olderFinished.expanded == true then
         historyCount = historyCount + #(peek.olderHistory or {})
     end
     local stackCount = #((peek.activeQueue or {}).stack or {})
     local height = PEEK_FRAME_HEIGHT
     height = height + peekActiveStackHeight(peek)
-    if stackCount > 0 and historyCount > 0 then
+    if #((sections.activeRows or {})) > 0 and historyCount > 0 then
         height = height + PEEK_QUEUE_DIVIDER_HEIGHT
+    end
+    if olderFinished.count and olderFinished.count > 0 then
+        height = height + PEEK_HISTORY_OLDER_DIVIDER_HEIGHT
     end
     height = height + peekHistoryListHeight(historyCount)
     height = height + PEEK_HISTORY_SECTION_GAP + PEEK_ACTION_HEIGHT

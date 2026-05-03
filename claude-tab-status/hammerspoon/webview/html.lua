@@ -414,8 +414,8 @@ function M.script(bridgeScheme)
         if (olderControl) {
           var divider = document.createElement("div");
           divider.className = "peek-history-older-divider";
+          divider.innerHTML = '<span class="peek-section-label">Older finished</span>';
           list.appendChild(divider);
-          list.appendChild(olderControl);
         }
         if (peek.olderFinished && peek.olderFinished.expanded) {
           olderHistory.forEach(function(item) {
@@ -474,10 +474,10 @@ function M.script(bridgeScheme)
       function renderPeekQueueDivider(header) {
         var divider = document.querySelector("[data-peek-queue-divider]");
         if (!divider) return;
-        var hasQueue = activePeekItems(header).length > 1;
+        var hasActive = activePeekItems(header).length > 0;
         var peek = (header && header.peek) || {};
         var hasHistory = (peek.history || []).length > 0;
-        setClass(divider, "visible", hasQueue && hasHistory);
+        setClass(divider, "visible", hasActive && hasHistory);
       }
 
       function applyPeekItem(item, header) {
@@ -720,11 +720,15 @@ function M.script(bridgeScheme)
         var header = (state && state.header) || lastPeekHeader || {};
         var peek = header.peek || {};
         peekActions.className = "peek-actions";
-        ensurePeekActionButton(peekActions, "peek-minimize-toggle", "compact.mode.set", "Shrink to mini status", "Shrink to mini", "minimize-icon-template", "compact");
+        var existingOlder = peekActions.querySelector("[data-peek-older-finished]");
+        if (existingOlder) existingOlder.remove();
+        ensurePeekActionButton(peekActions, "peek-options-toggle", "settings.toggle", "Open options", "Options", "settings-icon-template");
         var pin = ensurePeekActionButton(peekActions, "peek-pin-toggle", "peek.pin.toggle", "Pin peek open", "Pin peek open", "pin-icon-template");
         setClass(pin, "is-pinned", !!(peek && peek.hoverPinned));
         pin.setAttribute("aria-pressed", peek && peek.hoverPinned ? "true" : "false");
-        ensurePeekActionButton(peekActions, "peek-options-toggle", "settings.toggle", "Open options", "Options", "settings-icon-template");
+        ensurePeekActionButton(peekActions, "peek-minimize-toggle", "compact.mode.set", "Shrink to mini status", "Shrink to mini", "minimize-icon-template", "compact");
+        var olderControl = renderPeekOlderFinishedControl(peek);
+        if (olderControl) peekActions.appendChild(olderControl);
       }
 
       function renderBottomActions(state) {
@@ -1020,6 +1024,7 @@ function M.eventsScript(bridgeScheme)
         dismiss.className = "event-dismiss";
         dismiss.setAttribute("data-action", "event.dismiss");
         dismiss.setAttribute("aria-label", "Dismiss event");
+        dismiss.setAttribute("title", "Dismiss");
         dismiss.textContent = "×";
 
         row.appendChild(badge);

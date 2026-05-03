@@ -16,7 +16,7 @@ function M.ticker()
         </div>
       </div>
       <div class="peek-active-stack" data-peek-active-stack></div>
-      <div class="peek-queue-divider" data-peek-queue-divider></div>
+      <div class="peek-queue-divider" data-peek-queue-divider><span class="peek-section-label">Recently active</span></div>
 ]]
 end
 

@@ -75,14 +75,15 @@ test("event notification polish uses row-native badge layout and quiet dismiss",
   assert.match(html, /badge\.className = "event-badge"/);
   assert.match(html, /status\.className = "event-status"/);
   assert.match(html, /status\.textContent = eventIcon\(event\.kind\)/);
+  assert.match(html, /dismiss\.setAttribute\("title", "Dismiss"\)/);
   assert.match(styles, /\.event-panel\s*\{[\s\S]*width: 244px;/);
   assert.match(styles, /\.event-panel\s*\{[\s\S]*gap: 3px;[\s\S]*padding: 4px;/);
-  assert.match(styles, /\.event-row\s*\{[\s\S]*min-height: 32px;[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) 18px 16px;/);
-  assert.match(styles, /\.event-row::before/);
+  assert.match(styles, /\.event-row\s*\{[\s\S]*min-height: 32px;[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) 18px 22px;/);
+  assert.doesNotMatch(styles, /\.event-row::before/);
   assert.match(styles, /\.event-title\s*\{[^}]*font-weight: 500;/);
   assert.match(styles, /\.event-detail\s*\{[^}]*font-size: 9\.5px;/);
-  assert.match(styles, /\.event-dismiss\s*\{[\s\S]*background: transparent;[\s\S]*opacity: 0\.12;/);
-  assert.match(styles, /\.event-row:hover \.event-dismiss\s*\{[\s\S]*opacity: 0\.46;/);
+  assert.match(styles, /\.event-dismiss\s*\{[\s\S]*border: 0\.5px solid rgba\(255, 255, 255, 0\.16\);[\s\S]*background: rgba\(255, 255, 255, 0\.075\);[\s\S]*opacity: 0\.9;/);
+  assert.match(styles, /\.event-row:hover \.event-dismiss\s*\{[\s\S]*opacity: 1;/);
 });
 
 test("event bridge actions are explicitly allowlisted and reuse row focus identity", () => {

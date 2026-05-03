@@ -40,7 +40,7 @@ test("HTML renders a collapsed older-finished tier with a controlled toggle acti
   assert.match(html, /data-action", "older\.toggle"/);
   assert.match(html, /Show all/);
   assert.match(html, /Collapse/);
-  assert.doesNotMatch(html, /Older finished/);
+  assert.match(html, /Older finished/);
   assert.match(html, /olderDivider\.className = "divider older-finished-divider"/);
   assert.match(html, /if \(state\.showOlderFinishedDivider\)/);
   assert.match(html, /renderRows\(state\.recentCompletedRows \|\| state\.completedRows \|\| \[\], "completed-row"\)/);
@@ -83,4 +83,14 @@ test("styles distinguish recent finished rows from the older-finished control", 
   assert.match(styles, /grid-template-columns: auto auto/);
   assert.match(styles, /\.rows[\s\S]*padding: 0 8px 10px/);
   assert.match(styles, /\.older-finished-row/);
+});
+
+test("peek action row anchors options left and pin/minimize right", () => {
+  assert.match(html, /ensurePeekActionButton\(peekActions, "peek-options-toggle", "settings\.toggle"/);
+  assert.match(html, /ensurePeekActionButton\(peekActions, "peek-pin-toggle", "peek\.pin\.toggle"/);
+  assert.match(html, /ensurePeekActionButton\(peekActions, "peek-minimize-toggle", "compact\.mode\.set"/);
+  assert.match(styles, /\.peek-actions\s*\{[\s\S]*display: grid;[\s\S]*grid-template-columns: 28px minmax\(0, 1fr\) 28px 28px;/);
+  assert.match(styles, /\.peek-options-toggle\s*\{[^}]*grid-column: 1;/);
+  assert.match(styles, /\.peek-pin-toggle\s*\{[^}]*grid-column: 3;/);
+  assert.match(styles, /\.peek-minimize-toggle\s*\{[^}]*grid-column: 4;/);
 });

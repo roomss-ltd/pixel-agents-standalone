@@ -642,25 +642,47 @@ function M.css()
     }
 
     .peek-queue-divider {
-      height: 0;
+      height: 14px;
       max-height: 0;
       overflow: hidden;
+      display: flex;
+      align-items: center;
+      gap: 7px;
       margin: 0 12px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.18);
+      border-top: 0;
       opacity: 0;
       transform: scaleX(0.84);
       pointer-events: none;
       transition: opacity 140ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), height 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
+    .peek-queue-divider::before,
+    .peek-queue-divider::after {
+      content: "";
+      flex: 1 1 auto;
+      border-top: 1px dashed rgba(255, 255, 255, 0.18);
+    }
+
     .peek-queue-divider.visible {
-      height: 10px;
-      max-height: 10px;
+      max-height: 14px;
       opacity: 1;
       transform: scaleX(1);
     }
 
-    .widget.peek:not(.peek-hovering):not(:focus-within) .peek-queue-divider {
+    .peek-section-label {
+      display: inline-block;
+      padding: 0 7px;
+      background: var(--panel-bg);
+      color: rgba(255, 255, 255, 0.34);
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 10px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .widget.peek:not(.peek-hovering):not(:focus-within) .peek-queue-divider::before,
+    .widget.peek:not(.peek-hovering):not(:focus-within) .peek-queue-divider::after {
       border-top-color: transparent;
     }
 
@@ -777,14 +799,26 @@ function M.css()
     }
 
     .peek-history-older-divider {
-      height: 10px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
       margin: 0 12px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.18);
-      transform: translateY(5px);
+      border-top: 0;
+      text-align: center;
       opacity: 0.62;
     }
 
+    .peek-history-older-divider::before,
+    .peek-history-older-divider::after {
+      content: "";
+      flex: 1 1 auto;
+      border-top: 1px dashed rgba(255, 255, 255, 0.18);
+    }
+
     .peek-history-older-toggle-shell {
+      grid-column: 2;
+      justify-self: center;
       display: grid;
       justify-items: center;
       align-items: center;
@@ -800,11 +834,26 @@ function M.css()
     }
 
     .peek-actions {
-      display: flex;
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) 28px 28px;
       align-items: center;
-      justify-content: flex-end;
       gap: 6px;
-      min-height: 22px;
+      min-height: 24px;
+    }
+
+    .peek-options-toggle {
+      grid-column: 1;
+      justify-self: start;
+    }
+
+    .peek-pin-toggle {
+      grid-column: 3;
+      justify-self: end;
+    }
+
+    .peek-minimize-toggle {
+      grid-column: 4;
+      justify-self: end;
     }
 
     .peek-action-button {
@@ -1255,7 +1304,7 @@ function M.css()
       position: relative;
       min-height: 32px;
       display: grid;
-      grid-template-columns: 30px minmax(0, 1fr) 18px 16px;
+      grid-template-columns: 30px minmax(0, 1fr) 18px 22px;
       align-items: center;
       gap: 6px;
       padding: 4px 4px 4px 6px;
@@ -1264,18 +1313,6 @@ function M.css()
       background: rgba(255, 255, 255, 0.035);
       color: var(--text-strong);
       overflow: hidden;
-    }
-
-    .event-row::before {
-      content: "";
-      position: absolute;
-      top: 6px;
-      bottom: 6px;
-      left: 0;
-      width: 2px;
-      border-radius: 0 2px 2px 0;
-      background: var(--completed-green);
-      opacity: 0.80;
     }
 
     .event-row.finished {
@@ -1287,10 +1324,6 @@ function M.css()
       border-color: rgba(255, 140, 89, 0.20);
       background: rgba(255, 140, 89, 0.10);
       animation: waitingPulse 1.8s ease-in-out infinite;
-    }
-
-    .event-row.waiting::before {
-      background: var(--waiting-orange);
     }
 
     .event-badge {
@@ -1344,20 +1377,20 @@ function M.css()
     }
 
     .event-dismiss {
-      width: 16px;
-      height: 16px;
+      width: 22px;
+      height: 20px;
       padding: 0;
-      border: 0;
-      border-radius: 5px;
-      background: transparent;
-      color: rgba(255, 255, 255, 0.42);
-      opacity: 0.12;
+      border: 0.5px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.075);
+      color: rgba(255, 255, 255, 0.54);
+      opacity: 0.9;
       font-size: 12px;
-      line-height: 16px;
+      line-height: 18px;
     }
 
     .event-row:hover .event-dismiss {
-      opacity: 0.46;
+      opacity: 1;
     }
 
     .event-dismiss:hover {
