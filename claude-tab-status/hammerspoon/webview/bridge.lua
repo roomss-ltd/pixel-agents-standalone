@@ -19,6 +19,7 @@ local KNOWN_ACTIONS = {
     ["peek.hover.set"] = true,
     ["peek.pin.toggle"] = true,
     ["compact.mode.set"] = true,
+    ["debug.layout"] = true,
 }
 
 function M.normalizeMessage(message, handlers)

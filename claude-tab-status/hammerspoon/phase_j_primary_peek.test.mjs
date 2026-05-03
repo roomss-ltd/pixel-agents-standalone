@@ -211,3 +211,13 @@ test("peek hover history suppresses rows already represented by active notificat
   assert.match(state, /if not suppressed\[key\] then[\s\S]*table\.insert\(history, peekItemFromCompletedRow\(row\)\)/);
   assert.doesNotMatch(state, /table\.insert\(history, peekItemFromEvent\(event\)\)/);
 });
+
+test("compact debug bridge reports computed mini layout geometry", () => {
+  assert.match(html, /"debug\.layout": true/);
+  assert.match(bridge, /\["debug\.layout"\] = true/);
+  assert.match(html, /function reportCompactLayout\(state\)/);
+  assert.match(html, /miniButton: compactLayoutNode\("\.mini-enlarge-toggle"\)/);
+  assert.match(html, /window\.getComputedStyle\(element\)/);
+  assert.match(html, /postAction\(\{ type: "debug\.layout", layout: payload \}\)/);
+  assert.match(webview, /elseif body\.type == "debug\.layout" then[\s\S]*debugLog\("layout " \.\. hs\.inspect\(body\.layout\)\)/);
+});

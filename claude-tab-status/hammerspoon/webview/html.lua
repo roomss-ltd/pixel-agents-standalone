@@ -17,7 +17,7 @@ function M.script(bridgeScheme)
       var dragOrigin = null;
       var dragClickSuppressed = false;
       var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, completionFlash: true, processingNeon: true, notificationsEnabled: true };
-      var VALID_ACTION_TYPES = { "setting.toggle": true, "settings.toggle": true, "pin.toggle": true, "row.focus": true, "row.dismiss": true, "event.focus": true, "event.dismiss": true, "older.toggle": true, "drag.start": true, "drag.move": true, "drag.end": true, "expand.toggle": true, "expand.set": true, "peek.hover.set": true, "peek.pin.toggle": true, "compact.mode.set": true };
+      var VALID_ACTION_TYPES = { "setting.toggle": true, "settings.toggle": true, "pin.toggle": true, "row.focus": true, "row.dismiss": true, "event.focus": true, "event.dismiss": true, "older.toggle": true, "drag.start": true, "drag.move": true, "drag.end": true, "expand.toggle": true, "expand.set": true, "peek.hover.set": true, "peek.pin.toggle": true, "compact.mode.set": true, "debug.layout": true };
       var LOADER_VARIANTS = [
         { name: "dot-spinner", tag: "l-dot-spinner", speed: 0.9 },
         { name: "quantum", tag: "l-quantum", speed: 1.75 },
@@ -76,6 +76,58 @@ function M.script(bridgeScheme)
         } else if (!enabled && current.indexOf(token) >= 0) {
           element.className = current.replace(token, " ").replace(/^\s+|\s+$/g, "");
         }
+      }
+
+      function compactLayoutNode(selector) {
+        var element = document.querySelector(selector);
+        if (!element) return { selector: selector, exists: false };
+        var style = window.getComputedStyle(element);
+        var rect = element.getBoundingClientRect();
+        return {
+          selector: selector,
+          exists: true,
+          className: element.className || "",
+          display: style.display,
+          position: style.position,
+          gridColumnStart: style.gridColumnStart,
+          gridColumnEnd: style.gridColumnEnd,
+          justifySelf: style.justifySelf,
+          alignSelf: style.alignSelf,
+          opacity: style.opacity,
+          pointerEvents: style.pointerEvents,
+          width: Math.round(rect.width * 10) / 10,
+          height: Math.round(rect.height * 10) / 10,
+          left: Math.round(rect.left * 10) / 10,
+          top: Math.round(rect.top * 10) / 10,
+          right: Math.round(rect.right * 10) / 10,
+          bottom: Math.round(rect.bottom * 10) / 10,
+          offsetWidth: element.offsetWidth,
+          offsetHeight: element.offsetHeight
+        };
+      }
+
+      function reportCompactLayout(state) {
+        if (!state || !state.debug || state.viewMode !== "compact") return;
+        var widget = document.querySelector(".widget");
+        var payload = {
+          viewMode: state.viewMode,
+          expanded: !!state.expanded,
+          widgetClass: widget ? widget.className : "",
+          viewport: {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            clientWidth: document.documentElement ? document.documentElement.clientWidth : null,
+            clientHeight: document.documentElement ? document.documentElement.clientHeight : null
+          },
+          widget: compactLayoutNode(".widget"),
+          header: compactLayoutNode(".header"),
+          loader: compactLayoutNode(".loader-slot"),
+          counts: compactLayoutNode(".header-counts"),
+          peekTicker: compactLayoutNode(".peek-ticker"),
+          miniButton: compactLayoutNode(".mini-enlarge-toggle"),
+          collapseButton: compactLayoutNode(".collapse-toggle")
+        };
+        postAction({ type: "debug.layout", layout: payload });
       }
 
       function postAction(message) {
@@ -708,6 +760,7 @@ function M.script(bridgeScheme)
 
         renderSettings(settings, (state.settings && state.settings.items) || state.settingsItems || []);
         renderPeekActions(state);
+        setTimeout(function() { reportCompactLayout(state); }, 0);
       };
 
       window.renderSettings = function(state) {

@@ -323,6 +323,8 @@ local function handleBridgeMessage(message)
             saveCompactMode()
             if refreshWebview then refreshWebview() end
         end
+    elseif body.type == "debug.layout" then
+        debugLog("layout " .. hs.inspect(body.layout))
     elseif body.type == "row.dismiss" then
         dismissSession(body._zj_session, body.pane_id)
     elseif body.type == "row.focus" then
@@ -974,6 +976,7 @@ local function buildViewState()
         settingsOpen = settingsOpen,
         olderFinishedExpanded = olderFinishedExpanded,
         placementState = placementState,
+        debug = hs.settings.get(DEBUG_KEY) == true,
         events = eventState.events,
         eventOverflow = eventState.overflow,
     })
