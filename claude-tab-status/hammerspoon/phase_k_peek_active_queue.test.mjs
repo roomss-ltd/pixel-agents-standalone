@@ -42,6 +42,7 @@ test("peek rotation animates primary changes and reorders the visible active sta
 test("peek active stack uses transform-only animation and compact queue styling", () => {
   assert.match(styles, /\.peek-active-stack\s*\{[\s\S]*display: grid;[\s\S]*gap: 4px;/);
   assert.match(styles, /\.peek-active-stack-row\s*\{[\s\S]*min-height: 25px;[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) auto;/);
+  assert.match(styles, /\.peek-active-stack-badge\s*\{[^}]*background: var\(--badge-active-bg\);[^}]*box-shadow: inset 0 0 0 1px rgba\(115, 166, 255, 0\.22\);/);
   assert.match(html, /row\.className = "peek-active-stack-row depth-" \+ String\(index \+ 1\) \+ " "/);
   assert.match(styles, /\.peek-active-stack-row\.depth-2\s*\{[\s\S]*opacity: 0\.92;/);
   assert.match(styles, /\.peek-active-stack-row\.depth-3\s*\{[\s\S]*opacity: 0\.82;/);

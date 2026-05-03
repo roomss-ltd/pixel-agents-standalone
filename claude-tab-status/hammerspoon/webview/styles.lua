@@ -367,6 +367,7 @@ function M.css()
       border-radius: 6px;
       color: rgba(115, 166, 255, 0.92);
       background: var(--badge-active-bg);
+      box-shadow: inset 0 0 0 1px rgba(115, 166, 255, 0.22);
       font-size: 11px;
       font-weight: 800;
       line-height: 16px;
@@ -604,6 +605,7 @@ function M.css()
       border-radius: 5px;
       color: rgba(115, 166, 255, 0.92);
       background: var(--badge-active-bg);
+      box-shadow: inset 0 0 0 1px rgba(115, 166, 255, 0.22);
       font-size: 10px;
       font-weight: 800;
       line-height: 14px;

@@ -101,7 +101,7 @@ test("peek mode renders as an independent compact row-native card instead of a s
   assert.match(styles, /\.peek-card\s*\{[\s\S]*grid-template-columns: 24px 34px minmax\(0, 1fr\) auto;[\s\S]*column-gap: 10px;[\s\S]*row-gap: 7px;/);
   assert.match(styles, /\.peek-kind\s*\{[\s\S]*border-radius: 999px;/);
   assert.match(styles, /\.peek-kind \.peek-warning-icon svg\s*\{[\s\S]*width: 13px;[\s\S]*height: 13px;/);
-  assert.match(styles, /\.peek-badge\s*\{[\s\S]*background: var\(--badge-active-bg\);/);
+  assert.match(styles, /\.peek-badge\s*\{[^}]*background: var\(--badge-active-bg\);[^}]*box-shadow: inset 0 0 0 1px rgba\(115, 166, 255, 0\.22\);/);
   assert.match(styles, /\.peek-ticker\.finished \.peek-kind/);
 });
 
