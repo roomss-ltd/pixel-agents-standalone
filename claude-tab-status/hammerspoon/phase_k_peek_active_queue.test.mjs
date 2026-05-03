@@ -93,3 +93,9 @@ test("peek keeps the badge-to-title gap tighter than the loader-to-badge gap", (
   assert.match(styles, /\.peek-card\s*\{[\s\S]*grid-template-columns: 24px 34px minmax\(0, 1fr\) auto;[\s\S]*column-gap: 10px;/);
   assert.match(styles, /\.peek-badge\s*\{[\s\S]*margin-right: -3px;/);
 });
+
+test("peek finished rows are visually secondary to the active primary row", () => {
+  assert.match(styles, /\.peek-title\s*\{[^}]*font-weight: 700;/);
+  assert.match(styles, /\.peek-history-title\s*\{[^}]*font-weight: 500;/);
+  assert.match(styles, /\.peek-history-status\s*\{[^}]*font-weight: 600;/);
+});

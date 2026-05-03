@@ -750,7 +750,7 @@ function M.css()
 
     .peek-history-title {
       font-size: 10.5px;
-      font-weight: 700;
+      font-weight: 500;
       color: rgba(255, 255, 255, 0.76);
     }
 
@@ -760,7 +760,7 @@ function M.css()
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 10px;
-      font-weight: 700;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
       color: rgba(115, 210, 128, 0.72);
     }
