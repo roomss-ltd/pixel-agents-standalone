@@ -95,12 +95,21 @@ test("mini layout gives loader counts and enlarge control distinct spacing", () 
 
 test("mini idle loader slot renders a muted coffee icon instead of the active blue dot", () => {
   assert.match(icons, /\["coffee"\]/);
+  assert.match(icons, /coffee-smoke coffee-smoke-1/);
+  assert.match(icons, /coffee-smoke coffee-smoke-2/);
+  assert.match(icons, /coffee-smoke coffee-smoke-3/);
+  assert.match(icons, /coffee-smoke coffee-smoke-1" d="M7\.1 7\.1C4\.2 5\.2 10\.1 3\.8 7\.4 1\.6/);
+  assert.match(icons, /coffee-smoke coffee-smoke-2" d="M11 7\.1C8\.1 5\.1 14 3\.9 11\.2 1\.3/);
+  assert.match(icons, /coffee-smoke coffee-smoke-3" d="M14\.9 7\.1C12 5\.2 17\.8 3\.8 15 1\.5/);
   assert.match(html, /local coffeeIcon = icons\.svg\("coffee", "control-icon coffee-idle-icon"\)/);
   assert.match(html, /sharedView\.iconTemplate\("coffee-idle-icon-template", coffeeIcon\)/);
   assert.match(html, /var idleIcon = document\.getElementById\("coffee-idle-icon-template"\);/);
   assert.match(html, /if \(!loader\.active && widget && widget\.classList\.contains\("compact"\)\) \{[\s\S]*slot\.innerHTML = idleIcon \? idleIcon\.innerHTML : "";/);
   assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-idle-icon\s*\{[^}]*width: 14px;[^}]*height: 14px;[^}]*color: rgba\(190, 198, 214, 0\.62\);[^}]*transform: translateY\(0\.5px\);/);
   assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-idle-icon svg\s*\{[^}]*width: 14px;[^}]*height: 14px;/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke\s*\{[^}]*animation: coffeeSteam/);
+  assert.match(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\) \.coffee-smoke\s*\{[^}]*stroke-width: 1\.65px;/);
+  assert.match(styles, /@keyframes coffeeSteam/);
   assert.doesNotMatch(styles, /\.widget\.compact \.loader-slot:not\(\.is-active\)::before/);
 });
 
@@ -202,6 +211,8 @@ test("idle peek renders useful all-clear context instead of an empty card", () =
   assert.match(styles, /\.peek-ticker\.idle \.peek-card\s*\{[\s\S]*grid-template-columns: 18px minmax\(0, 1fr\);/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-copy\s*\{[\s\S]*grid-column: 2;[\s\S]*grid-row: 1;/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-kind\s*\{[\s\S]*grid-column: 1;[\s\S]*grid-row: 1;/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-idle-icon\s*\{[^}]*width: 17px;[^}]*height: 17px;/);
+  assert.match(styles, /\.peek-ticker\.idle \.coffee-smoke\s*\{[^}]*animation: coffeeSteam/);
   assert.match(styles, /\.peek-ticker\.idle \.peek-badge\s*\{[\s\S]*display: none;/);
   assert.doesNotMatch(styles, /\.peek-ticker\.idle \.peek-badge:empty/);
 });
