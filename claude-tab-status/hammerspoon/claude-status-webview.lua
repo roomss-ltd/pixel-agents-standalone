@@ -856,11 +856,11 @@ local function enqueueStatusEvent(kind, session, now)
         if event.key == key then
             event.created_at = now
             event.expires = kind == "finished" and (now + EVENT_TTL) or nil
-            event.sticky = kind == "waiting"
             event.title = sessionEventTitle(kind, session)
             event.display_label = session._display_num or session.display_label or session.tab_num
             event.run_id = session.run_id
             event.detail = kind == "waiting" and tostring(event.display_label) .. " · Waiting for approval" or tostring(event.display_label) .. " · Click to focus"
+            event.expires = now + EVENT_TTL
             return
         end
     end
@@ -869,7 +869,6 @@ local function enqueueStatusEvent(kind, session, now)
         id = tostring(nextEventId),
         key = key,
         kind = kind,
-        sticky = kind == "waiting",
         title = sessionEventTitle(kind, session),
         pane_id = session.pane_id,
         run_id = session.run_id,
@@ -877,7 +876,7 @@ local function enqueueStatusEvent(kind, session, now)
         tab_num = session.tab_num,
         display_label = session._display_num or session.display_label or session.tab_num,
         created_at = now,
-        expires = kind == "finished" and (now + EVENT_TTL) or nil,
+        expires = now + EVENT_TTL,
     })
     eventQueue[1].detail = kind == "waiting" and tostring(eventQueue[1].display_label) .. " · Waiting for approval" or tostring(eventQueue[1].display_label) .. " · Click to focus"
     nextEventId = nextEventId + 1
@@ -885,18 +884,9 @@ end
 
 local function cleanupExpiredEvents()
     local now = hs.timer.secondsSinceEpoch()
-    local waitingByKey = {}
-    for _, s in ipairs(sessions) do
-        if (s.activity or "Init") == "Waiting" then
-            waitingByKey[eventIdentity(s, "waiting")] = true
-        end
-    end
-
     local kept = {}
     for _, event in ipairs(eventQueue) do
-        if event.kind == "waiting" then
-            if waitingByKey[event.key] then table.insert(kept, event) end
-        elseif not event.expires or now <= event.expires then
+        if not event.expires or now <= event.expires then
             table.insert(kept, event)
         end
     end

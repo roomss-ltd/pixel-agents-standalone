@@ -8,8 +8,9 @@ const styles = readFileSync(new URL("./webview/styles.lua", import.meta.url), "u
 const state = readFileSync(new URL("./webview/state.lua", import.meta.url), "utf8");
 const bridge = readFileSync(new URL("./webview/bridge.lua", import.meta.url), "utf8");
 const placement = readFileSync(new URL("./webview/placement.lua", import.meta.url), "utf8");
+const icons = readFileSync(new URL("./webview/icons.lua", import.meta.url), "utf8");
 
-test("collapsed status events are Lua-owned with expiring finished events and sticky waiting events", () => {
+test("collapsed status events are Lua-owned with expiring finished and waiting event pings", () => {
   assert.match(webview, /local EVENT_TTL = 15\.0/);
   assert.match(webview, /local MAX_EVENT_ROWS = 3/);
   assert.match(webview, /local EVENT_POPOVER_WIDTH = 244/);
@@ -17,10 +18,11 @@ test("collapsed status events are Lua-owned with expiring finished events and st
   assert.match(webview, /local eventWebview = nil/);
   assert.match(webview, /local eventQueue = \{\}/);
   assert.match(webview, /local function enqueueStatusEvent\(kind, session, now\)/);
-  assert.match(webview, /expires = kind == "finished" and \(now \+ EVENT_TTL\) or nil/);
-  assert.match(webview, /sticky = kind == "waiting"/);
+  assert.match(webview, /expires = now \+ EVENT_TTL/);
+  assert.doesNotMatch(webview, /sticky = kind == "waiting"/);
+  assert.doesNotMatch(webview, /if event\.kind == "waiting" then/);
   assert.match(webview, /local function cleanupExpiredEvents\(\)/);
-  assert.match(webview, /if event\.kind == "waiting" then/);
+  assert.match(webview, /if not event\.expires or now <= event\.expires then/);
 });
 
 test("activity transitions enqueue collapsed notifications while sounds stay Lua-owned", () => {
@@ -99,9 +101,12 @@ test("event notification polish uses row-native badge layout and quiet dismiss",
   assert.match(webview, /return tostring\(name\) \.\. " needs input"/);
   assert.match(webview, /return tostring\(name\) \.\. " finished"/);
   assert.match(webview, /event\.detail = kind == "waiting" and tostring\(event\.display_label\) \.\. " · Waiting for approval" or tostring\(event\.display_label\) \.\. " · Click to focus"/);
+  assert.match(icons, /\["triangle-alert"\]/);
   assert.match(html, /badge\.className = "event-badge"/);
   assert.match(html, /status\.className = "event-status"/);
-  assert.match(html, /status\.textContent = eventIcon\(event\.kind\)/);
+  assert.match(html, /var WAITING_EVENT_ICON = /);
+  assert.match(html, /status\.innerHTML = eventIcon\(event\.kind\)/);
+  assert.doesNotMatch(html, /kind === "waiting" \? "!"/);
   assert.match(html, /dismiss\.setAttribute\("title", "Dismiss"\)/);
   assert.match(styles, /\.event-panel\s*\{[\s\S]*width: 244px;/);
   assert.match(styles, /\.event-panel\s*\{[\s\S]*gap: 3px;[\s\S]*padding: 4px;/);

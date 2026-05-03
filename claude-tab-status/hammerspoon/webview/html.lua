@@ -1059,10 +1059,12 @@ local function settingsScript(bridgeScheme)
 end
 
 function M.eventsScript(bridgeScheme)
+    local waitingEventIcon = string.format("%q", icons.svg("triangle-alert", "control-icon event-warning-icon"))
     return ([[
     (function() {
       var BRIDGE_SCHEME = "__BRIDGE_SCHEME__";
       var VALID_ACTION_TYPES = { "event.focus": true, "event.dismiss": true };
+      var WAITING_EVENT_ICON = __WAITING_EVENT_ICON__;
 
       function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function(ch) {
@@ -1076,7 +1078,7 @@ function M.eventsScript(bridgeScheme)
       }
 
       function eventIcon(kind) {
-        return kind === "waiting" ? "!" : "✓";
+        return kind === "waiting" ? WAITING_EVENT_ICON : "✓";
       }
 
       function renderEventRow(event) {
@@ -1100,7 +1102,7 @@ function M.eventsScript(bridgeScheme)
 
         var status = document.createElement("div");
         status.className = "event-status";
-        status.textContent = eventIcon(event.kind);
+        status.innerHTML = eventIcon(event.kind);
 
         var dismiss = document.createElement("button");
         dismiss.className = "event-dismiss";
@@ -1156,6 +1158,7 @@ function M.eventsScript(bridgeScheme)
       });
     })();
 ]]):gsub("__BRIDGE_SCHEME__", bridgeScheme or "claude-status")
+   :gsub("__WAITING_EVENT_ICON__", waitingEventIcon)
 end
 
 function M.build(options)
