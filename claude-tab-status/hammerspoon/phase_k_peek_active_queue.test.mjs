@@ -61,6 +61,22 @@ test("peek active queue uses one subtle divider before finished history", () => 
   assert.match(styles, /\.widget\.peek:not\(\.peek-hovering\):not\(:focus-within\) \.peek-queue-divider\s*\{[\s\S]*border-top-color: transparent;/);
 });
 
+test("peek history owns recent and older finished tiers behind the older toggle", () => {
+  assert.match(state, /local RECENT_FINISHED_WINDOW_SECONDS = 3600/);
+  assert.match(state, /local olderExpanded = input\.olderFinishedExpanded == true and \(input\.expanded == true or viewMode == "peek"\)/);
+  assert.match(state, /history = buildPeekHistory\(recentCompletedRows, input\.events, "recent-finished"\)/);
+  assert.match(state, /olderHistory = buildPeekHistory\(olderCompletedRows, input\.events, "older-finished"\)/);
+  assert.match(state, /olderFinished = \{[^\}]*count = #olderCompletedRows[\s\S]*expanded = olderExpanded[\s\S]*label = "Older finished"/);
+  assert.match(html, /function renderPeekOlderFinishedControl\(peek\)/);
+  assert.match(html, /data-peek-older-finished/);
+  assert.match(html, /renderPeekHistoryRow\(item\)/);
+  assert.match(html, /renderPeekHistoryRow\(item\)[\s\S]*peek-history-status/);
+  assert.match(html, /if \(peek\.olderFinished && peek\.olderFinished\.expanded\) \{[\s\S]*olderHistory\.forEach/);
+  assert.match(styles, /\.peek-history-row\s*\{[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) max-content;/);
+  assert.match(styles, /\.peek-history-status\s*\{[\s\S]*justify-self: end;[\s\S]*font-variant-numeric: tabular-nums;/);
+  assert.match(styles, /\.peek-history-row\.older-finished\s*\{[\s\S]*opacity: 0\.78;/);
+});
+
 test("closed peek removes reveal-only sections from layout so the primary card stays vertically centered", () => {
   assert.match(styles, /\.widget\.peek \.header\s*\{[\s\S]*height: 64px;[\s\S]*align-content: center;/);
   assert.match(styles, /\.widget\.peek\.peek-hovering \.header,\s*\.widget\.peek:focus-within \.header\s*\{[\s\S]*align-content: start;/);

@@ -64,6 +64,13 @@ local function peekHoverFrameHeight(sections)
     local header = sections.header or {}
     local peek = header.peek or {}
     local historyCount = #(peek.history or {})
+    local olderFinished = peek.olderFinished or {}
+    if olderFinished.count and olderFinished.count > 0 then
+        historyCount = historyCount + 1
+    end
+    if olderFinished.expanded == true then
+        historyCount = historyCount + #(peek.olderHistory or {})
+    end
     local stackCount = #((peek.activeQueue or {}).stack or {})
     local height = PEEK_FRAME_HEIGHT
     height = height + peekActiveStackHeight(peek)
@@ -181,12 +188,13 @@ local function eventKeySet(events)
     return keys
 end
 
-local function peekItemFromCompletedRow(row)
+local function peekItemFromCompletedRow(row, tier)
     row = row or {}
     local label = displayLabel(row)
     local name = tostring(row.tab_name or "")
     return {
         kind = "finished",
+        tier = tier,
         title = peekTitle(name),
         detail = tostring(row.detail or ""),
         display_label = label,
@@ -254,14 +262,14 @@ local function buildPeekActiveQueue(peekItems)
     }
 end
 
-local function buildPeekHistory(completedRows, events)
+local function buildPeekHistory(completedRows, events, tier)
     local history = {}
     local suppressed = eventKeySet(events)
     for _, row in ipairs(completedRows or {}) do
         if #history >= PEEK_HISTORY_MAX_ITEMS then break end
         local key = rowKey(row)
         if not suppressed[key] then
-            table.insert(history, peekItemFromCompletedRow(row))
+            table.insert(history, peekItemFromCompletedRow(row, tier))
         end
     end
     return history
@@ -317,7 +325,6 @@ function M.build(input)
     local allCompletedRows = renderRows(input.inactiveSessions)
     local recentCompletedRows, olderCompletedRows = splitFinishedRows(allCompletedRows)
     local completedRows = recentCompletedRows
-    local olderExpanded = input.olderFinishedExpanded == true and input.expanded == true
     local showOlderFinishedControl = #olderCompletedRows > 0
     local showOlderFinishedDivider = showOlderFinishedControl and (#activeRows > 0 or #completedRows > 0)
     local finishedVisible = #completedRows > 0 or showOlderFinishedControl
@@ -328,6 +335,7 @@ function M.build(input)
         table.insert(peekItems, buildIdlePeekItem(recentCompletedRows))
     end
     local viewMode = input.expanded == true and "expanded" or compactViewMode(input, activeTotal)
+    local olderExpanded = input.olderFinishedExpanded == true and (input.expanded == true or viewMode == "peek")
     local peekHover = (input.peekHover == true or input.peekPinned == true) and viewMode == "peek"
     local sections = {
         visible = input.visible,
@@ -344,7 +352,13 @@ function M.build(input)
                 active = viewMode == "peek",
                 items = peekItems,
                 activeQueue = buildPeekActiveQueue(peekItems),
-                history = buildPeekHistory(recentCompletedRows, input.events),
+                history = buildPeekHistory(recentCompletedRows, input.events, "recent-finished"),
+                olderHistory = buildPeekHistory(olderCompletedRows, input.events, "older-finished"),
+                olderFinished = {
+                    count = #olderCompletedRows,
+                    expanded = olderExpanded,
+                    label = "Older finished",
+                },
                 pinned = peekPinned,
                 hovering = peekHover,
                 hoverPinned = input.peekPinned == true,

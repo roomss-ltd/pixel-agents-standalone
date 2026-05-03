@@ -208,10 +208,10 @@ test("peek primary ticker is reserved for live work while finished events stay n
 test("peek hover history suppresses rows already represented by active notification events", () => {
   assert.match(state, /local function rowKey\(row\)/);
   assert.match(state, /local function eventKeySet\(events\)/);
-  assert.match(state, /local function buildPeekHistory\(completedRows, events\)/);
+  assert.match(state, /local function buildPeekHistory\(completedRows, events, tier\)/);
   assert.match(state, /local suppressed = eventKeySet\(events\)/);
   assert.match(state, /local key = rowKey\(row\)/);
-  assert.match(state, /if not suppressed\[key\] then[\s\S]*table\.insert\(history, peekItemFromCompletedRow\(row\)\)/);
+  assert.match(state, /if not suppressed\[key\] then[\s\S]*table\.insert\(history, peekItemFromCompletedRow\(row, tier\)\)/);
   assert.doesNotMatch(state, /table\.insert\(history, peekItemFromEvent\(event\)\)/);
 });
 

@@ -354,7 +354,7 @@ function M.script(bridgeScheme)
       function renderPeekHistoryRow(item) {
         var row = document.createElement("button");
         row.type = "button";
-        row.className = "peek-history-row " + (item && item.kind ? item.kind : "finished");
+        row.className = "peek-history-row " + (item && item.kind ? item.kind : "finished") + (item && item.tier ? " " + item.tier : "");
         row.setAttribute("data-pane-id", item && item.pane_id != null ? String(item.pane_id) : "");
         row.setAttribute("data-zj-session", item && item._zj_session ? item._zj_session : "");
         row.setAttribute("data-tab-num", item && item.tab_num != null ? String(item.tab_num) : "");
@@ -363,9 +363,33 @@ function M.script(bridgeScheme)
           '<span class="peek-history-badge">' + escapeHtml(item && item.display_label ? item.display_label : "") + '</span>' +
           '<span class="peek-history-copy">' +
             '<span class="peek-history-title">' + escapeHtml(item && item.title ? item.title : "Finished") + '</span>' +
-            '<span class="peek-history-detail">' + escapeHtml(item && item.detail ? item.detail : "Click to focus") + '</span>' +
-          '</span>';
+          '</span>' +
+          '<span class="peek-history-status">' + escapeHtml(item && item.detail ? item.detail : "") + '</span>';
         return row;
+      }
+
+      function renderPeekOlderFinishedControl(peek) {
+        var older = (peek && peek.olderFinished) || {};
+        if (!older.count) return null;
+        var shell = document.createElement("div");
+        shell.className = "peek-history-older-toggle-shell";
+        shell.setAttribute("data-peek-older-finished", "true");
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "older-finished-toggle peek-history-older-toggle";
+        button.setAttribute("data-action", "older.toggle");
+        button.setAttribute("aria-expanded", older.expanded ? "true" : "false");
+        button.setAttribute("title", older.expanded ? "Collapse" : "Show all");
+        var label = document.createElement("span");
+        label.className = "older-finished-label";
+        label.textContent = older.expanded ? "Collapse" : "Show all";
+        var count = document.createElement("span");
+        count.className = "older-finished-count";
+        count.textContent = String(older.count);
+        button.appendChild(label);
+        button.appendChild(count);
+        shell.appendChild(button);
+        return shell;
       }
 
       function renderPeekHistory(header) {
@@ -374,8 +398,9 @@ function M.script(bridgeScheme)
         if (!list) return;
         var peek = header.peek || {};
         var history = peek.history || [];
+        var olderHistory = peek.olderHistory || [];
         list.innerHTML = "";
-        if (!history.length) {
+        if (!history.length && !(peek.olderFinished && peek.olderFinished.count)) {
           var empty = document.createElement("div");
           empty.className = "peek-history-empty";
           empty.textContent = "No recent finishes";
@@ -385,6 +410,18 @@ function M.script(bridgeScheme)
         history.forEach(function(item) {
           list.appendChild(renderPeekHistoryRow(item));
         });
+        var olderControl = renderPeekOlderFinishedControl(peek);
+        if (olderControl) {
+          var divider = document.createElement("div");
+          divider.className = "peek-history-older-divider";
+          list.appendChild(divider);
+          list.appendChild(olderControl);
+        }
+        if (peek.olderFinished && peek.olderFinished.expanded) {
+          olderHistory.forEach(function(item) {
+            list.appendChild(renderPeekHistoryRow(item));
+          });
+        }
       }
 
       function activePeekItems(header) {

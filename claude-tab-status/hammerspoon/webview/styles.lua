@@ -699,12 +699,12 @@ function M.css()
     .peek-history-row {
       width: 100%;
       min-width: 0;
-      min-height: 27px;
+      min-height: 25px;
       display: grid;
-      grid-template-columns: 30px minmax(0, 1fr);
+      grid-template-columns: 30px minmax(0, 1fr) max-content;
       align-items: center;
       gap: 7px;
-      padding: 4px 7px;
+      padding: 3px 7px;
       border: 0.5px solid rgba(115, 210, 128, 0.14);
       border-radius: 7px;
       background: rgba(115, 210, 128, 0.06);
@@ -731,6 +731,7 @@ function M.css()
       font-weight: 800;
       line-height: 14px;
       text-align: center;
+      box-shadow: inset 0 0 0 1px rgba(115, 210, 128, 0.18);
     }
 
     .peek-history-copy {
@@ -748,9 +749,20 @@ function M.css()
     }
 
     .peek-history-title {
-      font-size: 10px;
+      font-size: 10.5px;
       font-weight: 700;
       color: rgba(255, 255, 255, 0.76);
+    }
+
+    .peek-history-status {
+      justify-self: end;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: rgba(115, 210, 128, 0.72);
     }
 
     .peek-history-detail,
@@ -762,6 +774,29 @@ function M.css()
 
     .peek-history-empty {
       padding: 3px 7px;
+    }
+
+    .peek-history-older-divider {
+      height: 10px;
+      margin: 0 12px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.18);
+      transform: translateY(5px);
+      opacity: 0.62;
+    }
+
+    .peek-history-older-toggle-shell {
+      display: grid;
+      justify-items: center;
+      align-items: center;
+      min-height: 24px;
+    }
+
+    .peek-history-row.older-finished {
+      opacity: 0.78;
+    }
+
+    .peek-history-row.older-finished:hover {
+      opacity: 0.92;
     }
 
     .peek-actions {

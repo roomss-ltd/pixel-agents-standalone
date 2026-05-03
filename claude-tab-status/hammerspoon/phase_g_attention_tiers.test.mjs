@@ -67,7 +67,7 @@ test("older-finished toggle click is robust in older WebKit and does not start d
 test("bridge and Lua own the older-finished expanded state", () => {
   assert.match(bridge, /\["older\.toggle"\] = true/);
   assert.match(webview, /local olderFinishedExpanded = false/);
-  assert.match(webview, /elseif body\.type == "older\.toggle" then[\s\S]*olderFinishedExpanded = not olderFinishedExpanded/);
+  assert.match(webview, /elseif body\.type == "older\.toggle" then[\s\S]*if expanded or viewMode == "peek" then[\s\S]*olderFinishedExpanded = not olderFinishedExpanded/);
   assert.match(webview, /olderFinishedExpanded = olderFinishedExpanded/);
 });
 

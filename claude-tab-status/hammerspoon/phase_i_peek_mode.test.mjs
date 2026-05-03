@@ -136,9 +136,9 @@ test("peek running marker preserves loader DOM across one-second state refreshes
 });
 
 test("peek hover reveals recent finished history without auto-expanding", () => {
-  assert.match(state, /local function buildPeekHistory\(completedRows, events\)/);
+  assert.match(state, /local function buildPeekHistory\(completedRows, events, tier\)/);
   assert.match(state, /if #history >= PEEK_HISTORY_MAX_ITEMS then break end/);
-  assert.match(state, /history = buildPeekHistory\(recentCompletedRows, input\.events\),/);
+  assert.match(state, /history = buildPeekHistory\(recentCompletedRows, input\.events, "recent-finished"\),/);
   assert.match(state, /local peekHover = \(input\.peekHover == true or input\.peekPinned == true\) and viewMode == "peek"/);
   assert.match(state, /peekHover = peekHover,/);
   assert.match(html, /function renderPeekHistory\(header\)/);

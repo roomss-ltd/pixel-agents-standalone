@@ -264,9 +264,13 @@ local function handleBridgeMessage(message)
         if not expanded then settingsOpen = false end
         if refreshWebview then refreshWebview() end
     elseif body.type == "older.toggle" then
-        peekHover = false
-        if expanded then
+        if expanded or viewMode == "peek" then
             olderFinishedExpanded = not olderFinishedExpanded
+            if viewMode == "peek" then
+                peekHover = true
+            else
+                peekHover = false
+            end
             if refreshWebview then refreshWebview() end
         end
     elseif body.type == "expand.toggle" then
