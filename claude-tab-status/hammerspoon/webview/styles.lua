@@ -92,6 +92,12 @@ function M.css()
       display: none;
     }
 
+    .widget:not(.peek) .peek-ticker,
+    .widget:not(.peek) .peek-active-stack,
+    .widget:not(.peek) .peek-queue-divider {
+      display: none;
+    }
+
     .widget:not(.expanded) .more-toggle {
       display: none;
     }
@@ -123,8 +129,10 @@ function M.css()
     .widget.compact .mini-enlarge-toggle {
       position: static;
       inset: auto;
+      grid-row: 1;
       grid-column: 3;
       justify-self: end;
+      align-self: center;
       width: 26px;
       height: 26px;
       min-width: 26px;
