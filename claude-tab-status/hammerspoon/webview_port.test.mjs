@@ -56,7 +56,8 @@ test("static shell preserves the widget structure expected by later real-data re
   assert.match(source, /data-setting="soundsEnabled"/);
   assert.match(source, /data-setting="waitingReminderSound"/);
   assert.match(source, /data-setting="waitingPulse"/);
-  assert.match(source, /data-setting="completionFlash"/);
+  assert.match(source, /data-setting="notificationsEnabled"/);
+  assert.doesNotMatch(source, /data-setting="completionFlash"|data-setting="processingNeon"/);
 });
 
 test("webview module loads real status JSON using the existing contract", () => {
@@ -110,8 +111,9 @@ test("webview script builders do not format large JavaScript blobs", () => {
 
 test("webview settings are Lua-owned and persisted with the canvas settings key", () => {
   assert.match(source, /local SETTINGS_KEY = "claudeStatus\.settings"/);
-  assert.match(source, /local DEFAULT_SETTINGS = \{[\s\S]*soundsEnabled = true,[\s\S]*waitingReminderSound = true,[\s\S]*waitingPulse = true,[\s\S]*completionFlash = true,[\s\S]*processingNeon = true,[\s\S]*notificationsEnabled = true,[\s\S]*\}/);
-  assert.match(source, /local SETTINGS_ITEMS = \{[\s\S]*\{ key = "soundsEnabled", label = "Sounds" \}[\s\S]*\{ key = "waitingReminderSound", label = "Waiting reminders" \}[\s\S]*\{ key = "waitingPulse", label = "Waiting pulse" \}[\s\S]*\{ key = "completionFlash", label = "Finish flash" \}[\s\S]*\{ key = "processingNeon", label = "Processing neon" \}[\s\S]*\{ key = "notificationsEnabled", label = "Show notifications" \}[\s\S]*\}/);
+  assert.match(source, /local DEFAULT_SETTINGS = \{[\s\S]*soundsEnabled = true,[\s\S]*waitingReminderSound = true,[\s\S]*waitingPulse = true,[\s\S]*notificationsEnabled = true,[\s\S]*\}/);
+  assert.match(source, /local SETTINGS_ITEMS = \{[\s\S]*\{ key = "soundsEnabled", label = "Sounds" \}[\s\S]*\{ key = "waitingReminderSound", label = "Waiting reminders" \}[\s\S]*\{ key = "waitingPulse", label = "Waiting pulse" \}[\s\S]*\{ key = "notificationsEnabled", label = "Show notifications" \}[\s\S]*\}/);
+  assert.doesNotMatch(source, /completionFlash|processingNeon|Finish flash|Processing neon/);
   assert.match(source, /local function loadSettings\(\)[\s\S]*hs\.settings\.get\(SETTINGS_KEY\)/);
   assert.match(source, /local function saveSettings\(\)[\s\S]*hs\.settings\.set\(SETTINGS_KEY, settings\)/);
   assert.match(source, /settings = settings/);
@@ -122,7 +124,7 @@ test("webview renders settings toggles from state and posts only controlled togg
   assert.match(source, /function renderSettings\(settings, settingsItems\)/);
   assert.match(source, /input\.checked = !!settings\[item\.key\]/);
   assert.match(source, /row\.dataset\.setting = item\.key/);
-  assert.match(source, /var VALID_SETTING_KEYS = \{ soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, completionFlash: true, processingNeon: true, notificationsEnabled: true \}/);
+  assert.match(source, /var VALID_SETTING_KEYS = \{ soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, notificationsEnabled: true \}/);
   assert.match(source, /function postAction\(message\)/);
   assert.match(source, /if \(!message \|\| message\.type !== "setting\.toggle"\) return/);
   assert.match(source, /if \(!VALID_SETTING_KEYS\[message\.key\]\) return/);
@@ -152,56 +154,48 @@ test("waiting pulse rendering is controlled by Lua settings state", () => {
   assert.match(source, /\.waiting-pulse-enabled \.row\.waiting/);
 });
 
-test("webview tracks completion flash durations and active-to-complete transitions in Lua", () => {
-  assert.match(source, /local FLASH_DURATION = 1\.5/);
-  assert.match(source, /local COMPLETION_HIGHLIGHT_DURATION = 10\.0/);
-  assert.match(source, /local flashState = \{\}/);
+test("webview tracks active-to-complete transitions for sounds and notifications only", () => {
+  assert.doesNotMatch(source, /local FLASH_DURATION = 1\.5/);
+  assert.doesNotMatch(source, /local COMPLETION_HIGHLIGHT_DURATION = 10\.0/);
+  assert.doesNotMatch(source, /local flashState = \{\}/);
   assert.match(source, /local prevActivities = \{\}/);
-  assert.match(source, /local function cleanupExpiredFlashes\(\)/);
+  assert.doesNotMatch(source, /local function cleanupExpiredFlashes\(\)/);
   assert.match(source, /local function detectActivityTransitions\(\)/);
   assert.match(source, /local prev = prevActivities\[id\]/);
   assert.match(source, /if \(activity == "Done" or activity == "Idle"\) and \(prev == "Thinking" or prev == "Tool" or prev == "Waiting"\) then/);
-  assert.match(source, /if settings\.completionFlash then/);
-  assert.match(source, /flashState\[id\] = \{[\s\S]*expires = now2 \+ COMPLETION_HIGHLIGHT_DURATION[\s\S]*camera_expires = now2 \+ FLASH_DURATION[\s\S]*\}/);
+  assert.match(source, /enqueueStatusEvent\("finished", s, now2\)/);
+  assert.match(source, /playStatusSound\("done"\)/);
+  assert.doesNotMatch(source, /settings\.completionFlash|flashState\[id\]/);
   assert.match(source, /prevActivities = newActivities/);
 });
 
-test("buildViewState exposes declarative flash metadata without moving sound ownership to JS", () => {
-  assert.match(source, /local function buildFlashViewState\(\)/);
-  assert.match(source, /flashRows\[id\] = \{[\s\S]*active = true[\s\S]*highlightExpires = flash\.expires[\s\S]*cameraExpires = flash\.camera_expires[\s\S]*\}/);
-  assert.match(source, /flash = buildFlashViewState\(\)/);
-  assert.match(source, /cleanupExpiredFlashes\(\)/);
+test("buildViewState keeps sound ownership in Lua without flash metadata", () => {
+  assert.doesNotMatch(source, /local function buildFlashViewState\(\)/);
+  assert.doesNotMatch(source, /flashRows\[id\]/);
+  assert.doesNotMatch(source, /flash = buildFlashViewState\(\)/);
+  assert.doesNotMatch(source, /cleanupExpiredFlashes\(\)/);
   assert.doesNotMatch(source, /new Audio\(/);
   assert.doesNotMatch(source, /AudioContext/);
   assert.match(source, /local function playStatusSound\(kind\)/);
   assert.match(source, /hs\.sound\.getByName\(config\.name\)/);
 });
 
-test("HTML and CSS define waiting pulse, completion row highlight, and widget flash overlay effects", () => {
-  assert.match(source, /<div class="widget-flash" id="widget-flash"><\/div>/);
+test("HTML and CSS keep waiting pulse but remove completion flash visuals", () => {
+  assert.doesNotMatch(source, /<div class="widget-flash" id="widget-flash"><\/div>/);
   assert.match(source, /@keyframes waitingPulse/);
   assert.match(source, /\.waiting-pulse-enabled \.row\.waiting[\s\S]*animation: waitingPulse/);
-  assert.match(source, /\.row\.completion-highlight/);
-  assert.match(source, /\.row\.completion-highlight \.badge/);
-  assert.match(source, /\.row\.completion-highlight \.status/);
-  assert.match(source, /@keyframes widgetFlash/);
-  assert.match(source, /\.widget\.widget-flashing \.widget-flash[\s\S]*animation: widgetFlash 1\.5s/);
+  assert.doesNotMatch(source, /\.row\.completion-highlight/);
+  assert.doesNotMatch(source, /@keyframes widgetFlash/);
+  assert.doesNotMatch(source, /\.widget\.widget-flashing/);
 });
 
-test("completion highlight inverts webview row text without status block artifacts", () => {
-  assert.match(styles, /\.row\.completion-highlight \.title[\s\S]*color: rgba\(17, 17, 24, 0\.96\)/);
-  assert.match(styles, /\.row\.completion-highlight \.status[\s\S]*color: rgba\(17, 17, 24, 0\.96\)/);
-  assert.match(styles, /\.row\.completion-highlight \.status[\s\S]*background: transparent/);
-  assert.match(styles, /\.row\.completion-highlight \.badge[\s\S]*background: rgba\(17, 17, 24, 0\.08\)/);
+test("completion highlight styles are removed from the webview", () => {
+  assert.doesNotMatch(styles, /\.row\.completion-highlight/);
 });
 
-test("JS applies attention effects only from Lua-provided state and settings", () => {
-  assert.match(source, /var flash = state\.flash \|\| \{\}/);
-  assert.match(source, /var flashRows = flash\.rows \|\| \{\}/);
-  assert.match(source, /var flashInfo = flashRows\[row\._flash_id\]/);
-  assert.match(source, /if \(flashInfo && settings\.completionFlash\) \{/);
-  assert.match(source, /setClass\(el, "completion-highlight", true\)/);
-  assert.match(source, /setClass\(widget, "widget-flashing", !!\(flash\.widget && settings\.completionFlash\)\)/);
+test("JS applies waiting pulse without flash or neon settings", () => {
+  assert.doesNotMatch(source, /var flash = state\.flash \|\| \{\}/);
+  assert.doesNotMatch(source, /flashRows|flashInfo|completion-highlight|widget-flashing|processingNeon/);
   assert.match(source, /setClass\(document\.body, "waiting-pulse-enabled", !!settings\.waitingPulse\)/);
 });
 
@@ -230,7 +224,6 @@ test("webview keeps dismiss as a controlled bridge action without a visible row 
   assert.match(source, /"expand\.set": true/);
   assert.doesNotMatch(source, /button class="settings-pin-toggle" data-action="pin\.toggle"/);
   assert.doesNotMatch(source, /class="dismiss-button"/);
-  assert.doesNotMatch(source, /data-action="row\.dismiss"/);
   assert.match(source, /postAction\(\{ type: "pin\.toggle" \}\)/);
   assert.match(source, /postAction\(\{ type: "drag\.start"/);
   assert.match(source, /postAction\(\{ type: "drag\.move"/);
@@ -243,8 +236,9 @@ test("webview keeps dismiss as a controlled bridge action without a visible row 
 test("Lua dismiss action mirrors canvas denylist zellij pipe and local JSON cleanup", () => {
   assert.match(source, /local function saveDenylist\(deny\)/);
   assert.match(source, /local function addToDenylist\(zj_session, pane_id\)/);
-  assert.match(source, /function dismissSession\(zj_session, pane_id\)/);
-  assert.match(source, /addToDenylist\(zj_session, pane_id\)/);
+  assert.match(source, /function dismissSession\(zj_session, pane_id, run_id\)/);
+  assert.match(source, /if run_id and run_id ~= "" then\s+addHiddenRun\(run_id\)/);
+  assert.match(source, /else\s+addToDenylist\(zj_session, pane_id\)/);
   assert.match(source, /hook_event":"Dismiss"/);
   assert.match(source, /zellij -s %q pipe --name "claude-tab-status"/);
   assert.match(source, /hs\.execute\(cmd, true\)/);

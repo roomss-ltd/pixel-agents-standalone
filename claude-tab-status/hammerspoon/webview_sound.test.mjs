@@ -8,7 +8,7 @@ const webview = readFileSync(
 );
 const html = readFileSync(new URL("./webview/html.lua", import.meta.url), "utf8");
 const doneSound = new URL(
-  "./sounds/mixkit-correct-answer-tone-2870.wav",
+  "./sounds/Glass.wav",
   import.meta.url,
 );
 
@@ -16,7 +16,7 @@ test("webview keeps status sounds owned by Hammerspoon Lua", () => {
   assert.match(webview, /local SOUND_ENABLED = true/);
   assert.match(
     webview,
-    /local SOUND_DONE = \{ file = SOURCE_DIR \.\. "\/sounds\/mixkit-correct-answer-tone-2870\.wav" \}/,
+    /local SOUND_DONE = \{ file = SOURCE_DIR \.\. "\/sounds\/Glass\.wav" \}/,
   );
   assert.match(webview, /local SOUND_WAITING = \{ name = "Ping" \}/);
   assert.match(webview, /local SOUND_COOLDOWN = 0\.75/);

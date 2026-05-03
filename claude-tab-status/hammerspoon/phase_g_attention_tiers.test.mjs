@@ -43,8 +43,8 @@ test("HTML renders a collapsed older-finished tier with a controlled toggle acti
   assert.match(html, /Older finished/);
   assert.match(html, /olderDivider\.className = "divider older-finished-divider"/);
   assert.match(html, /if \(state\.showOlderFinishedDivider\)/);
-  assert.match(html, /renderRows\(state\.recentCompletedRows \|\| state\.completedRows \|\| \[\], "completed-row"\)/);
-  assert.match(html, /renderRows\(state\.olderCompletedRows \|\| \[\], "completed-row older-finished-row"\)/);
+  assert.match(html, /renderRows\(state\.recentCompletedRows \|\| state\.completedRows \|\| \[\], "completed-row", state\.editMode\)/);
+  assert.match(html, /renderRows\(state\.olderCompletedRows \|\| \[\], "completed-row older-finished-row", state\.editMode\)/);
   assert.match(html, /postAction\(\{ type: "older\.toggle" \}\)/);
 });
 
@@ -95,10 +95,12 @@ test("styles distinguish recent finished rows from the older-finished control", 
 
 test("peek action row anchors options left and pin/minimize right", () => {
   assert.match(html, /ensurePeekActionButton\(peekActions, "peek-options-toggle", "settings\.toggle"/);
+  assert.match(html, /ensurePeekActionButton\(peekActions, "peek-edit-toggle", "edit\.toggle"/);
   assert.match(html, /ensurePeekActionButton\(peekActions, "peek-pin-toggle", "peek\.pin\.toggle"/);
   assert.match(html, /ensurePeekActionButton\(peekActions, "peek-minimize-toggle", "compact\.mode\.set"/);
-  assert.match(styles, /\.peek-actions\s*\{[\s\S]*display: grid;[\s\S]*grid-template-columns: 28px minmax\(0, 1fr\) 28px 28px;/);
+  assert.match(styles, /\.peek-actions\s*\{[\s\S]*display: grid;[\s\S]*grid-template-columns: 28px 28px minmax\(0, 1fr\) 28px 28px;/);
   assert.match(styles, /\.peek-options-toggle\s*\{[^}]*grid-column: 1;/);
-  assert.match(styles, /\.peek-pin-toggle\s*\{[^}]*grid-column: 3;/);
-  assert.match(styles, /\.peek-minimize-toggle\s*\{[^}]*grid-column: 4;/);
+  assert.match(styles, /\.peek-edit-toggle\s*\{[^}]*grid-column: 2;/);
+  assert.match(styles, /\.peek-pin-toggle\s*\{[^}]*grid-column: 4;/);
+  assert.match(styles, /\.peek-minimize-toggle\s*\{[^}]*grid-column: 5;/);
 });

@@ -95,8 +95,9 @@ fn build_status_json(state: &PluginState) -> String {
         };
 
         sessions_json.push(format!(
-            "{{\"pane_id\":{},\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\"}}",
+            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\"}}",
             session.pane_id,
+            escape_json_string(&session.run_id),
             tab_num,
             escape_json_string(tab_name),
             icon,

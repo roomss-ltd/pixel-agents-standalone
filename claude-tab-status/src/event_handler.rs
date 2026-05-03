@@ -3,6 +3,22 @@ use crate::status_writer;
 use crate::tab_manager;
 use zellij_tile::prelude::focus_terminal_pane;
 
+fn next_run_id(
+    state: &mut PluginState,
+    pane_id: u32,
+    session_id: Option<&str>,
+    now: u64,
+) -> String {
+    state.run_seq = state.run_seq.saturating_add(1);
+    format!(
+        "{}:{}:{}:{}",
+        session_id.unwrap_or(""),
+        pane_id,
+        now,
+        state.run_seq
+    )
+}
+
 pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     let event = payload.hook_event.as_str();
 
@@ -60,16 +76,33 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         _ => Activity::Idle,
     };
 
+    let now = unix_now();
+    let session_exists = state.sessions.contains_key(&payload.pane_id);
+    let assigned_run_id = if event == "UserPromptSubmit" || !session_exists {
+        Some(next_run_id(
+            state,
+            payload.pane_id,
+            payload.session_id.as_deref(),
+            now,
+        ))
+    } else {
+        None
+    };
+
     let session = state
         .sessions
         .entry(payload.pane_id)
         .or_insert_with(|| SessionInfo {
             session_id: payload.session_id.clone().unwrap_or_default(),
+            run_id: assigned_run_id.clone().unwrap_or_default(),
             pane_id: payload.pane_id,
             activity: Activity::Init,
             last_event_ts: 0,
             last_tool_name: None,
         });
+    if let Some(run_id) = assigned_run_id {
+        session.run_id = run_id;
+    }
 
     // Track last tool name across transitions.
     match &activity {
@@ -84,7 +117,7 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
 
     let activity_changed = session.activity != activity;
     session.activity = activity;
-    session.last_event_ts = unix_now();
+    session.last_event_ts = now;
     if let Some(sid) = &payload.session_id {
         session.session_id = sid.clone();
     }

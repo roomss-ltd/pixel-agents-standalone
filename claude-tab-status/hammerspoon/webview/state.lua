@@ -18,6 +18,7 @@ local PEEK_QUEUE_DIVIDER_HEIGHT = 14
 local PEEK_HISTORY_OLDER_DIVIDER_HEIGHT = 14
 local PEEK_HISTORY_ROW_HEIGHT = 27
 local PEEK_HISTORY_ROW_GAP = 4
+local PEEK_HISTORY_ACTIVE_STACK_MAX_HEIGHT = 150
 local PEEK_HISTORY_EMPTY_HEIGHT = 14
 local PEEK_HISTORY_REVEAL_PADDING = 9
 local PEEK_HISTORY_SECTION_GAP = 5
@@ -26,7 +27,7 @@ local PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT = 54
 local PEEK_HOVER_FRAME_SAFETY = 18
 local PEEK_MAX_HOVER_FRAME_HEIGHT = 420
 local BORDER_SHADOW_SAFETY = 6
-local PEEK_HOVER_BORDER_SAFETY = BORDER_SHADOW_SAFETY + 10
+local PEEK_HOVER_BORDER_SAFETY = BORDER_SHADOW_SAFETY + 20
 local ACTIVE_ROW_HEIGHT = 28
 local COMPLETED_ROW_HEIGHT = 22
 local ROW_GAP = 3
@@ -41,10 +42,14 @@ local MAX_FRAME_HEIGHT = 700
 local RECENT_FINISHED_WINDOW_SECONDS = 3600
 local DEFAULT_COMPACT_MODE = "peek"
 
-local function peekHistoryListHeight(historyCount)
+local function peekHistoryListHeight(historyCount, hasActiveStack)
     if historyCount <= 0 then return PEEK_HISTORY_EMPTY_HEIGHT end
     local visibleRows = math.min(historyCount, PEEK_HISTORY_MAX_VISIBLE_ROWS)
-    return (visibleRows * PEEK_HISTORY_ROW_HEIGHT) + (math.max(visibleRows - 1, 0) * PEEK_HISTORY_ROW_GAP)
+    local height = (visibleRows * PEEK_HISTORY_ROW_HEIGHT) + (math.max(visibleRows - 1, 0) * PEEK_HISTORY_ROW_GAP)
+    if hasActiveStack then
+        return math.min(height, PEEK_HISTORY_ACTIVE_STACK_MAX_HEIGHT)
+    end
+    return height
 end
 
 local function peekActiveStackHeight(peek)
@@ -79,7 +84,7 @@ local function peekHoverFrameHeight(sections)
     if olderFinished.count and olderFinished.count > 0 then
         height = height + PEEK_HISTORY_OLDER_DIVIDER_HEIGHT
     end
-    height = height + peekHistoryListHeight(historyCount)
+    height = height + peekHistoryListHeight(historyCount, stackCount > 0)
     local actionHeight = PEEK_ACTION_HEIGHT
     if olderFinished.count and olderFinished.count > 0 then
         actionHeight = PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT
@@ -94,14 +99,21 @@ function M.frameForSections(sections)
     sections = sections or {}
     if not sections.expanded then
         if sections.viewMode == "peek" then
+            local height = sections.peekHover and peekHoverFrameHeight(sections) or PEEK_FRAME_HEIGHT
+            local anchorHeight = height
+            if sections.peekHover then
+                anchorHeight = height - (PEEK_HOVER_FRAME_SAFETY + PEEK_HOVER_BORDER_SAFETY)
+            end
             return {
                 width = PEEK_WIDTH,
-                height = sections.peekHover and peekHoverFrameHeight(sections) or PEEK_FRAME_HEIGHT,
+                height = height,
+                anchorHeight = anchorHeight,
             }
         end
         return {
             width = PILL_WIDTH,
             height = COLLAPSED_FRAME_HEIGHT,
+            anchorHeight = COLLAPSED_FRAME_HEIGHT,
         }
     end
 
@@ -129,6 +141,7 @@ function M.frameForSections(sections)
     return {
         width = sections.expanded and WIDTH or PILL_WIDTH,
         height = height,
+        anchorHeight = height,
     }
 end
 
@@ -159,6 +172,7 @@ local function peekItemFromSession(row, kind)
         detail = detail,
         display_label = label,
         pane_id = row.pane_id,
+        run_id = row.run_id,
         _zj_session = row._zj_session,
         tab_num = row.tab_num,
     }
@@ -171,6 +185,7 @@ local function peekItemFromEvent(event)
         detail = event.detail or "",
         display_label = event.display_label,
         pane_id = event.pane_id,
+        run_id = event.run_id,
         _zj_session = event._zj_session,
         tab_num = event.tab_num,
         event_id = event.id,
@@ -205,6 +220,7 @@ local function peekItemFromCompletedRow(row, tier)
         detail = tostring(row.detail or ""),
         display_label = label,
         pane_id = row.pane_id,
+        run_id = row.run_id,
         _zj_session = row._zj_session,
         tab_num = row.tab_num,
     }
@@ -219,6 +235,7 @@ local function buildIdlePeekItem(recentCompletedRows)
             detail = "All tabs quiet · last finish " .. latest.detail,
             display_label = "",
             pane_id = latest.pane_id,
+            run_id = latest.run_id,
             _zj_session = latest._zj_session,
             tab_num = latest.tab_num,
         }
@@ -336,6 +353,7 @@ function M.build(input)
     local finishedVisible = #completedRows > 0 or showOlderFinishedControl
     local showDivider = #activeRows > 0 and finishedVisible
     local settingsOpen = input.settingsOpen == true
+    local editMode = input.editMode == true
     local peekItems, peekPinned = buildPeekItems(activeRows)
     if #peekItems == 0 then
         table.insert(peekItems, buildIdlePeekItem(recentCompletedRows))
@@ -365,6 +383,7 @@ function M.build(input)
                     expanded = olderExpanded,
                     label = "Older finished",
                 },
+                editMode = editMode,
                 pinned = peekPinned,
                 hovering = peekHover,
                 hoverPinned = input.peekPinned == true,
@@ -398,18 +417,12 @@ function M.build(input)
             soundsEnabled = input.settings and input.settings.soundsEnabled,
             waitingReminderSound = input.settings and input.settings.waitingReminderSound,
             waitingPulse = input.settings and input.settings.waitingPulse,
-            completionFlash = input.settings and input.settings.completionFlash,
-            processingNeon = input.settings and input.settings.processingNeon,
             notificationsEnabled = input.settings and input.settings.notificationsEnabled,
         },
         settingsItems = input.settingsItems,
         effects = {
-            flash = input.flash,
             waitingPulse = input.settings and input.settings.waitingPulse,
-            completionFlash = input.settings and input.settings.completionFlash,
-            processingNeon = input.settings and input.settings.processingNeon,
         },
-        flash = input.flash,
         notifications = {
             events = input.events or {},
             overflow = input.eventOverflow or 0,
@@ -418,6 +431,7 @@ function M.build(input)
         peekHover = peekHover,
         expanded = input.expanded,
         pinned = input.pinned,
+        editMode = editMode,
         settingsOpen = settingsOpen,
         customPos = input.customPos,
     }

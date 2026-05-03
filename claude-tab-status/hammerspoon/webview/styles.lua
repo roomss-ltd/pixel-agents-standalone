@@ -55,21 +55,8 @@ function M.css()
       box-shadow: inset 0 0 0 1px var(--panel-inner-border);
     }
 
-    .widget-flash {
-      pointer-events: none;
-      position: absolute;
-      inset: 0;
-      z-index: 5;
-      opacity: 0;
-      background: rgba(255, 255, 255, 0.72);
-    }
-
     .icon-template {
       display: none;
-    }
-
-    .widget.widget-flashing .widget-flash {
-      animation: widgetFlash 1.5s ease-out both;
     }
 
     .widget:not(.expanded) { width: 188px; }
@@ -327,6 +314,10 @@ function M.css()
       transition: opacity 320ms ease, transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
+    .peek-ticker.edit-mode .peek-card {
+      grid-template-columns: 24px 34px minmax(0, 1fr) auto 24px;
+    }
+
     .peek-ticker.is-rotating-out .peek-card {
       transform: translateY(-5px);
       opacity: 0;
@@ -574,6 +565,10 @@ function M.css()
       cursor: pointer;
     }
 
+    .peek-active-stack-row.edit-mode {
+      grid-template-columns: 30px minmax(0, 1fr) auto 24px;
+    }
+
     .peek-active-stack-row:hover {
       border-color: rgba(115, 166, 255, 0.28);
       background: rgba(115, 166, 255, 0.095);
@@ -718,6 +713,10 @@ function M.css()
       overflow-y: auto;
     }
 
+    .widget.peek.peek-has-active-stack .peek-history-list {
+      max-height: 150px;
+    }
+
     .peek-history-row {
       width: 100%;
       min-width: 0;
@@ -734,6 +733,10 @@ function M.css()
       font: inherit;
       text-align: left;
       cursor: pointer;
+    }
+
+    .peek-history-row.edit-mode {
+      grid-template-columns: 34px minmax(0, 1fr) auto 24px;
     }
 
     .peek-history-row:hover {
@@ -836,7 +839,7 @@ function M.css()
 
     .peek-actions {
       display: grid;
-      grid-template-columns: 28px minmax(0, 1fr) 28px 28px;
+      grid-template-columns: 28px 28px minmax(0, 1fr) 28px 28px;
       align-items: center;
       gap: 6px;
       min-height: 24px;
@@ -853,19 +856,26 @@ function M.css()
       justify-self: start;
     }
 
-    .peek-pin-toggle {
-      grid-column: 3;
+    .peek-edit-toggle {
+      grid-column: 2;
       grid-row: 1;
-      justify-self: end;
+      justify-self: start;
     }
 
-    .peek-minimize-toggle {
+    .peek-pin-toggle {
       grid-column: 4;
       grid-row: 1;
       justify-self: end;
     }
 
+    .peek-minimize-toggle {
+      grid-column: 5;
+      grid-row: 1;
+      justify-self: end;
+    }
+
     .peek-actions.has-older-toggle .peek-options-toggle,
+    .peek-actions.has-older-toggle .peek-edit-toggle,
     .peek-actions.has-older-toggle .peek-pin-toggle,
     .peek-actions.has-older-toggle .peek-minimize-toggle {
       grid-row: 2;
@@ -893,6 +903,13 @@ function M.css()
     }
 
     .peek-action-button.is-pinned {
+      opacity: 1;
+      color: var(--active-blue);
+      border-color: rgba(115, 166, 255, 0.36);
+      background: rgba(115, 166, 255, 0.16);
+    }
+
+    .peek-action-button.is-active {
       opacity: 1;
       color: var(--active-blue);
       border-color: rgba(115, 166, 255, 0.36);
@@ -1017,26 +1034,53 @@ function M.css()
       background: rgba(255, 255, 255, 0.025);
     }
 
+    .widget.editing .row {
+      grid-template-columns: 36px minmax(0, 1fr) minmax(72px, auto) 24px;
+    }
+
+    .row-edit-button,
+    .peek-card-edit-button {
+      width: 22px;
+      height: 22px;
+      min-width: 22px;
+      min-height: 22px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0.5px solid rgba(255, 255, 255, 0.10);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.045);
+      color: rgba(255, 255, 255, 0.56);
+      font: inherit;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    }
+
+    .row-edit-button:hover,
+    .peek-card-edit-button:hover {
+      color: var(--text-strong);
+      border-color: rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .interrupt-row-button:hover,
+    .peek-card-edit-button.interrupt-row-button:hover {
+      color: var(--waiting-orange);
+      border-color: rgba(255, 140, 89, 0.24);
+      background: rgba(255, 140, 89, 0.10);
+    }
+
+    .disconnect-row-button:hover,
+    .peek-card-edit-button.disconnect-row-button:hover {
+      color: var(--completed-green);
+      border-color: rgba(115, 210, 128, 0.24);
+      background: rgba(115, 210, 128, 0.10);
+    }
+
     .row.active-row {
       border-color: rgba(115, 166, 255, 0.25);
       background: rgba(115, 166, 255, 0.12);
-    }
-
-    .row.processing-neon,
-    .peek-ticker.working .peek-card {
-      position: relative;
-      overflow: visible;
-      border-color: rgba(139, 184, 255, 0.52);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.035),
-        0 0 10px rgba(115, 166, 255, 0.22),
-        0 0 18px rgba(70, 206, 255, 0.10);
-    }
-
-    .row.processing-neon > *,
-    .peek-ticker.working .peek-card > * {
-      position: relative;
-      z-index: 2;
     }
 
     .row.waiting-row {
@@ -1054,23 +1098,6 @@ function M.css()
     .waiting-pulse-enabled .row.waiting-row,
     .waiting-pulse-enabled .row.waiting {
       animation: waitingPulse 1.6s ease-in-out infinite;
-    }
-
-    .row.completion-highlight {
-      background: rgba(255, 255, 255, 0.92);
-      color: rgba(17, 17, 24, 0.96);
-      border-color: rgba(255, 255, 255, 0.95);
-    }
-
-    .row.completion-highlight .title,
-    .row.completion-highlight .status {
-      color: rgba(17, 17, 24, 0.96);
-      background: transparent;
-    }
-
-    .row.completion-highlight .badge {
-      color: rgba(17, 17, 24, 0.96);
-      background: rgba(17, 17, 24, 0.08);
     }
 
     .badge,
@@ -1426,11 +1453,6 @@ function M.css()
       50% { box-shadow: 0 0 18px rgba(255, 150, 106, 0.42); }
     }
 
-    @keyframes widgetFlash {
-      0% { opacity: 0.85; }
-      100% { opacity: 0; }
-    }
-
     @keyframes peekPrimaryIn {
       0% {
         transform: translateY(5px);
@@ -1463,10 +1485,6 @@ function M.css()
         filter: none;
       }
 
-      .row.processing-neon,
-      .peek-ticker.working .peek-card {
-        animation: none !important;
-      }
     }
 ]]
 end

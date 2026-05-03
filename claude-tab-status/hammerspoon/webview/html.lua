@@ -16,8 +16,8 @@ function M.script(bridgeScheme)
       var BRIDGE_SCHEME = "__BRIDGE_SCHEME__";
       var dragOrigin = null;
       var dragClickSuppressed = false;
-      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, completionFlash: true, processingNeon: true, notificationsEnabled: true };
-      var VALID_ACTION_TYPES = { "setting.toggle": true, "settings.toggle": true, "pin.toggle": true, "row.focus": true, "row.dismiss": true, "event.focus": true, "event.dismiss": true, "older.toggle": true, "drag.start": true, "drag.move": true, "drag.end": true, "expand.toggle": true, "expand.set": true, "peek.hover.set": true, "peek.pin.toggle": true, "compact.mode.set": true, "debug.layout": true };
+      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, notificationsEnabled: true };
+      var VALID_ACTION_TYPES = { "setting.toggle": true, "settings.toggle": true, "pin.toggle": true, "row.focus": true, "row.dismiss": true, "row.interrupt": true, "event.focus": true, "event.dismiss": true, "older.toggle": true, "drag.start": true, "drag.move": true, "drag.end": true, "expand.toggle": true, "expand.set": true, "peek.hover.set": true, "peek.pin.toggle": true, "compact.mode.set": true, "edit.toggle": true, "debug.layout": true };
       var LOADER_VARIANTS = [
         { name: "dot-spinner", tag: "l-dot-spinner", speed: 0.9 },
         { name: "quantum", tag: "l-quantum", speed: 1.75 },
@@ -146,6 +146,44 @@ function M.script(bridgeScheme)
           target = target.parentElement || target.parentNode;
         }
         return null;
+      }
+
+      function rowIdentityFromNode(node) {
+        var row = closestTarget(node, "[data-pane-id]");
+        return {
+          type: node && node.getAttribute ? node.getAttribute("data-action") : "",
+          pane_id: row && row.getAttribute("data-pane-id"),
+          run_id: row && row.getAttribute("data-run-id"),
+          _zj_session: row && row.getAttribute("data-zj-session"),
+          tab_num: row && row.getAttribute("data-tab-num")
+        };
+      }
+
+      function rowEditActionForActivity(activity) {
+        var value = String(activity || "Init").toLowerCase();
+        var done = value === "done" || value === "idle" || value === "finished";
+        return done ? "row.dismiss" : "row.interrupt";
+      }
+
+      function rowEditActionForKind(kind) {
+        var value = String(kind || "").toLowerCase();
+        if (value === "idle") return "";
+        var done = value === "finished" || value === "done" || value === "idle";
+        return done ? "row.dismiss" : "row.interrupt";
+      }
+
+      function appendRowEditButton(container, action, label, templateId) {
+        if (!container || !action) return null;
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "row-edit-button " + (action === "row.dismiss" ? "disconnect-row-button" : "interrupt-row-button");
+        button.setAttribute("data-action", action);
+        button.setAttribute("aria-label", label);
+        button.setAttribute("title", label);
+        var icon = document.getElementById(templateId);
+        button.innerHTML = icon ? icon.innerHTML : "";
+        container.appendChild(button);
+        return button;
       }
 
       function mergeSettings(settings) {
@@ -354,11 +392,12 @@ function M.script(bridgeScheme)
         kind.textContent = item ? peekKindLabel(item.kind) : "";
       }
 
-      function renderPeekHistoryRow(item) {
-        var row = document.createElement("button");
-        row.type = "button";
-        row.className = "peek-history-row " + (item && item.kind ? item.kind : "finished") + (item && item.tier ? " " + item.tier : "");
+      function renderPeekHistoryRow(item, editMode) {
+        var row = document.createElement("article");
+        row.setAttribute("role", "button");
+        row.className = "peek-history-row " + (item && item.kind ? item.kind : "finished") + (item && item.tier ? " " + item.tier : "") + (editMode ? " edit-mode" : "");
         row.setAttribute("data-pane-id", item && item.pane_id != null ? String(item.pane_id) : "");
+        row.setAttribute("data-run-id", item && item.run_id != null ? String(item.run_id) : "");
         row.setAttribute("data-zj-session", item && item._zj_session ? item._zj_session : "");
         row.setAttribute("data-tab-num", item && item.tab_num != null ? String(item.tab_num) : "");
         row.setAttribute("data-event-id", item && item.event_id != null ? String(item.event_id) : "");
@@ -368,6 +407,9 @@ function M.script(bridgeScheme)
             '<span class="peek-history-title">' + escapeHtml(item && item.title ? item.title : "Finished") + '</span>' +
           '</span>' +
           '<span class="peek-history-status">' + escapeHtml(item && item.detail ? item.detail : "") + '</span>';
+        if (editMode) {
+          appendRowEditButton(row, rowEditActionForKind(item && item.kind), "Disconnect finished row", "unlink-icon-template");
+        }
         return row;
       }
 
@@ -411,7 +453,7 @@ function M.script(bridgeScheme)
           return;
         }
         history.forEach(function(item) {
-          list.appendChild(renderPeekHistoryRow(item));
+          list.appendChild(renderPeekHistoryRow(item, !!peek.editMode));
         });
         var olderControl = renderPeekOlderFinishedControl(peek);
         if (olderControl) {
@@ -422,7 +464,7 @@ function M.script(bridgeScheme)
         }
         if (peek.olderFinished && peek.olderFinished.expanded) {
           olderHistory.forEach(function(item) {
-            list.appendChild(renderPeekHistoryRow(item));
+            list.appendChild(renderPeekHistoryRow(item, !!peek.editMode));
           });
         }
       }
@@ -441,17 +483,21 @@ function M.script(bridgeScheme)
         return items.slice(peekIndex).concat(items.slice(0, peekIndex));
       }
 
-      function renderPeekActiveStackRow(item, index) {
-        var row = document.createElement("button");
-        row.type = "button";
-        row.className = "peek-active-stack-row depth-" + String(index + 1) + " " + (item && item.kind ? item.kind : "running");
+      function renderPeekActiveStackRow(item, index, editMode) {
+        var row = document.createElement("article");
+        row.setAttribute("role", "button");
+        row.className = "peek-active-stack-row depth-" + String(index + 1) + " " + (item && item.kind ? item.kind : "running") + (editMode ? " edit-mode" : "");
         row.setAttribute("data-pane-id", item && item.pane_id != null ? String(item.pane_id) : "");
+        row.setAttribute("data-run-id", item && item.run_id != null ? String(item.run_id) : "");
         row.setAttribute("data-zj-session", item && item._zj_session ? item._zj_session : "");
         row.setAttribute("data-tab-num", item && item.tab_num != null ? String(item.tab_num) : "");
         row.innerHTML =
           '<span class="peek-active-stack-badge">' + escapeHtml(item && item.display_label ? item.display_label : "") + '</span>' +
           '<span class="peek-active-stack-title">' + escapeHtml(item && item.title ? item.title : "Running") + '</span>' +
           '<span class="peek-active-stack-detail">' + escapeHtml(item && item.detail ? item.detail : "Running") + '</span>';
+        if (editMode) {
+          appendRowEditButton(row, rowEditActionForKind(item && item.kind), "Mark cancelled", "ban-icon-template");
+        }
         return row;
       }
 
@@ -460,9 +506,10 @@ function M.script(bridgeScheme)
         if (!stack) return;
         var ordered = orderedPeekItems(header);
         var rest = ordered.filter(function(item) { return item !== primaryItem; });
+        var editMode = !!(header && header.peek && header.peek.editMode);
         stack.innerHTML = "";
         rest.slice(0, PEEK_ACTIVE_STACK_MAX_ITEMS).forEach(function(item, index) {
-          stack.appendChild(renderPeekActiveStackRow(item, index));
+          stack.appendChild(renderPeekActiveStackRow(item, index, editMode));
         });
         var overflow = Math.max(rest.length - PEEK_ACTIVE_STACK_MAX_ITEMS, 0);
         if (overflow > 0) {
@@ -483,6 +530,37 @@ function M.script(bridgeScheme)
         setClass(divider, "visible", hasActive && hasHistory);
       }
 
+      function ensurePeekCardEditButton(card) {
+        var button = card && card.querySelector(".peek-card-edit-button");
+        if (!button && card) {
+          button = document.createElement("button");
+          button.type = "button";
+          button.className = "peek-card-edit-button row-edit-button";
+          card.appendChild(button);
+        }
+        return button;
+      }
+
+      function setPeekEditButton(card, item, editMode) {
+        var button = ensurePeekCardEditButton(card);
+        if (!button) return;
+        var action = editMode ? rowEditActionForKind(item && item.kind) : "";
+        if (!action) {
+          button.style.display = "none";
+          button.removeAttribute("data-action");
+          return;
+        }
+        button.style.display = "";
+        button.setAttribute("data-action", action);
+        var label = action === "row.dismiss" ? "Disconnect finished row" : "Mark cancelled";
+        button.setAttribute("aria-label", label);
+        button.setAttribute("title", label);
+        setClass(button, "disconnect-row-button", action === "row.dismiss");
+        setClass(button, "interrupt-row-button", action === "row.interrupt");
+        var icon = document.getElementById(action === "row.dismiss" ? "unlink-icon-template" : "ban-icon-template");
+        button.innerHTML = icon ? icon.innerHTML : "";
+      }
+
       function applyPeekItem(item, header) {
         var ticker = document.querySelector("[data-peek-ticker]");
         if (!ticker) return;
@@ -493,7 +571,9 @@ function M.script(bridgeScheme)
         var detail = document.querySelector("[data-peek-detail]");
         var meta = document.querySelector("[data-peek-meta]");
         var isIdle = !!item && item.kind === "idle";
+        var editMode = !!(header && header.peek && header.peek.editMode);
         ticker.setAttribute("data-pane-id", item && item.pane_id != null ? String(item.pane_id) : "");
+        ticker.setAttribute("data-run-id", item && item.run_id != null ? String(item.run_id) : "");
         ticker.setAttribute("data-zj-session", item && item._zj_session ? item._zj_session : "");
         ticker.setAttribute("data-tab-num", item && item.tab_num != null ? String(item.tab_num) : "");
         ticker.setAttribute("data-event-id", item && item.event_id != null ? String(item.event_id) : "");
@@ -501,16 +581,15 @@ function M.script(bridgeScheme)
         setClass(ticker, "working", !!item && item.kind === "running");
         setClass(ticker, "finished", !!item && item.kind === "finished");
         setClass(ticker, "idle", isIdle);
+        setClass(ticker, "edit-mode", editMode);
         var settings = window.__claudeStatusSettings || {};
         var widget = document.querySelector(".widget");
-        var processingNeonEnabled = settings.processingNeon !== false && widget && widget.classList.contains("peek");
-        if (card) {
-          if (!processingNeonEnabled) setClass(card, "working", false);
-        }
+        if (card) setClass(card, "working", false);
         renderPeekKind(kind, item, header);
         if (badge) badge.textContent = item ? (item.display_label || "") : "";
         if (title) title.textContent = item ? (item.title || "") : "";
         if (detail) detail.textContent = item ? (item.detail || "") : "";
+        setPeekEditButton(card, item, editMode);
         renderPeekMeta(meta, header, isIdle);
         renderPeekActiveStack(header, item);
         renderPeekQueueDivider(header);
@@ -577,32 +656,17 @@ function M.script(bridgeScheme)
       function rowClass(row, className) {
         var activity = String(row.activity || "Init").toLowerCase();
         var waitingClass = activity === "waiting" ? "waiting-row" : "";
-        var processingClass = isProcessingActivity(activity) ? "processing-neon" : "";
-        return ["row", className || "", waitingClass, processingClass, activity].join(" ");
+        return ["row", className || "", waitingClass, activity].join(" ");
       }
 
-      function renderRows(rows, className) {
-        var settings = window.__claudeStatusSettings || {};
-        var widget = document.querySelector(".widget");
-        var processingNeonEnabled = settings.processingNeon !== false && widget && widget.classList.contains("expanded");
-        var neonAttached = false;
+      function renderRows(rows, className, editMode) {
         return (rows || []).map(function(row) {
           var el = document.createElement("article");
-          var activity = row.activity;
-          var processingClass = processingNeonEnabled && isProcessingActivity(activity) && !neonAttached ? "processing-neon" : "";
-          if (processingClass) neonAttached = true;
-          el.className = rowClass(row, className).replace("processing-neon", processingClass);
+          el.className = rowClass(row, className);
           el.setAttribute("data-pane-id", String(row.pane_id != null ? row.pane_id : ""));
+          el.setAttribute("data-run-id", String(row.run_id != null ? row.run_id : ""));
           el.setAttribute("data-zj-session", row._zj_session || "");
           el.setAttribute("data-tab-num", String(row.tab_num != null ? row.tab_num : ""));
-
-          var flash = window.__claudeStatusFlash || {};
-          var settings = window.__claudeStatusSettings || {};
-          var flashRows = flash.rows || {};
-          var flashInfo = flashRows[row._flash_id];
-          if (flashInfo && settings.completionFlash) {
-            setClass(el, "completion-highlight", true);
-          }
 
           var label = document.createElement("div");
           label.className = "badge tab-badge";
@@ -629,6 +693,12 @@ function M.script(bridgeScheme)
           el.appendChild(label);
           el.appendChild(body);
           el.appendChild(status);
+          if (editMode) {
+            var action = rowEditActionForActivity(row.activity);
+            var labelText = action === "row.dismiss" ? "Disconnect finished row" : "Mark cancelled";
+            var templateId = action === "row.dismiss" ? "unlink-icon-template" : "ban-icon-template";
+            appendRowEditButton(el, action, labelText, templateId);
+          }
           return el;
         });
       }
@@ -728,6 +798,9 @@ function M.script(bridgeScheme)
         var olderControl = renderPeekOlderFinishedControl(peek);
         setClass(peekActions, "has-older-toggle", !!olderControl);
         ensurePeekActionButton(peekActions, "peek-options-toggle", "settings.toggle", "Open options", "Options", "settings-icon-template");
+        var edit = ensurePeekActionButton(peekActions, "peek-edit-toggle", "edit.toggle", "Edit rows", "Edit rows", "pencil-icon-template");
+        setClass(edit, "is-active", !!state.editMode);
+        edit.setAttribute("aria-pressed", state.editMode ? "true" : "false");
         var pin = ensurePeekActionButton(peekActions, "peek-pin-toggle", "peek.pin.toggle", "Pin peek open", "Pin peek open", "pin-icon-template");
         setClass(pin, "is-pinned", !!(peek && peek.hoverPinned));
         pin.setAttribute("aria-pressed", peek && peek.hoverPinned ? "true" : "false");
@@ -757,26 +830,23 @@ function M.script(bridgeScheme)
         var widget = document.querySelector(".widget");
         var rows = document.getElementById("rows");
         var settings = mergeSettings(state.settings || {});
-        var flash = state.flash || {};
-        var effects = state.effects || {};
-        if (effects.flash && !flash.widget && !flash.rows) flash = effects.flash;
         window.__claudeStatusSettings = settings;
-        window.__claudeStatusFlash = flash;
 
         setClass(widget, "expanded", !!state.expanded);
         setClass(widget, "peek", state.viewMode === "peek");
         setClass(widget, "compact", state.viewMode === "compact");
         setClass(widget, "peek-hovering", !!state.peekHover);
+        setClass(widget, "peek-has-active-stack", activePeekItems(state.header || {}).length > 0);
         setClass(widget, "pinned", !!state.pinned);
-        setClass(widget, "widget-flashing", !!(flash.widget && settings.completionFlash));
+        setClass(widget, "editing", !!state.editMode);
         setClass(document.body, "waiting-pulse-enabled", !!settings.waitingPulse);
 
         renderHeader(state.header || {});
 
         rows.innerHTML = "";
-        var active = renderRows(state.activeRows || state.activeSessions || [], "active-row");
-        var completed = renderRows(state.recentCompletedRows || state.completedRows || [], "completed-row");
-        var older = renderRows(state.olderCompletedRows || [], "completed-row older-finished-row");
+        var active = renderRows(state.activeRows || state.activeSessions || [], "active-row", state.editMode);
+        var completed = renderRows(state.recentCompletedRows || state.completedRows || [], "completed-row", state.editMode);
+        var older = renderRows(state.olderCompletedRows || [], "completed-row older-finished-row", state.editMode);
         active.forEach(function(row) { rows.appendChild(row); });
         if (state.showDivider) {
           var divider = document.createElement("div");
@@ -826,6 +896,13 @@ function M.script(bridgeScheme)
         if (action === "compact.mode.set") {
           event.stopPropagation();
           postAction({ type: "compact.mode.set", mode: control.getAttribute("data-mode") });
+        } else if (action === "edit.toggle") {
+          event.stopPropagation();
+          postAction({ type: "edit.toggle" });
+        } else if (action === "row.dismiss" || action === "row.interrupt") {
+          event.preventDefault();
+          event.stopPropagation();
+          postAction(rowIdentityFromNode(control));
         } else if (action === "expand.toggle") {
           event.stopPropagation();
           postAction({ type: "expand.toggle" });
@@ -935,7 +1012,7 @@ local function settingsScript(bridgeScheme)
     return ([[
     (function() {
       var BRIDGE_SCHEME = "__BRIDGE_SCHEME__";
-      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, completionFlash: true, processingNeon: true, notificationsEnabled: true };
+      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, notificationsEnabled: true };
       var VALID_ACTION_TYPES = { "setting.toggle": true };
 
       function postAction(message) {
@@ -1007,6 +1084,7 @@ function M.eventsScript(bridgeScheme)
         row.className = "event-row " + String(event.kind || "finished");
         row.setAttribute("data-event-id", String(event.id || ""));
         row.setAttribute("data-pane-id", String(event.pane_id != null ? event.pane_id : ""));
+        row.setAttribute("data-run-id", String(event.run_id != null ? event.run_id : ""));
         row.setAttribute("data-zj-session", event._zj_session || "");
         row.setAttribute("data-tab-num", String(event.tab_num != null ? event.tab_num : ""));
 
@@ -1088,6 +1166,9 @@ function M.build(options)
     local maximizeIcon = icons.svg("maximize-2", "control-icon maximize-icon")
     local pinIcon = icons.svg("pin", "control-icon pin-icon")
     local coffeeIcon = icons.svg("coffee", "control-icon coffee-idle-icon")
+    local pencilIcon = icons.svg("pencil", "control-icon pencil-icon")
+    local banIcon = icons.svg("ban", "control-icon ban-icon")
+    local unlinkIcon = icons.svg("unlink", "control-icon unlink-icon")
     local enlargeIcon = maximizeIcon
     local miniControls = miniView.headerControls({
         enlargeIcon = enlargeIcon,
@@ -1101,6 +1182,9 @@ function M.build(options)
         sharedView.iconTemplate("maximize-icon-template", maximizeIcon),
         sharedView.iconTemplate("pin-icon-template", pinIcon),
         sharedView.iconTemplate("coffee-idle-icon-template", coffeeIcon),
+        sharedView.iconTemplate("pencil-icon-template", pencilIcon),
+        sharedView.iconTemplate("ban-icon-template", banIcon),
+        sharedView.iconTemplate("unlink-icon-template", unlinkIcon),
     }, "\n    ")
     return [[
 <!doctype html>
@@ -1117,9 +1201,8 @@ function M.build(options)
 ]] .. settingsScript(options.bridgeScheme) .. [[
   </script>
 </head>
-<body>
+  <body>
   <main class="widget">
-    <div class="widget-flash" id="widget-flash"></div>
     <header class="header">
       <div class="loader-slot" data-loader-slot aria-hidden="true"></div>
       <div class="counts header-counts" id="counts">
@@ -1186,8 +1269,6 @@ function M.buildSettings(options)
       <label class="setting" data-setting="soundsEnabled">Sounds <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="waitingReminderSound">Waiting reminders <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="waitingPulse">Waiting pulse <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
-      <label class="setting" data-setting="completionFlash">Finish flash <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
-      <label class="setting" data-setting="processingNeon">Processing neon <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="notificationsEnabled">Show notifications <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
     </section>
   </main>

@@ -60,7 +60,7 @@ test("settings are rendered in a separate sidecar webview independent of detail 
   assert.match(webview, /settingsWebview = hs\.webview\.new\(settingsFrame\)/);
   assert.match(webview, /settingsWebview:html\(buildSettingsHtml\(\)\)/);
   assert.match(webview, /settingsWebview:evaluateJavaScript\(script, function\(result\)/);
-  assert.match(webview, /webviewPlacement\.placePopover\(screenFrame\(\), mainFrame, settingsSize\(\)/);
+  assert.match(webview, /webviewPlacement\.placePopover\(screenFrame\(\), popoverAnchor, settingsSize\(\)/);
   assert.match(webview, /if not expanded then settingsOpen = false end/);
   assert.match(webview, /if settingsWebview then settingsWebview:delete\(\) end/);
   assert.match(html, /function M\.buildSettings\(options\)/);

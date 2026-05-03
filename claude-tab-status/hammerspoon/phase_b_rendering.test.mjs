@@ -19,7 +19,8 @@ test("state helper emits canvas-parity render sections", () => {
   assert.match(state, /completedRows = completedRows/);
   assert.match(state, /showDivider = showDivider/);
   assert.match(state, /settings = \{[\s\S]*items = input\.settingsItems[\s\S]*values = input\.settings[\s\S]*open = input\.settingsOpen == true/);
-  assert.match(state, /effects = \{[\s\S]*flash = input\.flash[\s\S]*waitingPulse = input\.settings and input\.settings\.waitingPulse[\s\S]*completionFlash = input\.settings and input\.settings\.completionFlash/);
+  assert.match(state, /effects = \{[\s\S]*waitingPulse = input\.settings and input\.settings\.waitingPulse/);
+  assert.doesNotMatch(state, /completionFlash|processingNeon|flash = input\.flash/);
 });
 
 test("state helper computes dynamic canvas-anchored frame size", () => {
@@ -52,7 +53,7 @@ test("styles expose canvas-parity sections and row treatments", () => {
   assert.match(styles, /\.row\.waiting-row/);
   assert.match(styles, /\.row\.completed-row/);
   assert.match(styles, /\.divider/);
-  assert.match(styles, /\.row\.completion-highlight/);
+  assert.doesNotMatch(styles, /\.row\.completion-highlight/);
   assert.match(styles, /\.waiting-pulse-enabled \.row\.waiting-row/);
   assert.match(styles, /\/\* Settings \*\//);
   assert.match(styles, /\.settings/);
@@ -73,12 +74,12 @@ test("expanded rows keep active work prominent and completed metadata compact", 
 
 test("HTML renderer consumes render sections without moving bridge behavior", () => {
   assert.match(html, /renderHeader\(state\.header \|\| \{\}\)/);
-  assert.match(html, /var active = renderRows\(state\.activeRows \|\| state\.activeSessions \|\| \[\], "active-row"\)/);
-  assert.match(html, /var completed = renderRows\(state\.recentCompletedRows \|\| state\.completedRows \|\| \[\], "completed-row"\)/);
+  assert.match(html, /var active = renderRows\(state\.activeRows \|\| state\.activeSessions \|\| \[\], "active-row", state\.editMode\)/);
+  assert.match(html, /var completed = renderRows\(state\.recentCompletedRows \|\| state\.completedRows \|\| \[\], "completed-row", state\.editMode\)/);
   assert.match(html, /if \(state\.showDivider\) \{/);
-  assert.match(html, /var effects = state\.effects \|\| \{\}/);
+  assert.doesNotMatch(html, /var effects = state\.effects \|\| \{\}/);
   assert.match(html, /"row\.dismiss": true/);
-  assert.doesNotMatch(html, /postAction\(\{ type: "row\.dismiss"/);
+  assert.match(html, /if \(action === "row\.dismiss" \|\| action === "row\.interrupt"\) \{/);
 });
 
 test("production webview applies dynamic frame sizing from state helper", () => {

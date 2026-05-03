@@ -32,6 +32,10 @@ local STATUS_DIR = "/tmp/claude-tab-status"
 local STALE_THRESHOLD = 120
 local DENYLIST_PATH = os.getenv("HOME") .. "/.hammerspoon/claude-status-denylist.json"
 local DENYLIST_TTL = 30 * 24 * 60 * 60
+local HIDDEN_RUNS_PATH = os.getenv("HOME") .. "/.hammerspoon/claude-status-hidden-runs.json"
+local HIDDEN_RUNS_TTL = 30 * 24 * 60 * 60
+local INTERRUPTED_RUNS_PATH = os.getenv("HOME") .. "/.hammerspoon/claude-status-interrupted-runs.json"
+local INTERRUPTED_RUNS_TTL = 30 * 24 * 60 * 60
 local SETTINGS_KEY = "claudeStatus.settings"
 local COMPACT_MODE_KEY = "claudeStatus.compactMode"
 local DEBUG_KEY = "claudeStatus.debug"
@@ -42,8 +46,6 @@ local TERMINAL_APP = "Ghostty"
 local CALLBACK_NAME = "claudeStatus"
 local BRIDGE_SCHEME = "claude-status"
 local DETAIL_VIEW_ENABLED = false
-local FLASH_DURATION = 1.5
-local COMPLETION_HIGHLIGHT_DURATION = 10.0
 local EVENT_TTL = 15.0
 local MAX_EVENT_ROWS = 3
 
@@ -67,7 +69,11 @@ local SETTINGS_ROW_HEIGHT = 28
 local SETTINGS_ROW_GAP = 6
 local SETTINGS_VERTICAL_PADDING = 16
 local SETTINGS_BORDER_SAFETY = 4
-local EVENT_POPOVER_SIZE = { width = 244, height = 108 }
+local EVENT_POPOVER_WIDTH = 244
+local EVENT_ROW_HEIGHT = 42
+local EVENT_PANEL_PADDING_Y = 8
+local EVENT_ROW_GAP = 3
+local EVENT_FRAME_SAFETY = 8
 local EVENT_POPOVER_GAP = 5
 
 local webview = nil
@@ -86,6 +92,7 @@ local settingsOpen = false
 local viewMode = "peek"
 local peekHover = false
 local peekPinned = false
+local editMode = false
 local olderFinishedExpanded = false
 local placementState = { kind = "top-right" }
 local dragState = nil
@@ -98,10 +105,10 @@ local refreshWebview = nil
 local dismissSession = nil
 local dismissEvent = nil
 local focusSession = nil
+local interruptSession = nil
 local startDrag = nil
 local moveDrag = nil
 local endDrag = nil
-local flashState = {}
 local prevActivities = {}
 local eventQueue = {}
 local nextEventId = 1
@@ -112,8 +119,6 @@ local DEFAULT_SETTINGS = {
     soundsEnabled = true,
     waitingReminderSound = true,
     waitingPulse = true,
-    completionFlash = true,
-    processingNeon = true,
     notificationsEnabled = true,
 }
 
@@ -121,8 +126,6 @@ local SETTINGS_ITEMS = {
     { key = "soundsEnabled", label = "Sounds" },
     { key = "waitingReminderSound", label = "Waiting reminders" },
     { key = "waitingPulse", label = "Waiting pulse" },
-    { key = "completionFlash", label = "Finish flash" },
-    { key = "processingNeon", label = "Processing neon" },
     { key = "notificationsEnabled", label = "Show notifications" },
 }
 
@@ -137,6 +140,14 @@ local function settingsSize()
             + (math.max(#SETTINGS_ITEMS - 1, 0) * SETTINGS_ROW_GAP)
             + SETTINGS_BORDER_SAFETY,
     }
+end
+
+local function eventPopoverSize()
+    local visibleRows = math.min(#eventQueue, MAX_EVENT_ROWS)
+    local height = EVENT_PANEL_PADDING_Y + EVENT_FRAME_SAFETY
+    height = height + (visibleRows * EVENT_ROW_HEIGHT)
+    height = height + (math.max(visibleRows - 1, 0) * EVENT_ROW_GAP)
+    return { width = EVENT_POPOVER_WIDTH, height = height }
 end
 
 local function debugEnabled()
@@ -217,6 +228,16 @@ local function frameForSize(size)
     return webviewPlacement.frameForWidget(screenFrame(), size, placementState, WINDOW_PADDING)
 end
 
+local function popoverAnchorFrame(frame, size)
+    local anchorHeight = tonumber(size and size.anchorHeight)
+    return {
+        x = frame.x,
+        y = frame.y,
+        w = frame.w,
+        h = anchorHeight or frame.h,
+    }
+end
+
 local function defaultFrame()
     return frameForSize(currentFrameSize)
 end
@@ -254,6 +275,14 @@ local function handleBridgeMessage(message)
         peekHover = false
         settingsOpen = not settingsOpen
         if refreshWebview then refreshWebview() end
+    elseif body.type == "edit.toggle" then
+        if not expanded and viewMode == "peek" then
+            editMode = not editMode
+            peekHover = true
+            if refreshWebview then refreshWebview() end
+        else
+            debugLog("edit toggle ignored")
+        end
     elseif body.type == "pin.toggle" then
         if not canOpenDetailView() then
             debugLog("ignored dormant detail pin toggle")
@@ -335,6 +364,7 @@ local function handleBridgeMessage(message)
             expanded = false
             peekHover = false
             peekPinned = false
+            editMode = false
             settingsOpen = false
             saveCompactMode()
             if refreshWebview then refreshWebview() end
@@ -342,7 +372,9 @@ local function handleBridgeMessage(message)
     elseif body.type == "debug.layout" then
         debugLog("layout " .. hs.inspect(body.layout))
     elseif body.type == "row.dismiss" then
-        dismissSession(body._zj_session, body.pane_id)
+        dismissSession(body._zj_session, body.pane_id, body.run_id)
+    elseif body.type == "row.interrupt" then
+        interruptSession(body._zj_session, body.pane_id, body.run_id)
     elseif body.type == "row.focus" then
         focusSession(body._zj_session, body.pane_id, body.tab_num)
     elseif body.type == "event.focus" then
@@ -451,6 +483,58 @@ local function addToDenylist(zj_session, pane_id)
     saveDenylist(deny)
 end
 
+local function loadHiddenRuns()
+    local now = os.time()
+    local hidden = {}
+    local data = hs.json.read(HIDDEN_RUNS_PATH)
+    if type(data) == "table" then
+        for run_id, ts in pairs(data) do
+            if type(run_id) == "string" and type(ts) == "number" and (now - ts) < HIDDEN_RUNS_TTL then
+                hidden[run_id] = ts
+            end
+        end
+    end
+    return hidden
+end
+
+local function saveHiddenRuns(hidden)
+    local f = io.open(HIDDEN_RUNS_PATH, "w")
+    if f then f:write(hs.json.encode(hidden)); f:close() end
+end
+
+local function addHiddenRun(run_id)
+    if not run_id or run_id == "" then return end
+    local hidden = loadHiddenRuns()
+    hidden[tostring(run_id)] = os.time()
+    saveHiddenRuns(hidden)
+end
+
+local function loadInterruptedRuns()
+    local now = os.time()
+    local interrupted = {}
+    local data = hs.json.read(INTERRUPTED_RUNS_PATH)
+    if type(data) == "table" then
+        for run_id, ts in pairs(data) do
+            if type(run_id) == "string" and type(ts) == "number" and (now - ts) < INTERRUPTED_RUNS_TTL then
+                interrupted[run_id] = ts
+            end
+        end
+    end
+    return interrupted
+end
+
+local function saveInterruptedRuns(interrupted)
+    local f = io.open(INTERRUPTED_RUNS_PATH, "w")
+    if f then f:write(hs.json.encode(interrupted)); f:close() end
+end
+
+local function addInterruptedRun(run_id)
+    if not run_id or run_id == "" then return end
+    local interrupted = loadInterruptedRuns()
+    interrupted[tostring(run_id)] = os.time()
+    saveInterruptedRuns(interrupted)
+end
+
 local function recountSessions(rows)
     local nextCounts = { active = 0, waiting = 0, done = 0 }
     for _, row in ipairs(rows) do
@@ -466,22 +550,28 @@ local function recountSessions(rows)
     return nextCounts
 end
 
-function dismissSession(zj_session, pane_id)
+function dismissSession(zj_session, pane_id, run_id)
     pane_id = tonumber(pane_id)
     if not zj_session or not pane_id then return end
 
-    addToDenylist(zj_session, pane_id)
+    if run_id and run_id ~= "" then
+        addHiddenRun(run_id)
+    else
+        addToDenylist(zj_session, pane_id)
 
-    local payload = string.format('{"hook_event":"Dismiss","pane_id":%d}', pane_id)
-    local cmd = string.format('zellij -s %q pipe --name "claude-tab-status" -- %q', zj_session, payload)
-    hs.execute(cmd, true)
+        local payload = string.format('{"hook_event":"Dismiss","pane_id":%d}', pane_id)
+        local cmd = string.format('zellij -s %q pipe --name "claude-tab-status" -- %q', zj_session, payload)
+        hs.execute(cmd, true)
+    end
 
     local path = STATUS_DIR .. "/" .. zj_session .. ".json"
     local data = hs.json.read(path)
     if data and data.sessions then
         local kept = {}
         for _, existing in ipairs(data.sessions) do
-            if existing.pane_id ~= pane_id then
+            local samePane = tonumber(existing.pane_id) == pane_id
+            local sameRun = run_id and run_id ~= "" and tostring(existing.run_id or "") == tostring(run_id)
+            if not ((run_id and run_id ~= "" and sameRun) or (not run_id or run_id == "") and samePane) then
                 table.insert(kept, existing)
             end
         end
@@ -495,6 +585,51 @@ function dismissSession(zj_session, pane_id)
         end
     end
 
+    if refreshWebview then refreshWebview() end
+end
+
+function interruptSession(zj_session, pane_id, run_id)
+    pane_id = tonumber(pane_id)
+    if not zj_session or not pane_id then return end
+
+    local path = STATUS_DIR .. "/" .. zj_session .. ".json"
+    local data = hs.json.read(path)
+    if not (data and data.sessions) then return end
+
+    local changed = false
+    for _, existing in ipairs(data.sessions) do
+        local sameRun = run_id and run_id ~= "" and tostring(existing.run_id or "") == tostring(run_id)
+        local matches = sameRun or ((not run_id or run_id == "") and tonumber(existing.pane_id) == pane_id)
+        if matches then
+            local activity = existing.activity or "Init"
+            if activity ~= "Done" and activity ~= "Idle" then
+                existing.activity = "Done"
+                existing.icon = "×"
+                existing.detail = "0s ago · cancelled"
+                existing.manual_state = "cancelled"
+                changed = true
+            end
+        end
+    end
+
+    if not changed then return end
+
+    if run_id and run_id ~= "" then
+        addInterruptedRun(run_id)
+    else
+        addToDenylist(zj_session, pane_id)
+        local payload = string.format('{"hook_event":"Dismiss","pane_id":%d}', pane_id)
+        local cmd = string.format('zellij -s %q pipe --name "claude-tab-status" -- %q', zj_session, payload)
+        hs.execute(cmd, true)
+    end
+
+    data.updated_at = os.time()
+    data.counts = recountSessions(data.sessions)
+    local f = io.open(path, "w")
+    if f then f:write(hs.json.encode(data)); f:close() end
+
+    prevActivities[tostring(run_id or pane_id)] = "Done"
+    peekHover = true
     if refreshWebview then refreshWebview() end
 end
 
@@ -694,19 +829,13 @@ local function assignDisplayLabels()
     end
 end
 
-local function flashId(session)
+local function sessionIdentity(session)
+    if session.run_id and session.run_id ~= "" then return tostring(session.run_id) end
     return tostring(session.pane_id or (session._zj_session .. "_" .. session._display_num))
 end
 
-local function cleanupExpiredFlashes()
-    local now = hs.timer.secondsSinceEpoch()
-    for id, flash in pairs(flashState) do
-        if now > flash.expires then flashState[id] = nil end
-    end
-end
-
 local function eventIdentity(session, kind)
-    return tostring(kind) .. ":" .. flashId(session)
+    return tostring(kind) .. ":" .. sessionIdentity(session)
 end
 
 local function sessionEventTitle(kind, session)
@@ -730,6 +859,7 @@ local function enqueueStatusEvent(kind, session, now)
             event.sticky = kind == "waiting"
             event.title = sessionEventTitle(kind, session)
             event.display_label = session._display_num or session.display_label or session.tab_num
+            event.run_id = session.run_id
             event.detail = kind == "waiting" and tostring(event.display_label) .. " · Waiting for approval" or tostring(event.display_label) .. " · Click to focus"
             return
         end
@@ -742,6 +872,7 @@ local function enqueueStatusEvent(kind, session, now)
         sticky = kind == "waiting",
         title = sessionEventTitle(kind, session),
         pane_id = session.pane_id,
+        run_id = session.run_id,
         _zj_session = session._zj_session,
         tab_num = session.tab_num,
         display_label = session._display_num or session.display_label or session.tab_num,
@@ -817,21 +948,12 @@ local function detectActivityTransitions()
     local now2 = hs.timer.secondsSinceEpoch()
     local newActivities = {}
     for _, s in ipairs(sessions) do
-        local id = flashId(s)
+        local id = sessionIdentity(s)
         local activity = s.activity or "Init"
         local prev = prevActivities[id]
         newActivities[id] = activity
         if prev and prev ~= activity then
             if (activity == "Done" or activity == "Idle") and (prev == "Thinking" or prev == "Tool" or prev == "Waiting") then
-                if settings.completionFlash then
-                    flashState[id] = {
-                        active = true,
-                        expires = now2 + COMPLETION_HIGHLIGHT_DURATION,
-                        duration = COMPLETION_HIGHLIGHT_DURATION,
-                        camera_expires = now2 + FLASH_DURATION,
-                        camera_duration = FLASH_DURATION,
-                    }
-                end
                 enqueueStatusEvent("finished", s, now2)
                 playStatusSound("done")
             elseif activity == "Waiting" then
@@ -856,6 +978,8 @@ local function loadSessions()
     end
 
     local deny = loadDenylist()
+    local hiddenRuns = loadHiddenRuns()
+    local interruptedRuns = loadInterruptedRuns()
     for file in iter, dirobj do
         if file:match("%.json$") then
             local path = STATUS_DIR .. "/" .. file
@@ -867,15 +991,30 @@ local function loadSessions()
                     local zj_session = file:gsub("%.json$", "")
                     for _, s in ipairs(data.sessions) do
                         local key = denylistKey(zj_session, s.pane_id)
-                        if not deny[key] then
+                        local run_id = tostring(s.run_id or "")
+                        local paneDenied = deny[key] and run_id == ""
+                        local interruptedAt = interruptedRuns[tostring(s.run_id or "")]
+                        if not paneDenied and not hiddenRuns[run_id] then
+                            local activity = s.activity
+                            local icon = s.icon
+                            local detail = s.detail
+                            local manual_state = s.manual_state
+                            if interruptedAt then
+                                activity = "Done"
+                                icon = "×"
+                                detail = detail and tostring(detail):match("cancelled") and detail or "cancelled"
+                                manual_state = "cancelled"
+                            end
                             s._zj_session = zj_session
                             local row = {
                                 pane_id = s.pane_id,
+                                run_id = s.run_id,
                                 tab_num = s.tab_num,
                                 tab_name = s.tab_name,
-                                activity = s.activity,
-                                icon = s.icon,
-                                detail = s.detail,
+                                activity = activity,
+                                icon = icon,
+                                detail = detail,
+                                manual_state = manual_state,
                                 _zj_session = s._zj_session,
                                 _flash_id = tostring(s.pane_id or (s._zj_session .. "_" .. tostring(s.tab_num or 0))),
                             }
@@ -895,7 +1034,6 @@ local function loadSessions()
 
     table.sort(sessions, function(a, b) return (a.tab_num or 0) < (b.tab_num or 0) end)
     assignDisplayLabels()
-    cleanupExpiredFlashes()
     detectActivityTransitions()
     cleanupExpiredEvents()
     playWaitingReminderSound()
@@ -930,28 +1068,6 @@ local function partitionSessions()
     return active, inactive
 end
 
-local function buildFlashViewState()
-    cleanupExpiredFlashes()
-    local flashRows = {}
-    local widgetActive = false
-    for id, flash in pairs(flashState) do
-        flashRows[id] = {
-            active = true,
-            highlightExpires = flash.expires,
-            highlightDuration = flash.duration,
-            cameraExpires = flash.camera_expires,
-            cameraDuration = flash.camera_duration,
-        }
-        if flash.camera_expires and flash.camera_expires > hs.timer.secondsSinceEpoch() then
-            widgetActive = true
-        end
-    end
-    return {
-        widget = widgetActive,
-        rows = flashRows,
-    }
-end
-
 local function buildEventViewState()
     if settings.notificationsEnabled == false then
         return { events = {}, overflow = 0 }
@@ -983,12 +1099,12 @@ local function buildViewState()
         inactiveSessions = inactiveSessions,
         settings = settings,
         settingsItems = SETTINGS_ITEMS,
-        flash = buildFlashViewState(),
         expanded = expanded,
         viewMode = viewMode,
         peekHover = peekHover,
         peekPinned = peekPinned,
         pinned = pinned,
+        editMode = editMode,
         settingsOpen = settingsOpen,
         olderFinishedExpanded = olderFinishedExpanded,
         placementState = placementState,
@@ -1013,8 +1129,7 @@ local function compactLayoutDebugScript()
     return [[
 (function() {
   try {
-    function node(selector) {
-      var element = document.querySelector(selector);
+    function node(selector, element) {
       if (!element) return { selector: selector, exists: false };
       var style = window.getComputedStyle(element);
       var rect = element.getBoundingClientRect();
@@ -1063,6 +1178,63 @@ local function compactLayoutDebugScript()
   }
 })();
 ]]
+end
+
+local function eventLayoutDebugScript()
+    return [[
+(function() {
+  try {
+    function node(selector) {
+      var element = document.querySelector(selector);
+      if (!element) return { selector: selector, exists: false };
+      var style = window.getComputedStyle(element);
+      var rect = element.getBoundingClientRect();
+      return {
+        selector: selector,
+        exists: true,
+        className: element.className || "",
+        display: style.display,
+        width: Math.round(rect.width * 10) / 10,
+        height: Math.round(rect.height * 10) / 10,
+        left: Math.round(rect.left * 10) / 10,
+        top: Math.round(rect.top * 10) / 10,
+        right: Math.round(rect.right * 10) / 10,
+        bottom: Math.round(rect.bottom * 10) / 10,
+        offsetWidth: element.offsetWidth,
+        offsetHeight: element.offsetHeight,
+        scrollWidth: element.scrollWidth,
+        scrollHeight: element.scrollHeight,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+        marginTop: style.marginTop,
+        marginBottom: style.marginBottom,
+        overflow: style.overflow
+      };
+    }
+    var panelElement = document.querySelector(".event-panel");
+    var rowElement = document.querySelector(".event-row");
+    return JSON.stringify({
+      viewport: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        clientWidth: document.documentElement ? document.documentElement.clientWidth : null,
+        clientHeight: document.documentElement ? document.documentElement.clientHeight : null,
+        bodyScrollHeight: document.body ? document.body.scrollHeight : null
+      },
+      panel: node(".event-panel", panelElement),
+      row: node(".event-row", rowElement),
+      rows: document.querySelectorAll(".event-row").length
+    });
+  } catch (error) {
+    return "error:" + (error && error.name ? error.name : "unknown") + ":" + (error && error.message ? error.message : String(error));
+  }
+})();
+]]
+end
+
+local function frameDebugString(frame)
+    if not frame then return "nil" end
+    return tostring(frame.x) .. "," .. tostring(frame.y) .. " " .. tostring(frame.w) .. "x" .. tostring(frame.h)
 end
 
 local function buildSettingsHtml()
@@ -1115,20 +1287,6 @@ local function buildHtmlReference()
       box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
       overflow: hidden;
       position: relative;
-    }
-
-    .widget-flash {
-      position: absolute;
-      inset: 1px;
-      border-radius: 7px;
-      pointer-events: none;
-      opacity: 0;
-      background: rgba(255, 255, 255, 0.55);
-      z-index: 5;
-    }
-
-    .widget.widget-flashing .widget-flash {
-      animation: widgetFlash 1.5s ease-out both;
     }
 
     .header {
@@ -1220,21 +1378,6 @@ local function buildHtmlReference()
       min-height: 24px;
       color: rgba(255, 255, 255, 0.58);
       font-size: 11px;
-    }
-
-    .row.completion-highlight {
-      background: rgba(255, 255, 255, 0.92);
-      color: rgba(10, 13, 15, 0.96);
-      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.70);
-    }
-
-    .row.completion-highlight .badge {
-      color: rgba(10, 13, 15, 0.96);
-      background: rgba(0, 0, 0, 0.08);
-    }
-
-    .row.completion-highlight .status {
-      color: rgba(10, 13, 15, 0.96);
     }
 
     .badge,
@@ -1333,18 +1476,10 @@ local function buildHtmlReference()
       }
     }
 
-    @keyframes widgetFlash {
-      0% {
-        opacity: 0.55;
-      }
-      100% {
-        opacity: 0;
-      }
-    }
   </style>
   <script>
     (function() {
-      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, completionFlash: true, processingNeon: true, notificationsEnabled: true };
+      var VALID_SETTING_KEYS = { soundsEnabled: true, waitingReminderSound: true, waitingPulse: true, notificationsEnabled: true };
       var VALID_ACTION_TYPES = { "setting.toggle": true, "pin.toggle": true, "row.dismiss": true, "drag.start": true, "drag.move": true, "drag.end": true, "expand.set": true };
       var BRIDGE_SCHEME = "claude-status";
       var dragOrigin = null;
@@ -1369,20 +1504,11 @@ local function buildHtmlReference()
 
       function renderRows(rows, className) {
         var fragment = document.createDocumentFragment();
-        var flash = window.__claudeStatusFlash || {};
-        var flashRows = flash.rows || {};
-        var settings = window.__claudeStatusSettings || {};
         (rows || []).forEach(function(row) {
           var el = document.createElement("article");
           el.className = "row " + className + " " + String(row.activity || "Init").toLowerCase();
           el.dataset.paneId = String(row.pane_id ?? "");
           el.dataset.zjSession = row._zj_session || "";
-          var rowId = String(row.pane_id || (row._zj_session + "_" + row._display_num));
-          var flashInfo = flashRows[row._flash_id];
-          if (!flashInfo) flashInfo = flashRows[rowId];
-          if (flashInfo && settings.completionFlash) {
-            el.classList.add("completion-highlight");
-          }
           el.innerHTML =
             '<span class="badge">' + escapeHtml(row._display_num || row.tab_num || "") + '</span>' +
             '<span class="title">' + escapeHtml(row.tab_name || "") + '</span>' +
@@ -1417,17 +1543,14 @@ local function buildHtmlReference()
         state = state || {};
         var counts = state.counts || {};
         var settings = state.settings || {};
-        var flash = state.flash || {};
         var widget = document.querySelector(".widget");
         var countsEl = document.getElementById("counts");
         var rowsEl = document.getElementById("rows");
         if (!countsEl || !rowsEl) return;
 
         window.__claudeStatusSettings = settings;
-        window.__claudeStatusFlash = flash;
         document.body.classList.toggle("waiting-pulse-enabled", !!settings.waitingPulse);
         if (widget) {
-          widget.classList.toggle("widget-flashing", !!(flash.widget && settings.completionFlash));
           widget.classList.toggle("expanded", !!state.expanded);
           widget.classList.toggle("pinned", !!state.pinned);
         }
@@ -1498,7 +1621,6 @@ local function buildHtmlReference()
 </head>
 <body>
   <main class="widget">
-    <div class="widget-flash" id="widget-flash"></div>
     <header class="header">
       <div class="spinner" aria-hidden="true"></div>
       <div class="counts" id="counts">
@@ -1518,8 +1640,6 @@ local function buildHtmlReference()
       <label class="setting" data-setting="soundsEnabled">Sounds <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="waitingReminderSound">Waiting reminders <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="waitingPulse">Waiting pulse <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
-      <label class="setting" data-setting="completionFlash">Finish flash <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
-      <label class="setting" data-setting="processingNeon">Processing neon <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
       <label class="setting" data-setting="notificationsEnabled">Show notifications <span class="switch"><input type="checkbox"><span class="track"></span></span></label>
     </section>
   </main>
@@ -1539,6 +1659,10 @@ function refreshWebview()
         mainFrame = frameForSize(currentFrameSize)
         webview:frame(mainFrame)
     end
+    debugLog("main frame applied viewMode=" .. tostring(viewState.viewMode) ..
+        " peekHover=" .. tostring(viewState.peekHover) ..
+        " state=" .. tostring(viewState.frame.width) .. "x" .. tostring(viewState.frame.height) ..
+        " native=" .. frameDebugString(mainFrame))
     local payload = hs.json.encode(viewState)
     local bootstrapScript = rendererScript()
     local script = bootstrapScript .. [[
@@ -1574,6 +1698,7 @@ function refreshWebview()
     elseif visible and expanded then
         shouldShow = true
     end
+    local popoverAnchor = popoverAnchorFrame(mainFrame, viewState.frame)
 
     if shouldShow then
         webview:show()
@@ -1584,7 +1709,7 @@ function refreshWebview()
     local showSettings = shouldShow and settingsOpen
     if showSettings then
         if not settingsWebview then
-            local settingsFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, settingsSize(), {
+            local settingsFrame = webviewPlacement.placePopover(screenFrame(), popoverAnchor, settingsSize(), {
                 padding = WINDOW_PADDING,
                 gap = POPOVER_GAP,
             })
@@ -1598,7 +1723,7 @@ function refreshWebview()
             settingsWebview:html(buildSettingsHtml())
         end
 
-        local settingsFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, settingsSize(), {
+        local settingsFrame = webviewPlacement.placePopover(screenFrame(), popoverAnchor, settingsSize(), {
             padding = WINDOW_PADDING,
             gap = POPOVER_GAP,
         })
@@ -1614,8 +1739,9 @@ function refreshWebview()
 
     local showEvents = shouldShow and settings.notificationsEnabled ~= false and not expanded and #eventQueue > 0
     if showEvents then
+        local eventSize = eventPopoverSize()
         if not eventWebview then
-            local eventFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, EVENT_POPOVER_SIZE, {
+            local eventFrame = webviewPlacement.placePopover(screenFrame(), popoverAnchor, eventSize, {
                 padding = WINDOW_PADDING,
                 gap = EVENT_POPOVER_GAP,
                 order = { "below", "above", "left", "right" },
@@ -1631,19 +1757,28 @@ function refreshWebview()
             eventWebview:html(buildEventsHtml())
         end
 
-        local eventFrame = webviewPlacement.placePopover(screenFrame(), mainFrame, EVENT_POPOVER_SIZE, {
+        local eventFrame = webviewPlacement.placePopover(screenFrame(), popoverAnchor, eventSize, {
             padding = WINDOW_PADDING,
             gap = EVENT_POPOVER_GAP,
             order = { "below", "above", "left", "right" },
             clampCrossAxis = true,
         })
         eventWebview:frame(eventFrame)
+        debugLog("event frame main=" .. frameDebugString(mainFrame) .. " anchor=" .. frameDebugString(popoverAnchor) ..
+            " event=" .. frameDebugString(eventFrame) ..
+            " requested=" .. tostring(eventSize.width) .. "x" .. tostring(eventSize.height) ..
+            " rows=" .. tostring(math.min(#eventQueue, MAX_EVENT_ROWS)))
         eventWebview:show()
         local eventPayload = hs.json.encode(buildEventViewState())
         local eventScript = "window.renderEvents(" .. eventPayload .. ");"
         eventWebview:evaluateJavaScript(eventScript, function(result)
             debugLog("events eval result=" .. tostring(result))
         end)
+        if debugEnabled() then
+            eventWebview:evaluateJavaScript(eventLayoutDebugScript(), function(layout)
+                debugLog("event layout " .. tostring(layout))
+            end)
+        end
     elseif eventWebview then
         eventWebview:hide()
     end

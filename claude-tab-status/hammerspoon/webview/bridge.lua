@@ -8,6 +8,7 @@ local KNOWN_ACTIONS = {
     ["pin.toggle"] = true,
     ["row.focus"] = true,
     ["row.dismiss"] = true,
+    ["row.interrupt"] = true,
     ["event.focus"] = true,
     ["event.dismiss"] = true,
     ["older.toggle"] = true,
@@ -19,6 +20,7 @@ local KNOWN_ACTIONS = {
     ["peek.hover.set"] = true,
     ["peek.pin.toggle"] = true,
     ["compact.mode.set"] = true,
+    ["edit.toggle"] = true,
     ["debug.layout"] = true,
 }
 

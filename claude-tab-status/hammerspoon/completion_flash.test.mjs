@@ -7,7 +7,7 @@ const source = readFileSync(
   "utf8",
 );
 const doneSound = new URL(
-  "./sounds/mixkit-correct-answer-tone-2870.wav",
+  "./sounds/Glass.wav",
   import.meta.url,
 );
 
@@ -60,7 +60,7 @@ test("hammerspoon owns separate done and input sounds", () => {
   assert.match(source, /local SOUND_ENABLED = true/);
   assert.match(
     source,
-    /local SOUND_DONE = \{ file = SOURCE_DIR \.\. "\/sounds\/mixkit-correct-answer-tone-2870\.wav" \}/,
+    /local SOUND_DONE = \{ file = SOURCE_DIR \.\. "\/sounds\/Glass\.wav" \}/,
   );
   assert.match(source, /local SOUND_WAITING = \{ name = "Ping"/);
   assert.match(source, /local function playStatusSound\(kind\)/);

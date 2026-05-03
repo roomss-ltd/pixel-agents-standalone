@@ -76,10 +76,11 @@ test("peek history owns recent and older finished tiers behind the older toggle"
   assert.match(html, /setClass\(peekActions, "has-older-toggle", !!olderControl\)/);
   assert.match(html, /function renderPeekActions\(state\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*if \(olderControl\) peekActions\.appendChild\(olderControl\);/);
   assert.doesNotMatch(html, /renderPeekHistory\(header\)[\s\S]*var olderControl = renderPeekOlderFinishedControl\(peek\);[\s\S]*list\.appendChild\(olderControl\);/);
-  assert.match(html, /renderPeekHistoryRow\(item\)/);
-  assert.match(html, /renderPeekHistoryRow\(item\)[\s\S]*peek-history-status/);
+  assert.match(html, /renderPeekHistoryRow\(item, !!peek\.editMode\)/);
+  assert.match(html, /function renderPeekHistoryRow\(item, editMode\)[\s\S]*peek-history-status/);
   assert.match(html, /if \(peek\.olderFinished && peek\.olderFinished\.expanded\) \{[\s\S]*olderHistory\.forEach/);
   assert.match(styles, /\.peek-history-row\s*\{[\s\S]*grid-template-columns: 30px minmax\(0, 1fr\) max-content;/);
+  assert.match(styles, /\.peek-history-row\.edit-mode\s*\{[\s\S]*grid-template-columns: 34px minmax\(0, 1fr\) auto 24px;/);
   assert.match(styles, /\.peek-history-status\s*\{[\s\S]*justify-self: end;[\s\S]*font-variant-numeric: tabular-nums;/);
   assert.match(styles, /\.peek-history-row\.older-finished\s*\{[\s\S]*opacity: 0\.78;/);
   assert.match(state, /local PEEK_ACTION_WITH_OLDER_TOGGLE_HEIGHT = 54/);

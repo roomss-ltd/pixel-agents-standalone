@@ -77,6 +77,7 @@ impl Activity {
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub session_id: String,
+    pub run_id: String,
     pub pane_id: u32,
     pub activity: Activity,
     pub last_event_ts: u64,
@@ -114,6 +115,9 @@ pub struct PluginState {
     pub input_mode: InputMode,
     /// Zellij session name — used for status file naming
     pub zellij_session_name: String,
+    /// Monotonic in-memory counter used to disambiguate agent runs that start
+    /// in the same pane and second.
+    pub run_seq: u64,
     /// pane_id → unix timestamp when block expires. Set by the "Dismiss" pipe
     /// event from the overlay; entries are cleaned in cleanup_stale_sessions.
     pub dismissed_until: HashMap<u32, u64>,

@@ -27,7 +27,7 @@ local SOURCE_DIR = currentFileDir()
 -- one Mac-only notification path. Use either `name` for a system sound or
 -- `file` for an absolute path to an audio file.
 local SOUND_ENABLED = true
-local SOUND_DONE = { file = SOURCE_DIR .. "/sounds/mixkit-correct-answer-tone-2870.wav" }
+local SOUND_DONE = { file = SOURCE_DIR .. "/sounds/Glass.wav" }
 local SOUND_WAITING = { name = "Ping" }
 local SOUND_COOLDOWN = 0.75
 local WAITING_SOUND_REMINDER_INTERVAL = 30.0
