@@ -1,0 +1,4 @@
+[submodule "zellij-patched"]
+	path = zellij-patched
+	url = git@github.com:roomss-ltd/zellij-patched.git
+	branch = main
