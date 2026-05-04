@@ -20,7 +20,7 @@ The `dotfiles/` directory contains a complete, reproducible dev environment conf
 |-----------|---------|
 | **Zsh + Oh My Zsh** | Shell with Powerlevel10k prompt, autosuggestions, syntax highlighting |
 | **Ghostty** | Terminal emulator config with Catppuccin Mocha theme, Monaco font |
-| **Zellij** | Terminal multiplexer config with custom keybinds and mocha-custom theme |
+| **Roomss patched Zellij** | Private Zellij fork with visual-position tab renames, plus custom keybinds and mocha-custom theme |
 | **zjstatus** | Zellij status bar plugin with Catppuccin Mocha palette |
 | **room** | Fuzzy tab switcher plugin for Zellij (`Ctrl+R`) |
 | **claude-tab-status** | Zellij WASM plugin that tracks Claude Code session activity per tab |
@@ -36,14 +36,29 @@ The `dotfiles/` directory contains a complete, reproducible dev environment conf
 ### Installation
 
 ```bash
-# 1. Install required tools
-brew install ghostty zellij jq
+# 1. Install required tools. Do not install/use Homebrew Zellij for this setup.
+brew install ghostty jq
 brew install --cask hammerspoon
 rustup target add wasm32-wasip1
 
-# 2. Clone and run the installer
-git clone <repo-url>
+# 2. Clone with the private patched Zellij submodule
+git clone --recurse-submodules git@github.com:roomss-ltd/pixel-agents-standalone.git
 cd pixel-agents-standalone
+
+# 3. Build and install Roomss patched Zellij from the local submodule
+git submodule update --init --recursive
+(cd zellij-patched && cargo build --release --bin zellij)
+mkdir -p "$HOME/.local/bin"
+if [ -e "$HOME/.local/bin/zellij" ] && [ ! -L "$HOME/.local/bin/zellij" ]; then
+  mv "$HOME/.local/bin/zellij" "$HOME/.local/bin/zellij.pre-roomss.bak"
+fi
+ln -sf "$PWD/zellij-patched/target/release/zellij" "$HOME/.local/bin/zellij"
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+which zellij
+zellij --version
+
+# 4. Run the environment installer
 ./dotfiles/install.sh
 ```
 
@@ -55,9 +70,54 @@ The install script will:
 - Install the Claude Code hook script and register hooks in `~/.claude/settings.json`
 - Symlink the Hammerspoon overlay module and patch `~/.hammerspoon/init.lua`
 
+The patched Zellij fork lives at `zellij-patched/` and is pinned by this repo as a submodule:
+
+- Source: `git@github.com:roomss-ltd/zellij-patched.git`
+- Patch commit: `296fc3a Preserve tab position on rename`
+- Required behavior: `RenameTab(N)` resolves `N` by one-based visual tab position, which lets `claude-tab-status` rename the correct tab without the old bootstrap probe workaround.
+
+### Existing Zellij users
+
+If Zellij is already installed, replace only the binary path and keep the rest of the setup intact:
+
+```bash
+cd pixel-agents-standalone
+git pull origin main
+git submodule update --init --recursive
+(cd zellij-patched && cargo build --release --bin zellij)
+
+mkdir -p "$HOME/.local/bin"
+if [ -e "$HOME/.local/bin/zellij" ] && [ ! -L "$HOME/.local/bin/zellij" ]; then
+  mv "$HOME/.local/bin/zellij" "$HOME/.local/bin/zellij.pre-roomss.bak"
+fi
+ln -sf "$PWD/zellij-patched/target/release/zellij" "$HOME/.local/bin/zellij"
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+which zellij
+zellij --version
+
+./dotfiles/install.sh
+```
+
+Start a fresh Zellij session after this. Existing Zellij sessions keep using their already-running server process.
+
+### Agent install checklist
+
+For Opus 4.7 or any other installing agent, use this order exactly:
+
+1. Verify GitHub access to `roomss-ltd/pixel-agents-standalone` and `roomss-ltd/zellij-patched`.
+2. Clone with `--recurse-submodules`, or run `git submodule update --init --recursive` in an existing clone.
+3. Build `zellij-patched` with `cargo build --release --bin zellij`.
+4. Symlink `~/.local/bin/zellij` to `zellij-patched/target/release/zellij`.
+5. Ensure `~/.local/bin` precedes Homebrew paths in the shell used to launch Zellij.
+6. Run `./dotfiles/install.sh`.
+7. Reload Hammerspoon.
+8. Start a new Zellij session and grant the `claude-tab-status` plugin permissions.
+9. Open Claude Code in a Zellij tab and confirm tab names update and the Hammerspoon widget appears.
+
 ### Post-install
 
-1. **Start a new Zellij session** — press `y` when prompted to grant claude-tab-status plugin permissions
+1. **Start a new Zellij session** — existing sessions use their old server process; press `y` when prompted to grant claude-tab-status plugin permissions
 2. **Reload Hammerspoon** (or it reloads automatically on config change)
 3. **Open Claude Code** in any Zellij tab — the overlay appears in the bottom-right corner
 
@@ -103,6 +163,8 @@ dotfiles/
   zellij/layouts/default.kdl      # zjstatus bar with Catppuccin Mocha palette
   claude/settings-hooks.json      # Claude Code hooks template for claude-tab-status
   hammerspoon/init.lua            # Loads rcmd + claude-status modules
+
+zellij-patched/                   # Private Roomss Zellij fork, pinned as a submodule
 
 claude-tab-status/
   src/                            # Rust WASM plugin source
