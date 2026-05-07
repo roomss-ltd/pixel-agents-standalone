@@ -3849,15 +3849,10 @@ cd agenttab
 xcodebuild -project AgentTAB.xcodeproj -scheme AgentTAB \
   -configuration Release -derivedDataPath build/ archive
 
-# 2. Compile icon
-mkdir -p assets/AppIcon.iconset
-for size in 16 32 64 128 256 512; do
-  sips -z $size $size assets/app-icon-1024.png --out "assets/AppIcon.iconset/icon_${size}x${size}.png"
-  doubled=$((size * 2))
-  sips -z $doubled $doubled assets/app-icon-1024.png --out "assets/AppIcon.iconset/icon_${size}x${size}@2x.png"
-done
-iconutil -c icns assets/AppIcon.iconset
-mv assets/AppIcon.icns "build/Build/Products/Release/AgentTAB.app/Contents/Resources/AppIcon.icns"
+# 2. Bundle pre-built icon
+# assets/AppIcon.icns is committed alongside the iconset PNGs.
+# To regenerate from the iconset: iconutil -c icns assets/AppIcon.iconset
+cp assets/AppIcon.icns "build/Build/Products/Release/AgentTAB.app/Contents/Resources/AppIcon.icns"
 
 # 3. DMG
 mkdir -p out
@@ -4050,19 +4045,28 @@ git commit --allow-empty -m "chore(agenttab): manual verification of Sparkle upd
 
 ### Task 8.1: App icon
 
-**Files:**
-- Place: `agenttab/assets/app-icon-1024.png` (user provides)
+**Files (already committed before implementation began):**
+- `agenttab/assets/AgentTAB.svg` — vector source (1024×1024 viewbox)
+- `agenttab/assets/app-icon-1024.png` — 1024 raster, used as DMG volume icon fallback
+- `agenttab/assets/AppIcon.iconset/` — full multi-size iconset (16/32/128/256/512 with @2x)
+- `agenttab/assets/AppIcon.icns` — compiled icns ready to embed
 
 **Step 1: Verify build picks up icon**
 
-After dropping the user's 1024×1024 PNG, run `./agenttab/scripts/build-dmg.sh 0.1.0`. Inspect the resulting `.app/Contents/Resources/AppIcon.icns`.
+Run `./agenttab/scripts/build-dmg.sh 0.1.0`. Inspect the resulting `.app/Contents/Resources/AppIcon.icns` is the same as `agenttab/assets/AppIcon.icns`. Open the `.app` in Finder — the AgentTAB icon should appear.
 
-**Step 2: Commit**
+**Step 2: If the iconset ever needs regeneration**
 
-```bash
-git add agenttab/assets/app-icon-1024.png
-git commit -m "feat(agenttab): app icon asset"
+```sh
+cd agenttab/assets
+iconutil -c icns AppIcon.iconset
 ```
+
+This rebuilds `AppIcon.icns` from the `iconset` folder. The PNGs in the iconset were originally rendered from `AgentTAB.svg` and committed pre-sized.
+
+**Step 3: No commit needed**
+
+Icons are already in the repo. Just verify the build picks them up.
 
 ---
 
