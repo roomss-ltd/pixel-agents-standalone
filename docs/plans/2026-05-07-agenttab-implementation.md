@@ -211,15 +211,7 @@ struct AgentTABApp: App {
 }
 ```
 
-`agenttab/AgentTAB/App/Info.plist` — leave empty (xcodegen merges the `info.properties` from project.yml at generate time):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict/>
-</plist>
-```
+`agenttab/AgentTAB/App/Info.plist` — **gitignored.** xcodegen owns this file; it rewrites it from `project.yml`'s `info.properties` on every `xcodegen generate`. There is no source-of-truth plist file in the source tree — `project.yml` is canonical. The file's `info.path` location is required so xcodebuild can find a plist during compilation, but the file itself isn't tracked.
 
 `agenttab/AgentTABTests/AgentTABTests.swift`:
 
@@ -239,6 +231,9 @@ final class AgentTABTests: XCTestCase {
 ```
 # xcodegen output (regenerate via `xcodegen generate`)
 AgentTAB.xcodeproj/
+# xcodegen rewrites this file on every generate from project.yml's info.properties.
+# project.yml is the canonical source of plist keys.
+AgentTAB/App/Info.plist
 
 # Xcode build artifacts
 build/

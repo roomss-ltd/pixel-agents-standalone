@@ -1,5 +1,8 @@
 # xcodegen output (regenerate via `xcodegen generate`)
 AgentTAB.xcodeproj/
+# xcodegen rewrites this file on every generate from project.yml's info.properties.
+# project.yml is the canonical source of plist keys.
+AgentTAB/App/Info.plist
 
 # Xcode build artifacts
 build/
