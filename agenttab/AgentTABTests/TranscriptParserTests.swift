@@ -12,4 +12,24 @@ final class TranscriptParserTests: XCTestCase {
         XCTAssertEqual(session.activeToolIds, ["t1"])
         XCTAssertEqual(session.currentTool, "Reading b.swift")
     }
+
+    func testParsesToolResult() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolIds = ["t1"]
+        session.activity = .tool("Read")
+
+        let line = #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]}}"#
+        let events = parser.parseLine(line, session: &session)
+        XCTAssertEqual(events, [.toolCompleted(toolId: "t1")])
+        XCTAssertTrue(session.activeToolIds.isEmpty)
+    }
+
+    func testIgnoresUserTextPromptByDefault() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        let line = #"{"type":"user","message":{"content":"hello"}}"#
+        let events = parser.parseLine(line, session: &session)
+        XCTAssertTrue(events.isEmpty)
+    }
 }

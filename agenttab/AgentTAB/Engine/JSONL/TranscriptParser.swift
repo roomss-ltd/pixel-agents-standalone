@@ -51,10 +51,23 @@ struct TranscriptParser {
         return events
     }
 
-    // Stubs for future tasks (2.4–2.6) — return [] for now.
     private func handleUser(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
+        guard let message = json["message"] as? [String: Any] else { return [] }
+
+        if let content = message["content"] as? [[String: Any]] {
+            var events: [TranscriptEvent] = []
+            for block in content where block["type"] as? String == "tool_result" {
+                guard let toolId = block["tool_use_id"] as? String else { continue }
+                session.activeToolIds.remove(toolId)
+                session.lastUpdate = Date()
+                events.append(.toolCompleted(toolId: toolId))
+            }
+            return events
+        }
         return []
     }
+
+    // Stubs for future tasks (2.5–2.6) — return [] for now.
     private func handleSystem(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
         return []
     }
