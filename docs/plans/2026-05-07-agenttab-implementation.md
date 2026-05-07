@@ -255,14 +255,16 @@ Expected: `Generated project successfully` and `agenttab/AgentTAB.xcodeproj/` ex
 **Step 5: Verify build via xcodebuild**
 
 ```sh
-xcodebuild -project agenttab/AgentTAB.xcodeproj -scheme AgentTAB -configuration Debug -destination 'platform=macOS' build
+xcodebuild -project agenttab/AgentTAB.xcodeproj -scheme AgentTAB -configuration Debug -derivedDataPath /tmp/agenttab-build -destination 'platform=macOS' build
 ```
 Expected: `** BUILD SUCCEEDED **`
+
+**Note on `/tmp/agenttab-build`:** Build artifacts MUST live outside `~/Desktop`. Unsigned macOS apps launched from inside `~/Desktop/...` trigger a TCC permission dialog ("AgentTAB would like to access files in your Desktop folder") on every launch. Putting the derived data under `/tmp` avoids this entirely. The convenience script `agenttab/scripts/build-and-run.sh` enforces this path.
 
 **Step 6: Verify LSUIElement at runtime**
 
 ```sh
-open -W -n agenttab/build/Debug/AgentTAB.app &
+open -n /tmp/agenttab-build/Build/Products/Debug/AgentTAB.app &
 sleep 2
 # verify no Dock icon — list visible app windows
 osascript -e 'tell application "System Events" to get name of every application process whose visible is true' | grep -q AgentTAB && echo "BAD: AgentTAB visible in Dock" || echo "OK: LSUIElement working"
