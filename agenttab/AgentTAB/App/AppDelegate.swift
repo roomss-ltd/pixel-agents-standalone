@@ -17,6 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ))
         notchPanel?.anchorToNotch()
         notchPanel?.orderFront(nil)
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.notchPanel?.anchorToNotch()
+        }
     }
 
     private func makeMenu() -> NSMenu {
