@@ -1,0 +1,11 @@
+# xcodegen output (regenerate via `xcodegen generate`)
+AgentTAB.xcodeproj/
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcuserdata/
+xcuserdata/
+
+# Sparkle private key (never commit)
+sparkle-private-key.txt
