@@ -10,7 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = "AT"
         statusItem?.menu = makeMenu()
 
-        notchPanel = NotchPanel(rootView: AnyView(NotchView()))
+        let geometry = NotchGeometry.detect()
+        notchPanel = NotchPanel(rootView: AnyView(
+            NotchView()
+                .environment(\.notchGeometry, geometry)
+        ))
         notchPanel?.anchorToNotch()
         notchPanel?.orderFront(nil)
     }

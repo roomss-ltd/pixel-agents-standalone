@@ -1,0 +1,35 @@
+import AppKit
+import SwiftUI
+
+struct NotchGeometry {
+    let hasNotch: Bool
+    let notchHeight: CGFloat       // ~32pt on notched MacBooks, 0 elsewhere
+    let notchWidth: CGFloat        // approx 200pt centered, 0 if no notch
+    let screenFrame: NSRect
+
+    static func detect() -> NotchGeometry {
+        guard let screen = NSScreen.main else {
+            return NotchGeometry(hasNotch: false, notchHeight: 0, notchWidth: 0,
+                                 screenFrame: .zero)
+        }
+        let topInset = screen.safeAreaInsets.top
+        return NotchGeometry(
+            hasNotch: topInset > 0,
+            notchHeight: topInset,
+            notchWidth: topInset > 0 ? 200 : 0,   // approximate; refine in M3
+            screenFrame: screen.frame
+        )
+    }
+}
+
+private struct NotchGeometryKey: EnvironmentKey {
+    static let defaultValue = NotchGeometry(hasNotch: false, notchHeight: 0,
+                                            notchWidth: 0, screenFrame: .zero)
+}
+
+extension EnvironmentValues {
+    var notchGeometry: NotchGeometry {
+        get { self[NotchGeometryKey.self] }
+        set { self[NotchGeometryKey.self] = newValue }
+    }
+}
