@@ -67,10 +67,17 @@ struct TranscriptParser {
         return []
     }
 
-    // Stubs for future tasks (2.5–2.6) — return [] for now.
     private func handleSystem(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
-        return []
+        guard json["subtype"] as? String == "turn_duration" else { return [] }
+        session.activeToolIds.removeAll()
+        session.subagentTools.removeAll()
+        session.activity = .waiting
+        session.currentTool = nil
+        session.lastUpdate = Date()
+        return [.turnEnded]
     }
+
+    // Stub for future task (2.6) — return [] for now.
     private func handleProgress(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
         return []
     }

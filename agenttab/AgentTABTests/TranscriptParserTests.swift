@@ -32,4 +32,17 @@ final class TranscriptParserTests: XCTestCase {
         let events = parser.parseLine(line, session: &session)
         XCTAssertTrue(events.isEmpty)
     }
+
+    func testTurnDurationEndsTurnAndClearsTools() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolIds = ["t1", "t2"]
+        session.activity = .thinking
+
+        let line = #"{"type":"system","subtype":"turn_duration"}"#
+        let events = parser.parseLine(line, session: &session)
+        XCTAssertEqual(events, [.turnEnded])
+        XCTAssertEqual(session.activity, .waiting)
+        XCTAssertTrue(session.activeToolIds.isEmpty)
+    }
 }
