@@ -117,54 +117,172 @@ The new `agenttab/` directory sits as a peer to the existing `server/`, `webview
 
 **End state:** `xcodebuild` produces an `.app` that runs and shows a hover-responsive box at the notch. No engine, no real UI, no hooks. Just confirms the windowing primitive works.
 
-### Task 1.1: Initialize Xcode project
+### Task 1.1: Initialize Xcode project via xcodegen
 
 **Files:**
-- Create: `agenttab/AgentTAB.xcodeproj` (Xcode-generated)
+- Create: `agenttab/project.yml` (xcodegen config — source of truth for the project)
 - Create: `agenttab/AgentTAB/App/AgentTABApp.swift`
 - Create: `agenttab/AgentTAB/App/Info.plist`
+- Create: `agenttab/AgentTABTests/AgentTABTests.swift` (placeholder test)
+- Generate: `agenttab/AgentTAB.xcodeproj/` (via xcodegen, gitignored)
+- Update: `agenttab/.gitignore` to exclude generated artifacts
 
-**Step 1: Create project via Xcode**
+**Why xcodegen:** Avoids the GUI step in `File → New → Project`. The `project.yml` is the canonical project definition; `xcodegen` regenerates the `.xcodeproj` deterministically from it. CI-friendly and reproducible.
 
-Open Xcode → File → New → Project → macOS → App. Settings:
-- Product Name: `AgentTAB`
-- Team: None (unsigned)
-- Organization Identifier: `com.roomss`
-- Bundle Identifier: `com.roomss.agenttab` (auto-derived)
-- Interface: SwiftUI
-- Language: Swift
-- Storage: None
-- Include Tests: yes
-- Save to: `<repo>/agenttab/`
+**Step 1: Install xcodegen if missing**
 
-**Step 2: Set deployment target and `LSUIElement`**
+```sh
+which xcodegen >/dev/null 2>&1 || brew install xcodegen
+xcodegen --version
+```
+Expected: a version string ≥ 2.38.
 
-In project settings → AgentTAB target → General:
-- Minimum Deployments: macOS 14.0
+**Step 2: Create project.yml**
 
-In `Info.plist`:
-```xml
-<key>LSUIElement</key>            <true/>
-<key>LSMinimumSystemVersion</key> <string>14.0</string>
-<key>LSApplicationCategoryType</key> <string>public.app-category.developer-tools</string>
-<key>NSHumanReadableCopyright</key> <string>© Roomss Ltd</string>
+```yaml
+# agenttab/project.yml
+name: AgentTAB
+options:
+  bundleIdPrefix: com.roomss
+  deploymentTarget:
+    macOS: "14.0"
+  developmentLanguage: en
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.roomss.agenttab
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+targets:
+  AgentTAB:
+    type: application
+    platform: macOS
+    sources:
+      - path: AgentTAB
+        excludes:
+          - "**/*.md"
+    resources:
+      - AgentTAB/Resources
+    info:
+      path: AgentTAB/App/Info.plist
+      properties:
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.developer-tools
+        CFBundleName: AgentTAB
+        CFBundleDisplayName: AgentTAB
+        CFBundleIdentifier: com.roomss.agenttab
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        CFBundleIconFile: AppIcon
+        NSHumanReadableCopyright: "© Roomss Ltd"
+    scheme:
+      testTargets:
+        - AgentTABTests
+  AgentTABTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AgentTABTests
+    dependencies:
+      - target: AgentTAB
 ```
 
-**Step 3: Verify build**
+**Step 3: Create source files**
 
-Run: `xcodebuild -project agenttab/AgentTAB.xcodeproj -scheme AgentTAB -configuration Debug build`
+`agenttab/AgentTAB/App/AgentTABApp.swift`:
+
+```swift
+import SwiftUI
+
+@main
+struct AgentTABApp: App {
+    var body: some Scene {
+        Settings {
+            Text("AgentTAB Settings (placeholder)")
+                .frame(width: 400, height: 300)
+        }
+    }
+}
+```
+
+`agenttab/AgentTAB/App/Info.plist` — leave empty (xcodegen merges the `info.properties` from project.yml at generate time):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict/>
+</plist>
+```
+
+`agenttab/AgentTABTests/AgentTABTests.swift`:
+
+```swift
+import XCTest
+@testable import AgentTAB
+
+final class AgentTABTests: XCTestCase {
+    func testPlaceholder() {
+        XCTAssertTrue(true, "Placeholder test — replaced by real tests in M2")
+    }
+}
+```
+
+`agenttab/.gitignore`:
+
+```
+# xcodegen output (regenerate via `xcodegen generate`)
+AgentTAB.xcodeproj/
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcuserdata/
+xcuserdata/
+
+# Sparkle private key (never commit)
+sparkle-private-key.txt
+```
+
+**Step 4: Generate Xcode project**
+
+```sh
+cd agenttab && xcodegen generate
+```
+Expected: `Generated project successfully` and `agenttab/AgentTAB.xcodeproj/` exists.
+
+**Step 5: Verify build via xcodebuild**
+
+```sh
+xcodebuild -project agenttab/AgentTAB.xcodeproj -scheme AgentTAB -configuration Debug -destination 'platform=macOS' build
+```
 Expected: `** BUILD SUCCEEDED **`
 
-**Step 4: Verify LSUIElement**
+**Step 6: Verify LSUIElement at runtime**
 
-Run from Xcode (Cmd-R). Expected: app launches, no Dock icon, no menu bar app, no visible window. Process visible in Activity Monitor as "AgentTAB".
+```sh
+open -W -n agenttab/build/Debug/AgentTAB.app &
+sleep 2
+# verify no Dock icon — list visible app windows
+osascript -e 'tell application "System Events" to get name of every application process whose visible is true' | grep -q AgentTAB && echo "BAD: AgentTAB visible in Dock" || echo "OK: LSUIElement working"
+osascript -e 'tell application "AgentTAB" to quit' 2>/dev/null
+```
+Expected: `OK: LSUIElement working`. (If `open -W` doesn't return cleanly, kill via `pkill -x AgentTAB`.)
 
-**Step 5: Commit**
+**Step 7: Commit**
 
 ```bash
-git add agenttab/
-git commit -m "feat(agenttab): initialize Xcode project skeleton"
+git add agenttab/project.yml agenttab/AgentTAB/ agenttab/AgentTABTests/ agenttab/.gitignore
+git commit -m "Initialize AgentTAB Xcode project via xcodegen"
 ```
+
+(Note: `AgentTAB.xcodeproj/` is gitignored — it's regenerated from `project.yml` on each clone.)
 
 ---
 
