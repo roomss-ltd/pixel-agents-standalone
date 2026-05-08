@@ -10,6 +10,7 @@ struct SessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             iconForActivity
+                .modifier(WaitingPulse(isActive: session.activity == .waiting))
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -66,5 +67,34 @@ struct SessionRow: View {
         case .initState: return "Starting"
         case .idle: return "Idle"
         }
+    }
+}
+
+struct WaitingPulse: ViewModifier {
+    let isActive: Bool
+    @State private var pulse: CGFloat = 1.0
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isActive ? pulse : 1.0)
+            .onAppear {
+                guard isActive else { return }
+                withAnimation(.easeInOut(duration: Theme.Animations.waitingPulsePeriod)
+                    .repeatForever(autoreverses: true)) {
+                    pulse = 1.15
+                }
+            }
+            .onChange(of: isActive) { _, nowActive in
+                if nowActive {
+                    withAnimation(.easeInOut(duration: Theme.Animations.waitingPulsePeriod)
+                        .repeatForever(autoreverses: true)) {
+                        pulse = 1.15
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        pulse = 1.0
+                    }
+                }
+            }
     }
 }
