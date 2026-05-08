@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var notchPanel: NotchPanel?
     var engine = ActivityEngine()
+    private var onboardingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -29,6 +30,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.notchPanel?.anchorToNotch()
         }
+
+        let onboardingDone = UserDefaults.standard.bool(forKey: "AgentTAB.onboarding.completed")
+        if !onboardingDone {
+            showOnboarding()
+        }
+    }
+
+    private func showOnboarding() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 440),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        window.title = "AgentTAB Onboarding"
+        window.contentView = NSHostingView(rootView: OnboardingView())
+        window.center()
+        window.isReleasedWhenClosed = false
+        onboardingWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func makeMenu() -> NSMenu {
