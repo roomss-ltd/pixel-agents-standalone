@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -6,6 +7,7 @@ struct SettingsView: View {
             GeneralSettings().tabItem { Label("General", systemImage: "gear") }
             NotificationsSettings().tabItem { Label("Notifications", systemImage: "bell") }
             UpdatesSettings().tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+            AdvancedSettings().tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
         }
         .frame(width: 480, height: 360)
     }
@@ -63,5 +65,57 @@ struct UpdatesSettings: View {
                 .foregroundStyle(.secondary)
         }
         .padding()
+    }
+}
+
+struct AdvancedSettings: View {
+    @State private var showConfirm = false
+
+    var body: some View {
+        Form {
+            Section("Diagnostics") {
+                Button("Reveal hook script in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([HookInstaller.hookScriptPath])
+                }
+                Button("Reveal support directory in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([HookInstaller.supportDir])
+                }
+            }
+            Section("Danger zone") {
+                Button("Uninstall AgentTAB…") { showConfirm = true }
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding()
+        .alert("Uninstall AgentTAB?", isPresented: $showConfirm) {
+            Button("Uninstall", role: .destructive) { performUninstall() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("AgentTAB will remove its hooks from ~/.claude/settings.json (preserving any other hooks), delete its support directory, and unregister itself from Login Items. The app file in /Applications must be deleted manually — Finder will open to it.")
+        }
+    }
+
+    private func performUninstall() {
+        // 1. Reverse hook merge in ~/.claude/settings.json
+        try? HookInstaller.uninstall()
+
+        // 2. Remove the support directory
+        try? FileManager.default.removeItem(at: HookInstaller.supportDir)
+
+        // 3. Unregister Login Item
+        LoginItem.unregister()
+
+        // 4. Reset onboarding flag so a fresh install re-prompts
+        UserDefaults.standard.removeObject(forKey: "AgentTAB.onboarding.completed")
+        UserDefaults.standard.removeObject(forKey: "AgentTAB.dropInMode")
+
+        // 5. Reveal /Applications/AgentTAB.app in Finder so the user can drag to Trash
+        let appURL = URL(fileURLWithPath: "/Applications/AgentTAB.app")
+        if FileManager.default.fileExists(atPath: appURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        }
+
+        // 6. Quit AgentTAB
+        NSApp.terminate(nil)
     }
 }
