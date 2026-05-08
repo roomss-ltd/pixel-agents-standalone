@@ -8,7 +8,7 @@ struct ExpandedView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Compact pill row at top (slightly shrunk to feel "secondary" inside the panel)
-            PillView().scaleEffect(0.95)
+            TwoPearlsView().scaleEffect(0.95)
 
             Divider().opacity(0.2)
 
