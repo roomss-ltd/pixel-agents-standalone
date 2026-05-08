@@ -16,13 +16,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let geometry = NotchGeometry.detect()
         engine.start()
-        notchPanel = NotchPanel(rootView: AnyView(
-            NotchView()
-                .environment(\.notchGeometry, geometry)
-                .environmentObject(engine)
-        ))
-        notchPanel?.anchorToNotch()
-        notchPanel?.orderFront(nil)
+
+        // Build the panel first so we can capture it inside the SwiftUI callback below.
+        let panel = NotchPanel(rootView: AnyView(EmptyView()))
+        notchPanel = panel
+        let rootView = NotchView(onExpandedChange: { [weak panel] expanded in
+            panel?.isExpanded = expanded
+        })
+            .environment(\.notchGeometry, geometry)
+            .environmentObject(engine)
+        // Replace the placeholder with the real root view.
+        if let hostingView = panel.contentView as? NSHostingView<AnyView> {
+            hostingView.rootView = AnyView(rootView)
+        } else {
+            let host = NSHostingView(rootView: AnyView(rootView))
+            host.frame = panel.contentLayoutRect
+            host.autoresizingMask = [.width, .height]
+            panel.contentView = host
+        }
+        panel.anchorToNotch()
+        panel.orderFront(nil)
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
