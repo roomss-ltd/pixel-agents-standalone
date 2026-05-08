@@ -1,7 +1,7 @@
 import Foundation
 
 struct HookPayload: Codable, Equatable {
-    let paneId: Int
+    let paneId: Int?
     let sessionId: String
     let hookEvent: String
     let toolName: String?

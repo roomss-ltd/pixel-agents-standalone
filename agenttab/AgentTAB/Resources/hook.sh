@@ -3,11 +3,11 @@
 [ -t 0 ] && exit 0
 INPUT=$(cat 2>/dev/null) || exit 0
 PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
-  --arg pid "${ZELLIJ_PANE_ID:-0}" \
+  --arg pid "${ZELLIJ_PANE_ID:-}" \
   --arg term "${TERM_PROGRAM:-unknown}" \
   '
   select(.hook_event_name) | {
-    pane_id:    ($pid | tonumber),
+    pane_id:    (if $pid == "" then null else ($pid | tonumber) end),
     session_id: .session_id,
     hook_event: .hook_event_name,
     tool_name:  .tool_name,
