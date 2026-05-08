@@ -1,27 +1,90 @@
+// agenttab/AgentTAB/UI/NotchView.swift
 import SwiftUI
 
 struct NotchView: View {
     @Environment(\.notchGeometry) var geometry
+    @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
 
     var body: some View {
         VStack {
             HStack {
                 Spacer()
-                VStack(spacing: 4) {
-                    Rectangle()
-                        .fill(Color.green.opacity(0.5))
-                        .frame(width: isHovered ? 300 : 200,
-                               height: isHovered ? 200 : 30)
-                        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: isHovered)
-                        .onHover { hovering in isHovered = hovering }
-                    Text("hasNotch: \(geometry.hasNotch ? "yes" : "no") inset: \(Int(geometry.notchHeight))pt")
-                        .font(.caption2)
-                        .foregroundStyle(.white)
+                if isHovered {
+                    expanded
+                } else {
+                    pill
                 }
                 Spacer()
             }
             Spacer()
+        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: isHovered)
+    }
+
+    private var pill: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "circle.fill")
+                .foregroundStyle(.blue)
+            Text("\(activeCount)")
+                .font(.system(size: 12, weight: .medium))
+            Text("•")
+            Text("\(doneCount) done")
+                .font(.system(size: 11))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .onHover { hovering in isHovered = hovering }
+    }
+
+    private var expanded: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if engine.sessions.isEmpty {
+                Text("No active Claude sessions")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(engine.sessions) { session in
+                    HStack {
+                        Text(session.projectName).font(.system(size: 11, weight: .medium))
+                        Text("·").foregroundStyle(.secondary)
+                        Text(session.currentTool ?? activityLabel(session.activity))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(12)
+        .frame(width: 380, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onHover { hovering in isHovered = hovering }
+    }
+
+    private var activeCount: Int {
+        engine.sessions.filter {
+            if case .thinking = $0.activity { return true }
+            if case .tool = $0.activity { return true }
+            return false
+        }.count
+    }
+    private var doneCount: Int {
+        engine.sessions.filter { $0.activity == .done }.count
+    }
+    private func activityLabel(_ a: Activity) -> String {
+        switch a {
+        case .thinking: return "Thinking…"
+        case .tool(let n): return "Using \(n)"
+        case .waiting: return "Waiting"
+        case .done: return "Done"
+        case .initState: return "Starting"
+        case .idle: return "Idle"
         }
     }
 }

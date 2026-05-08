@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var notchPanel: NotchPanel?
+    var engine = ActivityEngine()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -11,9 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = makeMenu()
 
         let geometry = NotchGeometry.detect()
+        engine.start()
         notchPanel = NotchPanel(rootView: AnyView(
             NotchView()
                 .environment(\.notchGeometry, geometry)
+                .environmentObject(engine)
         ))
         notchPanel?.anchorToNotch()
         notchPanel?.orderFront(nil)
