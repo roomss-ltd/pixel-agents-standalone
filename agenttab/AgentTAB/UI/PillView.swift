@@ -18,15 +18,12 @@ struct PillView: View {
         }
         .frame(height: Theme.Layout.pearlHeight)
         .background(
-            NotchShape(notchWidth: geometry.notchWidth,
-                       notchHeight: 0,    // pill drawn below notch, no top carve
-                       cornerRadius: Theme.Layout.expandedTopNotchCornerRadius)
+            // R1 placeholder — the real two-pearl geometry is wired in R3 via PearlShape.
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Theme.panelBg)
         )
         .overlay(
-            NotchShape(notchWidth: geometry.notchWidth,
-                       notchHeight: 0,
-                       cornerRadius: Theme.Layout.expandedTopNotchCornerRadius)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(Theme.panelBorderOuter, lineWidth: 0.5)
         )
     }
