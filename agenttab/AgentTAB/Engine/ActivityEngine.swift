@@ -12,6 +12,7 @@ final class ActivityEngine: ObservableObject {
     private let jsonlWatcher: JSONLWatcher
     private var hookSocket: HookSocketListener?
     private var lastHookEvent: [String: Date] = [:]   // claudeSessionId -> when
+    private var zellijReader: ZellijStatusReader?
 
     init(projectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects")) {
@@ -39,6 +40,16 @@ final class ActivityEngine: ObservableObject {
             } catch {
                 print("[Engine] Hook socket failed to start: \(error)")
             }
+        }
+
+        let probe = EnvironmentProbe.detect()
+        if probe.pluginState == .producingStatusFiles {
+            zellijReader = ZellijStatusReader()
+            zellijReader?.onUpdate = { [weak self] fileMap in
+                Task { @MainActor in self?.applyZellijStatus(fileMap) }
+            }
+            zellijReader?.start()
+            print("[Engine] Zellij status reader active")
         }
     }
 
@@ -133,5 +144,23 @@ final class ActivityEngine: ObservableObject {
         session.lastUpdate = Date()
         sessions[index] = session
         lastHookEvent[payload.sessionId] = Date()
+    }
+
+    private func applyZellijStatus(_ files: [URL: ZellijStatusFile]) {
+        for (_, statusFile) in files {
+            for zSession in statusFile.sessions {
+                // Match AgentTAB session by claudeSessionId (which equals run_id from the plugin output).
+                guard let runId = zSession.runId,
+                      let id = sessionsByClaudeId[runId],
+                      let index = sessions.firstIndex(where: { $0.id == id }) else { continue }
+
+                sessions[index].terminalKind = .zellij(ZellijInfo(
+                    paneId: zSession.paneId,
+                    tabIndex: zSession.tabNum,
+                    tabName: zSession.tabName,
+                    zellijSession: ""    // not currently in the plugin's output
+                ))
+            }
+        }
     }
 }
