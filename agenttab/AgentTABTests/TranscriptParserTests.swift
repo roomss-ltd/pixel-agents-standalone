@@ -45,4 +45,56 @@ final class TranscriptParserTests: XCTestCase {
         XCTAssertEqual(session.activity, .waiting)
         XCTAssertTrue(session.activeToolIds.isEmpty)
     }
+
+    func testProgressRecordTracksSubagentTool() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolIds = ["parent_t"]
+
+        let nameMap: [String: String] = ["parent_t": "Task"]
+
+        let line = #"{"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"assistant","message":{"content":[{"type":"tool_use","id":"sub_t","name":"Bash","input":{"command":"ls"}}]}}}}"#
+
+        let events = parser.parseLineWithToolNames(line, session: &session, parentNames: nameMap)
+        XCTAssertEqual(events, [.subagentToolStarted(parentId: "parent_t", toolId: "sub_t", status: "Running: ls")])
+        XCTAssertEqual(session.subagentTools["parent_t"], ["sub_t"])
+    }
+
+    func testProgressIgnoredWhenParentIsNotTaskOrAgent() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        let nameMap: [String: String] = ["parent_t": "Bash"]
+
+        let line = #"{"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"assistant","message":{"content":[{"type":"tool_use","id":"sub_t","name":"Read","input":{"file_path":"/x"}}]}}}}"#
+
+        let events = parser.parseLineWithToolNames(line, session: &session, parentNames: nameMap)
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertNil(session.subagentTools["parent_t"])
+    }
+
+    func testProgressBashOrMcpProgressEmitsNothing() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolIds = ["parent_t"]
+        let nameMap: [String: String] = ["parent_t": "Bash"]
+
+        let line = #"{"type":"progress","parentToolUseID":"parent_t","data":{"type":"bash_progress"}}"#
+
+        let events = parser.parseLineWithToolNames(line, session: &session, parentNames: nameMap)
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testProgressSubagentToolCompletion() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolIds = ["parent_t"]
+        session.subagentTools["parent_t"] = ["sub_t"]
+        let nameMap: [String: String] = ["parent_t": "Task"]
+
+        let line = #"{"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"sub_t"}]}}}}"#
+
+        let events = parser.parseLineWithToolNames(line, session: &session, parentNames: nameMap)
+        XCTAssertEqual(events, [.subagentToolCompleted(parentId: "parent_t", toolId: "sub_t")])
+        XCTAssertEqual(session.subagentTools["parent_t"], [])
+    }
 }

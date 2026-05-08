@@ -1,0 +1,4 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"parent_t","name":"Task","input":{"description":"Find auth bugs"}}]}}
+{"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"assistant","message":{"content":[{"type":"tool_use","id":"sub_t","name":"Bash","input":{"command":"grep -r auth"}}]}}}}
+{"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"sub_t"}]}}}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"parent_t"}]}}

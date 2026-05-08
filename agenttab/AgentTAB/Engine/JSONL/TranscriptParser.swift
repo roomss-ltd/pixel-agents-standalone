@@ -10,6 +10,14 @@ enum TranscriptEvent: Equatable {
 
 struct TranscriptParser {
     func parseLine(_ line: String, session: inout Session) -> [TranscriptEvent] {
+        return parseLineWithToolNames(line, session: &session, parentNames: [:])
+    }
+
+    func parseLineWithToolNames(
+        _ line: String,
+        session: inout Session,
+        parentNames: [String: String]
+    ) -> [TranscriptEvent] {
         guard let data = line.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return [] }
@@ -24,7 +32,7 @@ struct TranscriptParser {
         case "system":
             return handleSystem(json: json, session: &session)
         case "progress":
-            return handleProgress(json: json, session: &session)
+            return handleProgress(json: json, session: &session, parentNames: parentNames)
         default:
             return []
         }
@@ -77,8 +85,56 @@ struct TranscriptParser {
         return [.turnEnded]
     }
 
-    // Stub for future task (2.6) — return [] for now.
-    private func handleProgress(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
-        return []
+    private func handleProgress(
+        json: [String: Any],
+        session: inout Session,
+        parentNames: [String: String]
+    ) -> [TranscriptEvent] {
+        guard let parentToolId = json["parentToolUseID"] as? String,
+              let data = json["data"] as? [String: Any] else {
+            return []
+        }
+
+        let dataType = data["type"] as? String
+
+        // bash_progress / mcp_progress: tool is actively running. The permission-timer
+        // side effect from the TS implementation lives in the engine layer, not the parser.
+        if dataType == "bash_progress" || dataType == "mcp_progress" {
+            return []
+        }
+
+        // For other progress types, parent must be Task or Agent.
+        let parentName = parentNames[parentToolId]
+        guard parentName == "Task" || parentName == "Agent" else { return [] }
+
+        guard let msg = data["message"] as? [String: Any] else { return [] }
+        let msgType = msg["type"] as? String ?? ""
+
+        guard let innerMsg = msg["message"] as? [String: Any],
+              let content = innerMsg["content"] as? [[String: Any]] else { return [] }
+
+        var events: [TranscriptEvent] = []
+
+        if msgType == "assistant" {
+            for block in content where block["type"] as? String == "tool_use" {
+                guard let toolId = block["id"] as? String,
+                      let toolName = block["name"] as? String else { continue }
+                let input = block["input"] as? [String: Any] ?? [:]
+                let status = ToolStatusFormatter.format(toolName: toolName, input: input)
+
+                session.subagentTools[parentToolId, default: []].insert(toolId)
+                session.lastUpdate = Date()
+                events.append(.subagentToolStarted(parentId: parentToolId, toolId: toolId, status: status))
+            }
+        } else if msgType == "user" {
+            for block in content where block["type"] as? String == "tool_result" {
+                guard let toolId = block["tool_use_id"] as? String else { continue }
+                session.subagentTools[parentToolId]?.remove(toolId)
+                session.lastUpdate = Date()
+                events.append(.subagentToolCompleted(parentId: parentToolId, toolId: toolId))
+            }
+        }
+
+        return events
     }
 }
