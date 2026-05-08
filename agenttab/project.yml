@@ -24,8 +24,13 @@ targets:
       - path: AgentTAB
         excludes:
           - "**/*.md"
+          - "Resources/sounds/**"
+          - "Resources/sounds"
+      - path: AgentTAB/Resources/sounds
+        type: folder
+        buildPhase: resources
     resources:
-      - AgentTAB/Resources
+      - path: AgentTAB/Resources/hook.sh
     info:
       path: AgentTAB/App/Info.plist
       properties:

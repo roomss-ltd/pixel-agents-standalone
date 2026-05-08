@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 @MainActor
 final class ActivityEngine: ObservableObject {
@@ -13,6 +14,15 @@ final class ActivityEngine: ObservableObject {
     private var hookSocket: HookSocketListener?
     private var lastHookEvent: [String: Date] = [:]   // claudeSessionId -> when
     private var zellijReader: ZellijStatusReader?
+    private let toastPanel = ToastPanel()
+    private let soundPlayer = SoundPlayer()
+
+    @AppStorage("AgentTAB.toast.corner") private var toastCornerRaw: String = ToastCorner.bottomRight.rawValue
+    @AppStorage("AgentTAB.sounds.enabled") private var soundsEnabled: Bool = true
+
+    private var toastCorner: ToastCorner {
+        ToastCorner(rawValue: toastCornerRaw) ?? .bottomRight
+    }
 
     init(projectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects")) {
@@ -77,7 +87,7 @@ final class ActivityEngine: ObservableObject {
         let claudeId = sessions[index].claudeSessionId
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
 
-        let activityBeforeParse = sessions[index].activity
+        let oldActivity = sessions[index].activity
 
         var session = sessions[index]
         let events = parser.parseLine(line, session: &session)
@@ -85,7 +95,7 @@ final class ActivityEngine: ObservableObject {
         if hookActive {
             // Drop activity changes from JSONL — hook is authoritative.
             // Tool ID tracking and currentTool from JSONL still useful, but activity sticks.
-            session.activity = activityBeforeParse
+            session.activity = oldActivity
         }
         sessions[index] = session
 
@@ -95,13 +105,17 @@ final class ActivityEngine: ObservableObject {
             Task { @MainActor in
                 guard let self = self,
                       let idx = self.sessions.firstIndex(where: { $0.id == id }) else { return }
+                let oldActivity = self.sessions[idx].activity
                 self.sessions[idx].activity = .waiting
+                self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity)
             }
         }
 
         if !events.isEmpty {
             print("[Engine] Session \(session.claudeSessionId): \(events)")
         }
+
+        notifySessionStateChange(session, oldActivity: oldActivity)
     }
 
     private func applyHook(_ payload: HookPayload) {
@@ -111,6 +125,7 @@ final class ActivityEngine: ObservableObject {
             // For v1, drop. The next hook event after JSONL discovery will land cleanly.
             return
         }
+        let oldActivity = sessions[index].activity
         var session = sessions[index]
 
         switch payload.hookEvent {
@@ -144,6 +159,27 @@ final class ActivityEngine: ObservableObject {
         session.lastUpdate = Date()
         sessions[index] = session
         lastHookEvent[payload.sessionId] = Date()
+        notifySessionStateChange(session, oldActivity: oldActivity)
+    }
+
+    private func notifySessionStateChange(_ session: Session, oldActivity: Activity) {
+        if session.activity == .waiting && oldActivity != .waiting {
+            let toast = Toast(
+                title: "Claude needs your input",
+                subtitle: session.projectName,
+                activity: .waiting
+            )
+            toastPanel.show(toast, corner: toastCorner, duration: 8)
+            if soundsEnabled { soundPlayer.playWaiting() }
+        } else if session.activity == .done && oldActivity != .done {
+            let toast = Toast(
+                title: "Finished",
+                subtitle: session.projectName,
+                activity: .done
+            )
+            toastPanel.show(toast, corner: toastCorner, duration: 4)
+            if soundsEnabled { soundPlayer.playDone() }
+        }
     }
 
     private func applyZellijStatus(_ files: [URL: ZellijStatusFile]) {
