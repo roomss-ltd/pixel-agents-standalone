@@ -8,6 +8,7 @@ struct Session: Identifiable, Equatable {
     var activity: Activity
     var currentTool: String?              // human-readable, e.g. "Editing foo.swift"
     var activeToolIds: Set<String>
+    var activeToolNames: [String: String]    // toolId -> toolName
     var subagentTools: [String: Set<String>]
     var lastUpdate: Date
     var terminalKind: TerminalKind
@@ -20,6 +21,7 @@ struct Session: Identifiable, Equatable {
         self.activity = .idle
         self.currentTool = nil
         self.activeToolIds = []
+        self.activeToolNames = [:]
         self.subagentTools = [:]
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)

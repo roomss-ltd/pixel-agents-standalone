@@ -100,7 +100,9 @@ final class ActivityEngine: ObservableObject {
         sessions[index] = session
 
         // Drive permission timer based on session state
-        let nonExemptTool = session.activeToolIds.contains { _ in true }
+        let nonExemptTool = session.activeToolNames.values.contains {
+            !PermissionTimer.exemptTools.contains($0)
+        }
         permissionTimer.start(for: session.claudeSessionId, hasNonExemptTool: nonExemptTool) { [weak self] in
             Task { @MainActor in
                 guard let self = self,
@@ -138,10 +140,19 @@ final class ActivityEngine: ObservableObject {
             if let name = payload.toolName {
                 session.activity = .tool(name)
                 session.currentTool = name
+                // Synthetic tool ID for hook-tracked tools (parser uses real IDs from JSONL).
+                let syntheticId = "hook:\(name)"
+                session.activeToolNames[syntheticId] = name
+                session.activeToolIds.insert(syntheticId)
             }
         case "PostToolUse", "PostToolUseFailure":
             session.activity = .thinking
             session.currentTool = nil
+            if let name = payload.toolName {
+                let syntheticId = "hook:\(name)"
+                session.activeToolNames.removeValue(forKey: syntheticId)
+                session.activeToolIds.remove(syntheticId)
+            }
         case "PermissionRequest":
             session.activity = .waiting
         case "Stop", "SubagentStop", "ManualInterrupt":

@@ -97,4 +97,27 @@ final class TranscriptParserTests: XCTestCase {
         XCTAssertEqual(events, [.subagentToolCompleted(parentId: "parent_t", toolId: "sub_t")])
         XCTAssertEqual(session.subagentTools["parent_t"], [])
     }
+
+    func testActiveToolNamesPopulatedAndCleared() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+
+        let useLine = #"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#
+        _ = parser.parseLine(useLine, session: &session)
+        XCTAssertEqual(session.activeToolNames["t1"], "Bash")
+
+        let resultLine = #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]}}"#
+        _ = parser.parseLine(resultLine, session: &session)
+        XCTAssertNil(session.activeToolNames["t1"])
+    }
+
+    func testTurnDurationClearsActiveToolNames() {
+        let parser = TranscriptParser()
+        var session = Session(claudeSessionId: "x", projectName: "p", projectPath: "/p")
+        session.activeToolNames["t1"] = "Bash"
+
+        let line = #"{"type":"system","subtype":"turn_duration"}"#
+        _ = parser.parseLine(line, session: &session)
+        XCTAssertTrue(session.activeToolNames.isEmpty)
+    }
 }

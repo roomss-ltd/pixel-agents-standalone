@@ -51,6 +51,7 @@ struct TranscriptParser {
             let status = ToolStatusFormatter.format(toolName: toolName, input: input)
 
             session.activeToolIds.insert(toolId)
+            session.activeToolNames[toolId] = toolName
             session.activity = .tool(toolName)
             session.currentTool = status
             session.lastUpdate = Date()
@@ -67,6 +68,7 @@ struct TranscriptParser {
             for block in content where block["type"] as? String == "tool_result" {
                 guard let toolId = block["tool_use_id"] as? String else { continue }
                 session.activeToolIds.remove(toolId)
+                session.activeToolNames.removeValue(forKey: toolId)
                 session.lastUpdate = Date()
                 events.append(.toolCompleted(toolId: toolId))
             }
@@ -78,6 +80,7 @@ struct TranscriptParser {
     private func handleSystem(json: [String: Any], session: inout Session) -> [TranscriptEvent] {
         guard json["subtype"] as? String == "turn_duration" else { return [] }
         session.activeToolIds.removeAll()
+        session.activeToolNames.removeAll()
         session.subagentTools.removeAll()
         session.activity = .waiting
         session.currentTool = nil
