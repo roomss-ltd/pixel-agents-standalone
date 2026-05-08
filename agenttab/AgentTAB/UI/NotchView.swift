@@ -12,10 +12,10 @@ struct NotchView: View {
                 Spacer()
                 if isHovered {
                     ExpandedView()
-                        .onHover { hovering in isHovered = hovering }
+                        .background(HoverTracker(onHover: { isHovered = $0 }))
                 } else {
                     PillView()
-                        .onHover { hovering in isHovered = hovering }
+                        .background(HoverTracker(onHover: { isHovered = $0 }))
                 }
                 Spacer()
             }
