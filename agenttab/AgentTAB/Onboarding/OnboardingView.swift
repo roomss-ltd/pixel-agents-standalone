@@ -4,19 +4,44 @@ struct OnboardingView: View {
     @AppStorage("AgentTAB.onboarding.completed") var completed = false
     @State private var step = 0
     @State private var hookInstallError: String?
+    @State private var probe = EnvironmentProbe.detect()
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
         VStack(spacing: 24) {
-            switch step {
-            case 0: welcome
-            case 1: hookConsent
-            case 2: optionalLogin
-            default: done
+            if probe.isDropInCandidate && step == 0 {
+                dropInWelcome
+            } else {
+                switch step {
+                case 0: welcome
+                case 1: hookConsent
+                case 2: optionalLogin
+                default: done
+                }
             }
         }
         .frame(width: 480, height: 360)
         .padding(40)
+    }
+
+    private var dropInWelcome: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.system(size: 60))
+                .foregroundStyle(Theme.Activity.done)
+            Text("Existing setup detected").font(.title)
+            Text("AgentTAB found your existing Claude tab status integration. It will read live data without modifying anything on your machine.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Continue in drop-in mode") {
+                UserDefaults.standard.set(true, forKey: "AgentTAB.onboarding.completed")
+                UserDefaults.standard.set(true, forKey: "AgentTAB.dropInMode")
+                completed = true
+                dismiss()
+            }
+            .controlSize(.large)
+        }
     }
 
     private var welcome: some View {
