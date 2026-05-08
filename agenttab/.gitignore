@@ -10,8 +10,5 @@ DerivedData/
 *.xcuserdata/
 xcuserdata/
 
-# Sparkle private key (never commit)
+# Sparkle private key (never commit). Stored in macOS Keychain via generate_keys.
 sparkle-private-key.txt
-
-# Sparkle public key — different per machine. Each dev runs generate_keys.
-sparkle-public-key.txt

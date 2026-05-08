@@ -58,13 +58,19 @@ targets:
     preBuildScripts:
       - name: "Inject Sparkle public key"
         script: |
-          if [ -f "${SRCROOT}/sparkle-public-key.txt" ]; then
-            KEY=$(cat "${SRCROOT}/sparkle-public-key.txt" | tr -d '[:space:]')
-            INFOPLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
-            /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${KEY}" "${INFOPLIST_PATH}" 2>/dev/null || true
+          if [ ! -f "${SRCROOT}/sparkle-public-key.txt" ]; then
+            echo "error: sparkle-public-key.txt missing — generate via Sparkle's generate_keys, see SPARKLE-KEYS.md" >&2
+            exit 1
+          fi
+          KEY=$(cat "${SRCROOT}/sparkle-public-key.txt" | tr -d '[:space:]')
+          if [ -z "$KEY" ]; then
+            echo "error: sparkle-public-key.txt is empty" >&2
+            exit 1
+          fi
+          INFOPLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if [ -f "$INFOPLIST_PATH" ]; then
+            /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${KEY}" "${INFOPLIST_PATH}"
             echo "Injected Sparkle public key (${#KEY} chars)"
-          else
-            echo "warning: sparkle-public-key.txt not found — Sparkle updates won't verify"
           fi
         inputFiles:
           - $(SRCROOT)/sparkle-public-key.txt
