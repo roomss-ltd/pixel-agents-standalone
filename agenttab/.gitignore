@@ -12,3 +12,6 @@ xcuserdata/
 
 # Sparkle private key (never commit)
 sparkle-private-key.txt
+
+# Sparkle public key — different per machine. Each dev runs generate_keys.
+sparkle-public-key.txt
