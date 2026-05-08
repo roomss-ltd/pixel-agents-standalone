@@ -6,6 +6,7 @@ struct SessionRow: View {
     let onClick: () -> Void
 
     @State private var isHovered = false
+    @State private var flashOpacity: Double = 0
 
     var body: some View {
         HStack(spacing: 8) {
@@ -35,6 +36,19 @@ struct SessionRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(isHovered ? Theme.rowHighlight : Color.clear)
+        .overlay(
+            Theme.Activity.done.opacity(flashOpacity)
+                .allowsHitTesting(false)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        )
+        .onChange(of: session.activity) { _, newValue in
+            if newValue == .done {
+                flashOpacity = 0.35
+                withAnimation(.easeOut(duration: Theme.Animations.completionFlashDuration)) {
+                    flashOpacity = 0
+                }
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering in withAnimation(Theme.Animations.notch) { isHovered = hovering } }
         .onTapGesture { onClick() }
