@@ -1,5 +1,6 @@
 // agenttab/AgentTAB/UI/Rows/SessionRow.swift
 import SwiftUI
+import AppKit
 
 struct SessionRow: View {
     let session: Session
@@ -27,10 +28,22 @@ struct SessionRow: View {
             Spacer()
 
             if isHovered {
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10))
+                HStack(spacing: 6) {
+                    Button(action: openFolder) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(Theme.textDim)
-                    .transition(.opacity)
+
+                    Button(action: dismissSession) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textDim)
+                }
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
@@ -81,6 +94,15 @@ struct SessionRow: View {
         case .initState: return "Starting"
         case .idle: return "Idle"
         }
+    }
+
+    private func openFolder() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: session.projectPath))
+    }
+
+    private func dismissSession() {
+        // Hooked up to denylist persistence in M5.
+        // For now, this is a no-op stub.
     }
 }
 
