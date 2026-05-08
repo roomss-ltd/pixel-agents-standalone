@@ -34,3 +34,6 @@ coverage/
 
 # Misc
 .tmp/
+
+# DMG release artifacts
+out/
