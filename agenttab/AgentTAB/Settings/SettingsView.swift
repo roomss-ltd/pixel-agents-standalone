@@ -56,9 +56,9 @@ struct UpdatesSettings: View {
     var body: some View {
         Form {
             Button("Check for updates now") {
-                // Wired in M7 once Sparkle is integrated.
+                (NSApp.delegate as? AppDelegate)?.updater.checkForUpdates()
             }
-            Text("Sparkle integration arrives in Milestone 7.")
+            Text("Updates are signed with EdDSA. AgentTAB checks once per day in the background and prompts when a new version is available.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

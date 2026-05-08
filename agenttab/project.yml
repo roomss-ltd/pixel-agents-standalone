@@ -16,6 +16,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "-"
     DEVELOPMENT_TEAM: ""
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 targets:
   AgentTAB:
     type: application
@@ -31,6 +35,8 @@ targets:
         buildPhase: resources
     resources:
       - path: AgentTAB/Resources/hook.sh
+    dependencies:
+      - package: Sparkle
     info:
       path: AgentTAB/App/Info.plist
       properties:
@@ -44,6 +50,24 @@ targets:
         CFBundleVersion: "1"
         CFBundleIconFile: AppIcon
         NSHumanReadableCopyright: "© Roomss Ltd"
+        SUFeedURL: https://updates.agenttab.roomss.dev/appcast.xml
+        SUPublicEDKey: PLACEHOLDER_INJECTED_AT_BUILD_TIME
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUEnableInstallerLauncherService: true
+    preBuildScripts:
+      - name: "Inject Sparkle public key"
+        script: |
+          if [ -f "${SRCROOT}/sparkle-public-key.txt" ]; then
+            KEY=$(cat "${SRCROOT}/sparkle-public-key.txt" | tr -d '[:space:]')
+            INFOPLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+            /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${KEY}" "${INFOPLIST_PATH}" 2>/dev/null || true
+            echo "Injected Sparkle public key (${#KEY} chars)"
+          else
+            echo "warning: sparkle-public-key.txt not found — Sparkle updates won't verify"
+          fi
+        inputFiles:
+          - $(SRCROOT)/sparkle-public-key.txt
     scheme:
       testTargets:
         - AgentTABTests
