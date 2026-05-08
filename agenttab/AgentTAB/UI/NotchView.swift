@@ -23,21 +23,8 @@ struct NotchView: View {
     }
 
     private var pill: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "circle.fill")
-                .foregroundStyle(.blue)
-            Text("\(activeCount)")
-                .font(.system(size: 12, weight: .medium))
-            Text("•")
-            Text("\(doneCount) done")
-                .font(.system(size: 11))
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-        .clipShape(Capsule())
-        .onHover { hovering in isHovered = hovering }
+        PillView()
+            .onHover { hovering in isHovered = hovering }
     }
 
     private var expanded: some View {
