@@ -17,7 +17,7 @@ struct ExpandedView: View {
                     if engine.sessions.isEmpty {
                         Text("No active Claude sessions")
                             .font(.system(size: 11))
-                            .foregroundStyle(Theme.textDim)
+                            .foregroundStyle(Theme.textMuted)
                             .padding(12)
                     } else {
                         ForEach(groupedSessions, id: \.0) { (groupTitle, groupSessions) in
@@ -37,12 +37,11 @@ struct ExpandedView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Theme.glassBG)
-                .background(.ultraThinMaterial)
+                .fill(Theme.panelBg)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.borderOuter, lineWidth: 0.5)
+                .stroke(Theme.panelBorderOuter, lineWidth: 0.5)
         )
     }
 

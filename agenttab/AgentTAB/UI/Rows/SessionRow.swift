@@ -18,10 +18,10 @@ struct SessionRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.projectName)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Theme.textStrong)
                 Text(session.currentTool ?? activityLabel)
                     .font(.system(size: 10))
-                    .foregroundStyle(Theme.textDim)
+                    .foregroundStyle(Theme.textMuted)
                     .lineLimit(1)
             }
 
@@ -34,14 +34,14 @@ struct SessionRow: View {
                             .font(.system(size: 10))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textDim)
+                    .foregroundStyle(Theme.textMuted)
 
                     Button(action: dismissSession) {
                         Image(systemName: "xmark")
                             .font(.system(size: 10))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textDim)
+                    .foregroundStyle(Theme.textMuted)
                 }
                 .transition(.opacity)
             }

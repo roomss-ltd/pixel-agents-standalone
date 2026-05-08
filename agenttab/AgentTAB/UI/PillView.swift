@@ -16,19 +16,18 @@ struct PillView: View {
             countsSlot
                 .padding(.trailing, 14)
         }
-        .frame(height: Theme.Layout.pillHeight)
+        .frame(height: Theme.Layout.pearlHeight)
         .background(
             NotchShape(notchWidth: geometry.notchWidth,
                        notchHeight: 0,    // pill drawn below notch, no top carve
-                       cornerRadius: Theme.Layout.notchCarveCornerRadius)
-                .fill(Theme.glassBG)
-                .background(.ultraThinMaterial)
+                       cornerRadius: Theme.Layout.expandedTopNotchCornerRadius)
+                .fill(Theme.panelBg)
         )
         .overlay(
             NotchShape(notchWidth: geometry.notchWidth,
                        notchHeight: 0,
-                       cornerRadius: Theme.Layout.notchCarveCornerRadius)
-                .stroke(Theme.borderOuter, lineWidth: 0.5)
+                       cornerRadius: Theme.Layout.expandedTopNotchCornerRadius)
+                .stroke(Theme.panelBorderOuter, lineWidth: 0.5)
         )
     }
 

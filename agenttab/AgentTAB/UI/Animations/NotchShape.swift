@@ -69,10 +69,10 @@ struct NotchShape: Shape {
 #Preview {
     VStack(spacing: 20) {
         NotchShape(notchWidth: 200, notchHeight: 32, cornerRadius: 10)
-            .fill(Theme.glassBG)
+            .fill(Theme.panelBg)
             .frame(width: 420, height: 100)
         NotchShape(notchWidth: 0, notchHeight: 0, cornerRadius: 10)
-            .fill(Theme.glassBG)
+            .fill(Theme.panelBg)
             .frame(width: 320, height: 50)
     }
     .padding(40)
