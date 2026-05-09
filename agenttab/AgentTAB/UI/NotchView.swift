@@ -4,18 +4,20 @@
 //
 //   compact ─hover────▶ expanded ─unhover (unpinned)─▶ compact
 //                       ─pin click─▶ stays expanded
-//                       ─click outside / Esc─▶ compact (unpins)
+//                       ─click outside / Esc / chevron─▶ compact
 //
-// `expanded` is the dynamic-height pinned panel showing every running agent.
-// We don't gate it behind an intermediate "hover preview" — the user wants
-// the whole picture as soon as they reach for the notch.
+// Hover detection is shape-bounded via `.contentShape(...)`: hover only
+// fires when the cursor is inside the actual visible black surface
+// (CompactBarShape or DropPanelShape), not the rectangular bounding box
+// the views occupy.
 //
-// Phase swaps animate as a scale-from-top: the expanded panel grows out of
-// the small notch silhouette rather than cross-fading.
+// `manualCollapse` is set when the user explicitly collapses (chevron /
+// Esc / click-outside). While set, the panel stays compact even if the
+// cursor is over its area — preventing immediate re-expansion. Cleared
+// the moment the cursor leaves the compact surface.
 //
-// `onSizeChange` reports the active rendered size so the host NSPanel can
-// size its live click-through region accordingly. Each phase view measures
-// its own intrinsic size and routes it through here.
+// `onSizeChange` reports the active rendered size so the host NSPanel
+// can size its live click-through region accordingly.
 
 import SwiftUI
 
@@ -25,6 +27,7 @@ struct NotchView: View {
 
     @State private var isHovered: Bool = false
     @State private var isPinned: Bool = false
+    @State private var manualCollapse: Bool = false
     @State private var compactSize: CGSize = CGSize(
         width: Theme.Layout.compactWidth,
         height: Theme.Layout.compactHeight
@@ -39,11 +42,18 @@ struct NotchView: View {
     enum Phase: Equatable { case compact, expanded }
 
     private var phase: Phase {
-        (isHovered || isPinned) ? .expanded : .compact
+        if manualCollapse { return .compact }
+        return (isHovered || isPinned) ? .expanded : .compact
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Ratio used for the morph animation — the expanded view's
+        // insertion scale starts at the COMPACT bar's actual size, so
+        // the morph reads as the bar growing into the panel rather than
+        // appearing from nowhere.
+        let morphRatio: CGFloat = max(compactSize.width / max(expandedSize.width, 1), 0.18)
+
+        return VStack(spacing: 0) {
             HStack {
                 Spacer()
                 ZStack(alignment: .top) {
@@ -56,28 +66,41 @@ struct NotchView: View {
                                 onSizeChange(size)
                             }
                         )
+                        // Grows from the compact bar's silhouette to its
+                        // full size, anchored at the top so the bottom
+                        // edge sweeps down. Pure scale on insertion so
+                        // it stays fully opaque — covers the compact
+                        // bar without alpha-blend artefacts.
                         .transition(
                             .asymmetric(
-                                // Grow out of the compact notch silhouette,
-                                // anchored to the top so the bottom edge falls
-                                // down rather than flying in from the middle.
-                                insertion: .scale(scale: 0.32, anchor: .top)
-                                    .combined(with: .opacity),
-                                removal: .scale(scale: 0.32, anchor: .top)
+                                insertion: .scale(scale: morphRatio, anchor: .top),
+                                removal: .scale(scale: morphRatio, anchor: .top)
                                     .combined(with: .opacity)
                             )
                         )
+                        .zIndex(1)
                     } else {
                         CompactNotchView(onSizeChange: { size in
                             compactSize = size
                             onSizeChange(size)
                         })
+                        // Compact stays at full size during a transition
+                        // out — only its alpha drops. The expanded view
+                        // (z-index 1) covers it as it grows, so the user
+                        // never sees the compact bar shrink "inward."
                         .transition(.opacity)
+                        .zIndex(0)
                     }
                 }
-                .background(HoverTracker(onHover: { hovering in
+                // Strictly shape-bounded hit area — hover fires only when
+                // the cursor is over the actual visible black surface,
+                // never over the transparent corner pixels of the
+                // bounding rect.
+                .contentShape(currentHitShape)
+                .onHover { hovering in
                     isHovered = hovering
-                }))
+                    if !hovering { manualCollapse = false }
+                }
                 Spacer()
             }
             // No top padding — each phase view extends ITS OWN black background
@@ -99,12 +122,27 @@ struct NotchView: View {
     private func collapse() {
         isPinned = false
         isHovered = false
+        // Suppress re-expansion until the cursor leaves the compact area
+        // — fixes the "click chevron, panel collapses then immediately
+        // re-opens because cursor is still over the compact surface".
+        manualCollapse = true
     }
 
     private func currentSize(for phase: Phase) -> CGSize {
         switch phase {
         case .compact:  return compactSize
         case .expanded: return expandedSize
+        }
+    }
+
+    /// Hit-test shape for the current phase — used by `.contentShape` so
+    /// `.onHover` only fires on the visible black surface.
+    private var currentHitShape: AnyShape {
+        switch phase {
+        case .compact:
+            return AnyShape(CompactBarShape(topRadius: 6, bottomRadius: 10))
+        case .expanded:
+            return AnyShape(DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius))
         }
     }
 }

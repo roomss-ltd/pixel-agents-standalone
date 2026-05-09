@@ -39,37 +39,41 @@ struct ExpandedView: View {
             // Pitch-black panel — extends UP into the notch zone so the panel
             // and the hardware notch read as one continuous shape. The shape
             // sizes to the VStack below it via `.background`.
-            VStack(spacing: 12) {
-                // 12pt below the menu bar so the hairline is fully visible
-                // end-to-end rather than tucked against the notch's bottom edge.
+            VStack(spacing: 0) {
+                // Header sits IN the notch zone (y = 0 → notchHeight),
+                // flanking the hardware notch left and right. Same
+                // vertical level as the compact bar — just laid out
+                // wider and slightly larger to fit the expanded panel.
+                notchLevelHeader
+                    .frame(height: geometry.notchHeight)
+
                 statusHairline
                     .padding(.horizontal, Theme.Layout.statusHairlineInset)
-                    .padding(.top, 12)
+                    .padding(.top, 4)
 
-                header
-                if showSettings {
-                    SettingsBody()
-                        .transition(.opacity)
-                } else {
-                    sections
-                        .transition(.opacity)
+                VStack(spacing: 12) {
+                    if showSettings {
+                        SettingsBody()
+                            .transition(.opacity)
+                    } else {
+                        sections
+                            .transition(.opacity)
+                    }
+                    footer
                 }
-                footer
+                .padding(.top, 8)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 14)
-            .padding(.top, geometry.notchHeight)
             .frame(width: Theme.Layout.expandedWidth, alignment: .top)
             .background(
                 DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius)
                     .fill(Color.black)
             )
             .clipShape(DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius))
-            // Soft drop shadow — small core, blurry halo. The two layers
-            // give the falloff that radius alone can't (one shadow keeps a
-            // hard ring; two stacked produce a feathered edge).
-            .shadow(color: .black.opacity(0.55), radius: 12, x: 0, y: 6)
-            .shadow(color: .black.opacity(0.30), radius: 32, x: 0, y: 18)
+            // Tight drop shadow — only a couple of pixels of falloff, just
+            // enough to lift the panel off the desktop without bleeding far.
+            .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
             .background(
                 GeometryReader { g in
                     Color.clear.preference(key: ExpandedSizeKey.self, value: g.size)
@@ -108,60 +112,46 @@ struct ExpandedView: View {
 
     // MARK: - Header
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            modeBox
-            TaskChip(id: headerChipId, accent: .blue, size: .sm)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("AgentTab")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Theme.textStrong)
+    /// Header that lives at the SAME y-level as the compact bar — i.e.
+    /// inside the notch zone (y = 0 → notchHeight). Counters sit on
+    /// the LEFT (flush against the notch's left side), the activity
+    /// glyph sits on the RIGHT (flush against the notch's right side),
+    /// mirroring compact mode but at expanded-panel scale.
+    private var notchLevelHeader: some View {
+        let notchWidth = max(geometry.notchWidth, 230)
+        return HStack(spacing: 0) {
+            // LEFT region: counters right-aligned (flush against notch).
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
                 HStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 9))
-                    Text(shellLabel)
-                        .font(.system(size: 11, design: .monospaced))
+                    if attentionCount > 0 { CountBadge(kind: .amber, count: attentionCount) }
+                    if inProgressCount > 0 { CountBadge(kind: .blue, count: inProgressCount) }
+                    CountBadge(kind: .green, count: doneCount)
                 }
-                .foregroundStyle(Theme.textDim)
+                .scaleEffect(1.15)
+                .padding(.trailing, 10)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 5) {
-                if attentionCount > 0 { CountBadge(kind: .amber, count: attentionCount) }
-                if inProgressCount > 0 { CountBadge(kind: .blue, count: inProgressCount) }
-                CountBadge(kind: .green, count: doneCount)
+            // Notch reserve — empty so the hardware notch sits in the gap.
+            Color.clear.frame(width: notchWidth)
+
+            // RIGHT region: glyph left-aligned (flush against notch).
+            HStack(spacing: 0) {
+                Group {
+                    switch mode {
+                    case .attention: AttnGlyph(size: 24)
+                    case .active:    RotatingLoader(size: 24, color: Theme.Neon.blue)
+                    case .idle:      CoffeeIdle(size: 24)
+                    }
+                }
+                .padding(.leading, 10)
+                Spacer(minLength: 0)
             }
         }
-    }
-
-    private var modeBox: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(0.025))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Theme.hairline, lineWidth: 0.5)
-                )
-
-            Group {
-                switch mode {
-                case .attention: AttnGlyph(size: 16)
-                case .active:    RotatingLoader(size: 16, color: Theme.Neon.blue)
-                case .idle:      CoffeeIdle(size: 16)
-                }
-            }
-        }
-        .frame(width: 32, height: 32)
     }
 
     private var headerChipId: String {
-        if let s = topActiveSession {
-            switch s.terminalKind {
-            case .zellij(let info): return "\(info.tabIndex)"
-            case .generic:          return String(s.claudeSessionId.suffix(2))
-            }
-        }
+        if let s = topActiveSession { return engine.displayLabel(for: s) }
         return "—"
     }
 
@@ -187,26 +177,33 @@ struct ExpandedView: View {
                     grid(of: attentionSessions, variant: .attention)
                 }
             }
-            if !restingSessions.isEmpty {
+            // Recently active — finished within the last hour. Mirrors
+            // Hammerspoon's `RECENTLY ACTIVE` row group: green tinted,
+            // always visible (not collapsed).
+            if !recentlyActiveSessions.isEmpty {
+                Section(label: "RECENTLY ACTIVE") {
+                    grid(of: recentlyActiveSessions, variant: .finished)
+                }
+            }
+            // Older finished — beyond an hour, or idle/init. Collapsible
+            // so the panel stays compact when there's a long history.
+            if !olderFinishedSessions.isEmpty {
                 Section(
-                    label: "OLDER · \(restingSessions.count)",
+                    label: "OLDER FINISHED · \(olderFinishedSessions.count)",
                     tint: .dim,
                     collapsible: true,
                     isOpen: $isOlderOpen
                 ) {
                     if isOlderOpen {
-                        // Cap the older grid height so a long list scrolls
-                        // rather than blowing the panel up. When closed the
-                        // section contributes zero height and the panel
-                        // collapses to header + active + footer.
                         ScrollView(showsIndicators: false) {
-                            grid(of: restingSessions) { variantForOlder($0) }
+                            grid(of: olderFinishedSessions) { variantForOlder($0) }
                         }
-                        .frame(maxHeight: 220)
+                        .frame(maxHeight: Theme.Layout.cardHeight * 3 + 12)
                     }
                 }
             }
-            if activeSessions.isEmpty && attentionSessions.isEmpty && restingSessions.isEmpty {
+            if activeSessions.isEmpty && attentionSessions.isEmpty
+                && recentlyActiveSessions.isEmpty && olderFinishedSessions.isEmpty {
                 emptyState
             }
         }
@@ -238,7 +235,7 @@ struct ExpandedView: View {
                     variant: variant(session),
                     isEdit: isEditMode,
                     onClick: { handleClick(session) },
-                    onUnlink: { /* hooked up in M5 denylist */ }
+                    onUnlink: { engine.hide(session) }
                 )
             }
         }
@@ -290,36 +287,69 @@ struct ExpandedView: View {
 
     private var inProgressCount: Int { activeSessions.count }
     private var attentionCount: Int { attentionSessions.count }
-    /// Green counter — only sessions that completed during this AgentTAB
-    /// run. Historical jsonl files surfaced as `.done` for the OLDER list
-    /// are excluded; otherwise every stale transcript would inflate the
-    /// counter even though nothing happened this run.
-    private var doneCount: Int {
-        engine.displaySessions.filter {
-            $0.activity == .done && !$0.isHistorical
-        }.count
-    }
+    /// Green counter — uses the engine's single source of truth so
+    /// compact and expanded views can never diverge.
+    private var doneCount: Int { engine.recentlyActiveDoneSessions().count }
 
     private var activeSessions: [Session] {
-        engine.displaySessions.filter {
-            switch $0.activity {
-            case .thinking, .tool: return true
-            default: return false
+        engine.displaySessions
+            .filter {
+                switch $0.activity {
+                case .thinking, .tool: return true
+                default: return false
+                }
             }
-        }
+            .sorted(by: ActivityEngine.byTabIndexAsc)
     }
 
     private var attentionSessions: [Session] {
-        engine.displaySessions.filter { $0.activity == .waiting }
+        engine.displaySessions
+            .filter { $0.activity == .waiting }
+            .sorted(by: ActivityEngine.byTabIndexAsc)
     }
 
+    /// Cutoff for the recently-active vs. older split. Lives on
+    /// `ActivityEngine` so the compact notch's green badge uses the
+    /// same threshold as this view.
+    private static var recentFinishedWindow: TimeInterval { ActivityEngine.recentFinishedWindow }
+
     private var restingSessions: [Session] {
-        engine.displaySessions.filter {
-            switch $0.activity {
-            case .done, .idle, .initState: return true
-            default: return false
+        engine.displaySessions
+            .filter {
+                switch $0.activity {
+                case .done, .idle, .initState: return true
+                default: return false
+                }
             }
-        }.sorted { $0.lastUpdate > $1.lastUpdate }
+            .sorted { $0.lastUpdate > $1.lastUpdate }
+    }
+
+    /// RECENTLY ACTIVE = only `.done` within the window. Idle / init
+    /// sessions are NEVER recent (idle by definition means they've been
+    /// quiet for a while, init means they just started — neither is a
+    /// "finished within the last hour" event).
+    private var recentlyActiveSessions: [Session] {
+        engine.recentlyActiveDoneSessions()
+    }
+
+    /// OLDER FINISHED = any `.done` or `.idle` session past the
+    /// recently-active window, plus `.initState` (starting-but-stalled).
+    /// Same finished-state predicate as RECENTLY ACTIVE; only the
+    /// elapsed-time check flips.
+    private var olderFinishedSessions: [Session] {
+        let now = Date()
+        return engine.displaySessions
+            .filter { s in
+                switch s.activity {
+                case .done, .idle:
+                    return now.timeIntervalSince(s.lastUpdate) > Self.recentFinishedWindow
+                case .initState:
+                    return true
+                default:
+                    return false
+                }
+            }
+            .sorted { $0.lastUpdate > $1.lastUpdate }
     }
 
     private var topActiveSession: Session? {
@@ -329,10 +359,47 @@ struct ExpandedView: View {
     private func handleClick(_ session: Session) {
         switch session.terminalKind {
         case .zellij(let info):
+            // Run via a LOGIN shell so the user's PATH (cargo / brew /
+            // /usr/local/bin / etc.) is loaded — a bare `/usr/bin/env
+            // zellij` from a GUI app's PATH usually can't find zellij.
+            let escapedSession = info.zellijSession
+                .replacingOccurrences(of: "'", with: "'\\''")
+            var cmd = "zellij"
+            if !info.zellijSession.isEmpty {
+                cmd += " -s '\(escapedSession)'"
+            }
+            cmd += " action go-to-tab \(info.tabIndex)"
+
             let task = Process()
-            task.launchPath = "/usr/bin/env"
-            task.arguments = ["zellij", "action", "focus-pane", "\(info.paneId)"]
-            try? task.run()
+            task.launchPath = "/bin/zsh"
+            task.arguments = ["-l", "-c", cmd]
+            do {
+                try task.run()
+            } catch {
+                print("[ExpandedView] zellij focus failed: \(error)")
+            }
+
+            // Bring whatever terminal is hosting zellij forward — find
+            // the first running app whose bundle id matches a known
+            // terminal so we don't have to guess the exact one.
+            let knownTerminals: Set<String> = [
+                "com.apple.Terminal",
+                "com.googlecode.iterm2",
+                "io.alacritty",
+                "net.kovidgoyal.kitty",
+                "com.mitchellh.ghostty",
+                "dev.warp.Warp-Stable",
+                "com.zeit.hyper",
+                "co.zeit.hyper",
+                "dev.zed.Zed",
+            ]
+            for app in NSWorkspace.shared.runningApplications {
+                if let bundleId = app.bundleIdentifier,
+                   knownTerminals.contains(bundleId) {
+                    app.activate(options: [.activateIgnoringOtherApps])
+                    break
+                }
+            }
         case .generic:
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.projectPath)])
         }

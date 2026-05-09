@@ -202,10 +202,7 @@ struct CompactNotchView: View {
         }.count
     }
 
-    /// Counter mirrors the expanded panel's green badge — only sessions
-    /// that completed in this run, NOT historical jsonl files surfaced as
-    /// `.done` for the OLDER list.
-    private var doneCount: Int {
-        sessions.filter { $0.activity == .done && !$0.isHistorical }.count
-    }
+    /// Counter uses the engine's single source of truth so compact and
+    /// expanded panels can never disagree.
+    private var doneCount: Int { engine.recentlyActiveDoneSessions().count }
 }

@@ -21,6 +21,7 @@ struct AgentRow: View {
 
     enum Variant { case active, attention, finished, resting }
 
+    @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
 
     var body: some View {
@@ -33,7 +34,7 @@ struct AgentRow: View {
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.projectName)
+                Text(engine.displayName(for: session))
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(textColor)
                     .lineLimit(1)
@@ -164,12 +165,7 @@ struct AgentRow: View {
         }
     }
 
-    private var chipId: String {
-        switch session.terminalKind {
-        case .zellij(let info): return "\(info.tabIndex)"
-        case .generic:          return String(session.claudeSessionId.suffix(2))
-        }
-    }
+    private var chipId: String { engine.displayLabel(for: session) }
 
     private var activityText: String {
         if let tool = session.currentTool, !tool.isEmpty {
@@ -185,10 +181,14 @@ struct AgentRow: View {
         }
     }
 
+    /// Compact relative-time formatting that mirrors the Hammerspoon
+    /// webview: `5s`, `44m ago`, `169h ago`.
     private func relativeTime(_ date: Date) -> String {
         let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "just now" }
+        let minutes = Int(interval / 60)
+        if minutes < 60 { return "\(minutes)m ago" }
         let hours = Int(interval / 3600)
-        if hours < 1 { return "just now" }
         return "\(hours)h ago"
     }
 }

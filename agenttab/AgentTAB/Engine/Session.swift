@@ -2,7 +2,10 @@ import Foundation
 
 struct Session: Identifiable, Equatable {
     let id: UUID
-    let claudeSessionId: String
+    /// Mutable so a Zellij-discovered session (initially keyed by
+    /// `zellij-pane-N`) can swap in a real `run_id` once the agent emits
+    /// one — keeps hooks, JSONL and zellij looking up the same Session.
+    var claudeSessionId: String
     let projectName: String
     let projectPath: String
     var activity: Activity

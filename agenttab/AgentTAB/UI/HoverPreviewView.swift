@@ -81,10 +81,10 @@ struct HoverPreviewView: View {
     private var bottomRow: some View {
         if let session = topSession {
             HStack(alignment: .center, spacing: 10) {
-                TaskChip(id: chipId(for: session), accent: chipAccent(for: session), size: .sm)
+                TaskChip(id: engine.displayLabel(for: session), accent: chipAccent(for: session), size: .sm)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(session.projectName)
+                    Text(engine.displayName(for: session))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.textStrong)
                         .lineLimit(1)
@@ -175,13 +175,6 @@ struct HoverPreviewView: View {
             return lhs.lastUpdate > rhs.lastUpdate
         }
         return sorted.first
-    }
-
-    private func chipId(for session: Session) -> String {
-        switch session.terminalKind {
-        case .zellij(let info): return "\(info.tabIndex)"
-        case .generic:          return String(session.claudeSessionId.suffix(2))
-        }
     }
 
     private func chipAccent(for session: Session) -> TaskChip.Accent {
