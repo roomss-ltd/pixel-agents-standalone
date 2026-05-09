@@ -86,7 +86,7 @@ final class ActivityEngine: ObservableObject {
     /// — anything finished within this many seconds counts as
     /// "recently active"; anything older falls into "OLDER FINISHED" and
     /// is excluded from the green badge.
-    static let recentFinishedWindow: TimeInterval = 3600   // 1 hour
+    static let recentFinishedWindow: TimeInterval = 3 * 3600   // 3 hours
 
     /// Tab-index sort key — ascending zellij `tab_num`, then `paneId` to
     /// keep collisions stable. Non-zellij sessions sort to the end.

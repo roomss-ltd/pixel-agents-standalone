@@ -47,11 +47,13 @@ struct NotchView: View {
     }
 
     var body: some View {
-        // Ratio used for the morph animation — the expanded view's
-        // insertion scale starts at the COMPACT bar's actual size, so
-        // the morph reads as the bar growing into the panel rather than
-        // appearing from nowhere.
-        let morphRatio: CGFloat = max(compactSize.width / max(expandedSize.width, 1), 0.18)
+        // The expanded view's insertion starts at the compact bar's
+        // EXACT size — non-uniform scale so width AND height match
+        // compactSize precisely. Combined with `.identity` on compact,
+        // the user sees one continuous bar growing into the panel
+        // rather than a second component appearing on top.
+        let xRatio: CGFloat = max(compactSize.width  / max(expandedSize.width,  1), 0.18)
+        let yRatio: CGFloat = max(compactSize.height / max(expandedSize.height, 1), 0.10)
 
         return VStack(spacing: 0) {
             HStack {
@@ -66,16 +68,13 @@ struct NotchView: View {
                                 onSizeChange(size)
                             }
                         )
-                        // Grows from the compact bar's silhouette to its
-                        // full size, anchored at the top so the bottom
-                        // edge sweeps down. Pure scale on insertion so
-                        // it stays fully opaque — covers the compact
-                        // bar without alpha-blend artefacts.
+                        // Non-uniform scale anchored at the top: at t=0
+                        // the panel renders at exactly compactSize and
+                        // grows from there to (expandedWidth, expandedHeight).
                         .transition(
-                            .asymmetric(
-                                insertion: .scale(scale: morphRatio, anchor: .top),
-                                removal: .scale(scale: morphRatio, anchor: .top)
-                                    .combined(with: .opacity)
+                            .modifier(
+                                active: ScaleToFitModifier(x: xRatio, y: yRatio, anchor: .top),
+                                identity: ScaleToFitModifier(x: 1, y: 1, anchor: .top)
                             )
                         )
                         .zIndex(1)
@@ -84,11 +83,11 @@ struct NotchView: View {
                             compactSize = size
                             onSizeChange(size)
                         })
-                        // Compact stays at full size during a transition
-                        // out — only its alpha drops. The expanded view
-                        // (z-index 1) covers it as it grows, so the user
-                        // never sees the compact bar shrink "inward."
-                        .transition(.opacity)
+                        // Compact swaps out instantly the moment phase
+                        // flips — the expanded view appears at the same
+                        // pixel size at t=0, so the user perceives a
+                        // single bar morphing rather than a fade.
+                        .transition(.identity)
                         .zIndex(0)
                     }
                 }
@@ -151,4 +150,18 @@ extension Notification.Name {
     /// Posted by NotchPanel when the user clicks outside the live region or
     /// presses Esc while the panel is up.
     static let agentTabRequestCollapse = Notification.Name("AgentTAB.RequestCollapse")
+}
+
+/// Custom transition modifier — non-uniform scaleEffect with anchor.
+/// Lets the expanded view enter at the compact bar's exact dimensions
+/// (so width AND height match), instead of a uniform `.scale` which
+/// would force the height to be (expandedHeight × widthRatio).
+private struct ScaleToFitModifier: ViewModifier {
+    var x: CGFloat
+    var y: CGFloat
+    var anchor: UnitPoint
+
+    func body(content: Content) -> some View {
+        content.scaleEffect(x: x, y: y, anchor: anchor)
+    }
 }
