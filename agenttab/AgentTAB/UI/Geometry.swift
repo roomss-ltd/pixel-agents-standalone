@@ -13,10 +13,22 @@ struct NotchGeometry {
                                  screenFrame: .zero)
         }
         let topInset = screen.safeAreaInsets.top
+        // macOS 12+ exposes the auxiliary menu-bar areas to the LEFT and RIGHT
+        // of the notch. The space between them IS the notch.
+        let auxLeft  = screen.auxiliaryTopLeftArea  ?? .zero
+        let auxRight = screen.auxiliaryTopRightArea ?? .zero
+        let measuredNotchWidth: CGFloat = {
+            if topInset <= 0 { return 0 }
+            if auxLeft.width > 0 && auxRight.width > 0 {
+                let w = screen.frame.width - auxLeft.width - auxRight.width
+                return max(w, 180)
+            }
+            return 220   // fallback for notched Macs where the API hasn't populated
+        }()
         return NotchGeometry(
             hasNotch: topInset > 0,
             notchHeight: topInset,
-            notchWidth: topInset > 0 ? 200 : 0,   // approximate; refine in M3
+            notchWidth: measuredNotchWidth,
             screenFrame: screen.frame
         )
     }

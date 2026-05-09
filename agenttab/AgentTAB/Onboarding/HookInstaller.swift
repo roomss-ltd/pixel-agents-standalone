@@ -51,14 +51,18 @@ enum HookInstaller {
         let installedNow = Date().timeIntervalSince1970
         var manifest: [String: [String]] = [:]
 
+        // Claude Code passes each hook command to `/bin/sh -c`, which word-splits
+        // on whitespace. The hook lives under `~/Library/Application Support/...`
+        // (a path with a space), so we must single-quote it before serialising.
+        let quotedCommand = "'\(hookScriptPath.path)'"
         for event in hookEvents {
             var existing = hooks[event] as? [[String: Any]] ?? []
             let cmd: [String: Any] = [
-                "hooks": [["type": "command", "command": hookScriptPath.path]]
+                "hooks": [["type": "command", "command": quotedCommand]]
             ]
             existing.append(cmd)
             hooks[event] = existing
-            manifest[event] = [hookScriptPath.path]
+            manifest[event] = [quotedCommand]
         }
         settings["hooks"] = hooks
 

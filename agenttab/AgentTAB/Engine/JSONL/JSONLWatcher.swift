@@ -8,10 +8,25 @@ final class JSONLWatcher {
     private var lineBuffers: [URL: String] = [:]
     private let queue = DispatchQueue(label: "agenttab.jsonl", qos: .utility)
 
-    let activeThresholdSeconds: TimeInterval = 30 * 60     // 30 min
+    /// Files newer than this get a live watcher so we see every appended
+    /// JSONL line in real time. Older but historical files are still
+    /// surfaced (without a watcher) so the OLDER list isn't empty.
+    let liveWatchThreshold: TimeInterval = 30 * 60          // 30 min
+
+    /// How far back we look for "older" sessions. Mirrors Hammerspoon's
+    /// behaviour — only sessions touched in the last day count as "recent".
+    let historicalThreshold: TimeInterval = 24 * 60 * 60        // 24 hours
+
+    /// Hard cap on the number of historical (non-live) sessions we surface.
+    /// Prevents a flood of stale jsonl files from blowing up the OLDER list.
+    let historicalCap: Int = 12
+
+    /// Backwards-compat alias for tests / older callers.
+    var activeThresholdSeconds: TimeInterval { liveWatchThreshold }
 
     var onLine: ((URL, String) -> Void)?
-    var onSessionDiscovered: ((URL, String) -> Void)?      // jsonlPath, projectHash
+    var onSessionDiscovered: ((URL, String, Date, Bool) -> Void)?
+    // jsonlPath, projectHash, mtime, isLive (true → being watched)
 
     init(projectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects")) {
@@ -56,18 +71,31 @@ final class JSONLWatcher {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: projectURL, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
 
-        for fileURL in files where fileURL.pathExtension == "jsonl" {
+        let candidates: [(URL, Date, TimeInterval)] = files
+            .filter { $0.pathExtension == "jsonl" }
+            .compactMap { url in
+                let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                let age = Date().timeIntervalSince(mtime)
+                guard age <= historicalThreshold else { return nil }
+                return (url, mtime, age)
+            }
+            .sorted { $0.1 > $1.1 }   // newest first
+
+        var historicalCount = 0
+        for (fileURL, mtime, age) in candidates {
             guard fileSources[fileURL] == nil else { continue }
 
-            // Skip stale files
-            let mtime = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?
-                .contentModificationDate ?? .distantPast
-            if Date().timeIntervalSince(mtime) > activeThresholdSeconds { continue }
-
-            // Pick up
             let projectHash = projectURL.lastPathComponent
-            onSessionDiscovered?(fileURL, projectHash)
-            startWatching(fileURL: fileURL)
+            let isLive = age <= liveWatchThreshold
+            if !isLive {
+                historicalCount += 1
+                if historicalCount > historicalCap { continue }
+            }
+            onSessionDiscovered?(fileURL, projectHash, mtime, isLive)
+            if isLive {
+                startWatching(fileURL: fileURL)
+            }
         }
     }
 

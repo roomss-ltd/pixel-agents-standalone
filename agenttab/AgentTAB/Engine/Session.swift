@@ -12,6 +12,12 @@ struct Session: Identifiable, Equatable {
     var subagentTools: [String: Set<String>]
     var lastUpdate: Date
     var terminalKind: TerminalKind
+    /// True when this session was surfaced from a stale jsonl file at
+    /// startup (not actively producing output in this run). Historical
+    /// sessions appear in the OLDER list but must NOT be counted in the
+    /// green "done" badge — that badge tracks completions that happened
+    /// while AgentTAB was running.
+    var isHistorical: Bool
 
     init(claudeSessionId: String, projectName: String, projectPath: String) {
         self.id = UUID()
@@ -25,6 +31,7 @@ struct Session: Identifiable, Equatable {
         self.subagentTools = [:]
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)
+        self.isHistorical = false
     }
 }
 

@@ -82,7 +82,11 @@ struct TranscriptParser {
         session.activeToolIds.removeAll()
         session.activeToolNames.removeAll()
         session.subagentTools.removeAll()
-        session.activity = .waiting
+        // The assistant's turn ended without an explicit permission request,
+        // so the session is `.done` — NOT `.waiting`. `.waiting` is reserved
+        // for the explicit `PermissionRequest` hook (the user's spec: an
+        // option-A/B/C prompt that needs ENTER to proceed).
+        session.activity = .done
         session.currentTool = nil
         session.lastUpdate = Date()
         return [.turnEnded]

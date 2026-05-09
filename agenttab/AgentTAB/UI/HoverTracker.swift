@@ -5,8 +5,8 @@ import SwiftUI
 /// SwiftUI wrapper over NSTrackingArea with debounced enter/exit.
 struct HoverTracker: NSViewRepresentable {
     let onHover: (Bool) -> Void
-    var enterDelay: TimeInterval = 0.12
-    var exitDelay: TimeInterval = 0.25
+    var enterDelay: TimeInterval = 0.06
+    var exitDelay: TimeInterval = 0.0
 
     func makeNSView(context: Context) -> NSView {
         let view = TrackingNSView()
@@ -26,8 +26,8 @@ struct HoverTracker: NSViewRepresentable {
 
 private final class TrackingNSView: NSView {
     var onHover: ((Bool) -> Void)?
-    var enterDelay: TimeInterval = 0.12
-    var exitDelay: TimeInterval = 0.25
+    var enterDelay: TimeInterval = 0.06
+    var exitDelay: TimeInterval = 0.0
 
     private var debounceTask: DispatchWorkItem?
 

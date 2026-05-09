@@ -20,8 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Build the panel first so we can capture it inside the SwiftUI callback below.
         let panel = NotchPanel(rootView: AnyView(EmptyView()))
         notchPanel = panel
-        let rootView = NotchView(onExpandedChange: { [weak panel] expanded in
-            panel?.isExpanded = expanded
+        let rootView = NotchView(onSizeChange: { [weak panel] size in
+            panel?.liveSize = size
         })
             .environment(\.notchGeometry, geometry)
             .environmentObject(engine)

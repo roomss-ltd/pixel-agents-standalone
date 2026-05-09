@@ -6,6 +6,25 @@ import SwiftUI
 final class ActivityEngine: ObservableObject {
     @Published private(set) var sessions: [Session] = []
 
+    /// True once the Zellij plugin has been detected on the system. While
+    /// active, the UI only counts/shows sessions matched to a real Zellij
+    /// pane — historical jsonl files that don't correspond to a live tab
+    /// are hidden so the OLDER list mirrors what Hammerspoon would show.
+    @Published private(set) var zellijDetected: Bool = false
+
+    /// View-facing session list. When the Zellij plugin is active AND has
+    /// successfully matched at least one session, we trust its view of the
+    /// world and only surface Zellij-tagged sessions. Until the first match
+    /// lands (or if Zellij isn't running) we show everything the JSONL
+    /// watcher has discovered — the watcher already caps historical files.
+    var displaySessions: [Session] {
+        guard zellijDetected else { return sessions }
+        let zellijOnly = sessions.filter {
+            if case .zellij = $0.terminalKind { return true } else { return false }
+        }
+        return zellijOnly.isEmpty ? sessions : zellijOnly
+    }
+
     private var sessionsByJsonlURL: [URL: UUID] = [:]
     private var sessionsByClaudeId: [String: UUID] = [:]
     private let parser = TranscriptParser()
@@ -30,8 +49,10 @@ final class ActivityEngine: ObservableObject {
     }
 
     func start() {
-        jsonlWatcher.onSessionDiscovered = { [weak self] url, projectHash in
-            Task { @MainActor in self?.discoverSession(jsonlURL: url, projectHash: projectHash) }
+        jsonlWatcher.onSessionDiscovered = { [weak self] url, projectHash, mtime, isLive in
+            Task { @MainActor in
+                self?.discoverSession(jsonlURL: url, projectHash: projectHash, mtime: mtime, isLive: isLive)
+            }
         }
         jsonlWatcher.onLine = { [weak self] url, line in
             Task { @MainActor in self?.applyLine(line, jsonlURL: url) }
@@ -54,6 +75,7 @@ final class ActivityEngine: ObservableObject {
 
         let probe = EnvironmentProbe.detect()
         if probe.pluginState == .producingStatusFiles {
+            zellijDetected = true
             zellijReader = ZellijStatusReader()
             zellijReader?.onUpdate = { [weak self] fileMap in
                 Task { @MainActor in self?.applyZellijStatus(fileMap) }
@@ -63,21 +85,29 @@ final class ActivityEngine: ObservableObject {
         }
     }
 
-    private func discoverSession(jsonlURL: URL, projectHash: String) {
+    private func discoverSession(jsonlURL: URL, projectHash: String, mtime: Date, isLive: Bool) {
         let claudeSessionId = jsonlURL.deletingPathExtension().lastPathComponent
         let projectName = SessionDiscovery.hashToProjectName(projectHash)
         let projectPath = "/" + projectHash.replacingOccurrences(of: "-", with: "/")
 
-        let session = Session(
+        var session = Session(
             claudeSessionId: claudeSessionId,
             projectName: projectName,
             projectPath: projectPath
         )
+        session.lastUpdate = mtime
+        if !isLive {
+            // Historical session — never going to be touched by the live
+            // parser. Mark it done so it shows up in the OLDER list with the
+            // green tint, and flag it so it's excluded from runtime tallies.
+            session.activity = .done
+            session.isHistorical = true
+        }
         sessions.append(session)
         sessionsByJsonlURL[jsonlURL] = session.id
         sessionsByClaudeId[claudeSessionId] = session.id
 
-        print("[Engine] New session: \(claudeSessionId) (\(projectName))")
+        print("[Engine] \(isLive ? "Live" : "Historical") session: \(claudeSessionId) (\(projectName))")
     }
 
     private func applyLine(_ line: String, jsonlURL: URL) {
@@ -99,18 +129,26 @@ final class ActivityEngine: ObservableObject {
         }
         sessions[index] = session
 
-        // Drive permission timer based on session state
-        let nonExemptTool = session.activeToolNames.values.contains {
-            !PermissionTimer.exemptTools.contains($0)
-        }
-        permissionTimer.start(for: session.claudeSessionId, hasNonExemptTool: nonExemptTool) { [weak self] in
-            Task { @MainActor in
-                guard let self = self,
-                      let idx = self.sessions.firstIndex(where: { $0.id == id }) else { return }
-                let oldActivity = self.sessions[idx].activity
-                self.sessions[idx].activity = .waiting
-                self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity)
+        // Drive permission timer ONLY when hooks aren't installed. With hooks
+        // installed, an explicit `PermissionRequest` event is the only thing
+        // that should mark a session as `.waiting` — the heuristic 5s timer
+        // mis-flags long-running tools (Bash/Edit/Write) as awaiting input.
+        if !HookInstaller.hooksInstalled {
+            let nonExemptTool = session.activeToolNames.values.contains {
+                !PermissionTimer.exemptTools.contains($0)
             }
+            permissionTimer.start(for: session.claudeSessionId, hasNonExemptTool: nonExemptTool) { [weak self] in
+                Task { @MainActor in
+                    guard let self = self,
+                          let idx = self.sessions.firstIndex(where: { $0.id == id }) else { return }
+                    let oldActivity = self.sessions[idx].activity
+                    self.sessions[idx].activity = .waiting
+                    self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity)
+                }
+            }
+        } else {
+            // Hooks are authoritative — make sure no stale timer is queued up.
+            permissionTimer.cancel(for: session.claudeSessionId)
         }
 
         if !events.isEmpty {
