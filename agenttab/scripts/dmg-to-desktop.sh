@@ -40,6 +40,17 @@ STAGE="$WORK_DIR/stage"
 BUILD_DIR="$WORK_DIR/build"
 APP_PATH="$BUILD_DIR/Build/Products/Release/AgentTAB.app"
 
+# ─── Ensure project exists (xcodegen generates it from project.yml) ─
+if [[ ! -d "$PROJECT" ]]; then
+    if ! command -v xcodegen >/dev/null 2>&1; then
+        echo "[dmg] ERROR: AgentTAB.xcodeproj is missing and 'xcodegen' is not installed." >&2
+        echo "       Install it via:  brew install xcodegen" >&2
+        exit 1
+    fi
+    echo "[dmg] Generating AgentTAB.xcodeproj from project.yml..."
+    (cd "$AGENTTAB_DIR" && xcodegen generate) >/dev/null
+fi
+
 # ─── Build ─────────────────────────────────────────────────────────
 echo "[dmg] Building AgentTAB ${VERSION} (Release)..."
 xcodebuild -project "$PROJECT" \

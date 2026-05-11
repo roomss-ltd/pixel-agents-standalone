@@ -45,8 +45,31 @@ TXT
     exit 1
 fi
 
+# The .xcodeproj is gitignored — it's generated from project.yml via
+# xcodegen. Regenerate on demand so a fresh clone Just Works.
 if [[ ! -d "$PROJECT" ]]; then
-    echo "[install] ERROR: project not found at $PROJECT" >&2
+    if [[ ! -f "$AGENTTAB_DIR/project.yml" ]]; then
+        echo "[install] ERROR: neither $PROJECT nor project.yml exists." >&2
+        exit 1
+    fi
+    if ! command -v xcodegen >/dev/null 2>&1; then
+        cat <<'TXT' >&2
+This repo uses XcodeGen to generate AgentTAB.xcodeproj from project.yml.
+
+Install XcodeGen first:
+    brew install xcodegen
+
+Then re-run:
+    make install
+TXT
+        exit 1
+    fi
+    echo "[install] Generating AgentTAB.xcodeproj from project.yml..."
+    (cd "$AGENTTAB_DIR" && xcodegen generate) >/dev/null
+fi
+
+if [[ ! -d "$PROJECT" ]]; then
+    echo "[install] ERROR: xcodegen ran but $PROJECT still missing." >&2
     exit 1
 fi
 
