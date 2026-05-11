@@ -19,10 +19,29 @@ private struct ExpandedSizeKey: PreferenceKey {
     }
 }
 
+private struct LeftIntrinsicKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct RightIntrinsicKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct ExpandedView: View {
     @EnvironmentObject var engine: ActivityEngine
     @Environment(\.notchGeometry) var geometry
 
+    /// `false` renders the compact-bar form (just the header sized to a
+    /// notch-bar). `true` renders the full panel. Both forms share the
+    /// same single SwiftUI view tree so the transition animates a frame
+    /// resize + content reveal — no separate views to cross-fade.
+    let isExpanded: Bool
     @Binding var isPinned: Bool
     var onCollapse: () -> Void = {}
 
@@ -34,19 +53,31 @@ struct ExpandedView: View {
     @State private var showSettings: Bool = false
     @State private var isEditMode: Bool = false
 
-    var body: some View {
-        ZStack(alignment: .top) {
-            // Pitch-black panel — extends UP into the notch zone so the panel
-            // and the hardware notch read as one continuous shape. The shape
-            // sizes to the VStack below it via `.background`.
-            VStack(spacing: 0) {
-                // Header sits IN the notch zone (y = 0 → notchHeight),
-                // flanking the hardware notch left and right. Same
-                // vertical level as the compact bar — just laid out
-                // wider and slightly larger to fit the expanded panel.
-                notchLevelHeader
-                    .frame(height: geometry.notchHeight)
+    /// Compact-form bar width. ~42pt wings host a single SLIM icon
+    /// centred per side with explicit outer-edge padding so the icon
+    /// sits clearly inside its allocated square (not flush against
+    /// the bar's rounded corner). Middle 220pt covers the hardware
+    /// notch.
+    private static let compactBarWidth: CGFloat = 304
 
+    var body: some View {
+        let edgeInset: CGFloat = isExpanded ? 10 : 6
+        let notchSpan: CGFloat = isExpanded
+            ? max(geometry.notchWidth, 230)
+            : max(geometry.notchWidth, 220)
+        let panelWidth: CGFloat = isExpanded
+            ? Theme.Layout.expandedWidth
+            : Self.compactBarWidth
+
+        VStack(spacing: 0) {
+            // Header — always present, lives in the notch zone.
+            notchLevelHeader(edgeInset: edgeInset, notchSpan: notchSpan)
+                .frame(height: max(geometry.notchHeight, Theme.Layout.compactHeight))
+
+            // Below the notch — only when expanded. Has its own
+            // .transition so the inner content fades / slides as the
+            // outer frame grows / shrinks.
+            if isExpanded {
                 statusHairline
                     .padding(.horizontal, Theme.Layout.statusHairlineInset)
                     .padding(.top, 4)
@@ -64,22 +95,25 @@ struct ExpandedView: View {
                 .padding(.top, 8)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .frame(width: Theme.Layout.expandedWidth, alignment: .top)
-            .background(
-                DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius)
-                    .fill(Color.black)
-            )
-            .clipShape(DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius))
-            // Tight drop shadow — only a couple of pixels of falloff, just
-            // enough to lift the panel off the desktop without bleeding far.
-            .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
-            .background(
-                GeometryReader { g in
-                    Color.clear.preference(key: ExpandedSizeKey.self, value: g.size)
-                }
-            )
         }
+        .frame(width: panelWidth, alignment: .top)
+        .background(
+            // Single shape for both phases — the bar morphs in size,
+            // not in shape. Compact-bar's outward-flaring top corners
+            // are subtle enough (6pt) to read fine at expanded scale.
+            CompactBarShape(topRadius: 6, bottomRadius: 10)
+                .fill(Color.black)
+        )
+        .clipShape(CompactBarShape(topRadius: 6, bottomRadius: 10))
+        .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(key: ExpandedSizeKey.self, value: g.size)
+            }
+        )
+        .animation(Theme.Animations.notch, value: isExpanded)
         .animation(Theme.Animations.notch, value: isOlderOpen)
         .animation(Theme.Animations.notch, value: showSettings)
         .onPreferenceChange(ExpandedSizeKey.self) { size in
@@ -112,41 +146,120 @@ struct ExpandedView: View {
 
     // MARK: - Header
 
-    /// Header that lives at the SAME y-level as the compact bar — i.e.
-    /// inside the notch zone (y = 0 → notchHeight). Counters sit on
-    /// the LEFT (flush against the notch's left side), the activity
-    /// glyph sits on the RIGHT (flush against the notch's right side),
-    /// mirroring compact mode but at expanded-panel scale.
-    private var notchLevelHeader: some View {
-        let notchWidth = max(geometry.notchWidth, 230)
+    /// Header at notch level. Compact and expanded forms share the
+    /// outer HStack, but the wing content differs:
+    ///   * compact  → single alternating counter centred on the left,
+    ///               glyph centred on the right (symmetric wings).
+    ///   * expanded → counters flushed against the notch's left edge,
+    ///               glyph flushed against its right edge (current
+    ///               expanded-panel layout untouched).
+    private func notchLevelHeader(edgeInset: CGFloat, notchSpan: CGFloat) -> some View {
+        let counterScale: CGFloat = isExpanded ? 1.15 : 1.0
+        let glyphSize: CGFloat = isExpanded ? 24 : 16
+
         return HStack(spacing: 0) {
-            // LEFT region: counters right-aligned (flush against notch).
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                HStack(spacing: 6) {
-                    if attentionCount > 0 { CountBadge(kind: .amber, count: attentionCount) }
-                    if inProgressCount > 0 { CountBadge(kind: .blue, count: inProgressCount) }
-                    CountBadge(kind: .green, count: doneCount)
+            if isExpanded {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    counterCluster(scale: counterScale)
+                        .padding(.trailing, edgeInset)
                 }
-                .scaleEffect(1.15)
-                .padding(.trailing, 10)
+            } else {
+                // Compact: outer-edge padding pushes the counter off
+                // the bar's rounded BL corner so it sits clearly inside
+                // its allocated square instead of hugging the curve.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    compactAlternatingCounter
+                        .padding(.leading, 8)
+                    Spacer(minLength: 0)
+                }
             }
 
-            // Notch reserve — empty so the hardware notch sits in the gap.
-            Color.clear.frame(width: notchWidth)
+            Color.clear.frame(width: notchSpan)
 
-            // RIGHT region: glyph left-aligned (flush against notch).
-            HStack(spacing: 0) {
-                Group {
-                    switch mode {
-                    case .attention: AttnGlyph(size: 24)
-                    case .active:    RotatingLoader(size: 24, color: Theme.Neon.blue)
-                    case .idle:      CoffeeIdle(size: 24)
+            if isExpanded {
+                HStack(spacing: 0) {
+                    glyphCluster(size: glyphSize)
+                        .padding(.leading, edgeInset)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                // Compact: outer-edge padding mirrors the counter's
+                // — pushes the glyph off the bar's rounded BR corner.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    glyphCluster(size: glyphSize)
+                        .padding(.trailing, 8)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    /// Compact-mode-only counter.
+    ///   * Both running and finished agents present → alternate every 4s.
+    ///   * Nothing running (all agents finished) → green-only, no swap.
+    ///   * Only running, nothing done → blue-only, no swap.
+    private var compactAlternatingCounter: some View {
+        Group {
+            if inProgressCount == 0 {
+                compactSlimBadge(color: Theme.Neon.green, count: doneCount)
+            } else if doneCount == 0 {
+                compactSlimBadge(color: Theme.Neon.blue, count: inProgressCount)
+            } else {
+                TimelineView(.periodic(from: .now, by: 4)) { context in
+                    let phase = Int(context.date.timeIntervalSince1970 / 4) % 2
+                    ZStack {
+                        if phase == 0 {
+                            compactSlimBadge(color: Theme.Neon.blue, count: inProgressCount)
+                                .transition(.opacity)
+                        } else {
+                            compactSlimBadge(color: Theme.Neon.green, count: doneCount)
+                                .transition(.opacity)
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.4), value: phase)
                 }
-                .padding(.leading, 10)
-                Spacer(minLength: 0)
             }
+        }
+    }
+
+    private func compactSlimBadge(color: Color, count: Int) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+                .shadow(color: color.opacity(0.7), radius: 1.2)
+            Text("\(count)")
+                .font(.system(size: 12.5, weight: .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(color.opacity(0.14)))
+        .overlay(Capsule().stroke(color.opacity(0.36), lineWidth: 0.5))
+    }
+
+    private func counterCluster(scale: CGFloat) -> some View {
+        HStack(spacing: 6) {
+            if attentionCount > 0 { CountBadge(kind: .amber, count: attentionCount) }
+            // Expanded view shows BOTH counters at all times so the user
+            // can see active + done states side by side; compact mode
+            // alternates between them via `compactAlternatingCounter`.
+            CountBadge(kind: .blue, count: inProgressCount)
+            CountBadge(kind: .green, count: doneCount)
+        }
+        .scaleEffect(scale)
+    }
+
+    @ViewBuilder
+    private func glyphCluster(size: CGFloat) -> some View {
+        switch mode {
+        case .attention: AttnGlyph(size: size)
+        case .active:    RotatingLoader(size: size, color: Theme.Neon.blue)
+        case .idle:      CoffeeIdle(size: size)
         }
     }
 
@@ -262,6 +375,7 @@ struct ExpandedView: View {
                 FootBtn(systemImage: "pencil", isOn: isEditMode) {
                     isEditMode.toggle()
                 }
+                appMenuButton
             }
             Spacer()
             HStack(spacing: 6) {
@@ -273,6 +387,61 @@ struct ExpandedView: View {
                 }
             }
         }
+    }
+
+    /// Footer "⋯" menu — quick access to app-level actions
+    /// (quit, uninstall, about).
+    private var appMenuButton: some View {
+        Menu {
+            Button("About AgentTAB") {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.orderFrontStandardAboutPanel(nil)
+            }
+            Divider()
+            Button("Uninstall…") { promptUninstall() }
+            Divider()
+            Button("Quit AgentTAB") { NSApp.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.white.opacity(0.025))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    /// Confirm + run the uninstaller. Removes hook scripts, clears
+    /// stored preferences, and quits — the user then drags
+    /// AgentTAB.app to the Trash to complete the uninstall.
+    private func promptUninstall() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall AgentTAB?"
+        alert.informativeText = "Removes Claude Code hook scripts and stored preferences. After this, drag AgentTAB.app to the Trash to finish uninstalling."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // Remove hook scripts if installed.
+        if HookInstaller.hooksInstalled {
+            try? HookInstaller.uninstall()
+        }
+        // Clear stored preferences for this bundle.
+        if let bundleId = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleId)
+        }
+        NSApp.terminate(nil)
     }
 
     // MARK: - Derivations
@@ -357,52 +526,7 @@ struct ExpandedView: View {
     }
 
     private func handleClick(_ session: Session) {
-        switch session.terminalKind {
-        case .zellij(let info):
-            // Run via a LOGIN shell so the user's PATH (cargo / brew /
-            // /usr/local/bin / etc.) is loaded — a bare `/usr/bin/env
-            // zellij` from a GUI app's PATH usually can't find zellij.
-            let escapedSession = info.zellijSession
-                .replacingOccurrences(of: "'", with: "'\\''")
-            var cmd = "zellij"
-            if !info.zellijSession.isEmpty {
-                cmd += " -s '\(escapedSession)'"
-            }
-            cmd += " action go-to-tab \(info.tabIndex)"
-
-            let task = Process()
-            task.launchPath = "/bin/zsh"
-            task.arguments = ["-l", "-c", cmd]
-            do {
-                try task.run()
-            } catch {
-                print("[ExpandedView] zellij focus failed: \(error)")
-            }
-
-            // Bring whatever terminal is hosting zellij forward — find
-            // the first running app whose bundle id matches a known
-            // terminal so we don't have to guess the exact one.
-            let knownTerminals: Set<String> = [
-                "com.apple.Terminal",
-                "com.googlecode.iterm2",
-                "io.alacritty",
-                "net.kovidgoyal.kitty",
-                "com.mitchellh.ghostty",
-                "dev.warp.Warp-Stable",
-                "com.zeit.hyper",
-                "co.zeit.hyper",
-                "dev.zed.Zed",
-            ]
-            for app in NSWorkspace.shared.runningApplications {
-                if let bundleId = app.bundleIdentifier,
-                   knownTerminals.contains(bundleId) {
-                    app.activate(options: [.activateIgnoringOtherApps])
-                    break
-                }
-            }
-        case .generic:
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.projectPath)])
-        }
+        engine.focus(session)
     }
 }
 

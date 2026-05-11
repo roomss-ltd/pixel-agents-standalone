@@ -10,14 +10,14 @@ import SwiftUI
 // MARK: - Variant catalog
 
 enum LoaderVariant: String, CaseIterable {
-    case dotSpinner   = "dot-spinner"
-    case quantum      = "quantum"
-    case cardio       = "cardio"
-    case trio         = "trio"
-    // Note: the React canvas defines 9 variants (grid, chaotic-orbit,
-    // hourglass, metronome, reuleaux). The four below cover the most
-    // visually distinct shapes and are enough to demonstrate rotation.
-    // Future work can port the rest line-by-line from `loaders.jsx`.
+    case dotSpinner    = "dot-spinner"
+    case quantum       = "quantum"
+    case cardio        = "cardio"
+    case trio          = "trio"
+    case chaoticOrbit  = "chaotic-orbit"
+    case grid          = "grid"
+    case reuleaux      = "reuleaux"
+    case change        = "change"
 }
 
 // MARK: - DotSpinner — 8 dots pulsing around a circle
@@ -111,6 +111,159 @@ struct TrioLoader: View {
     }
 }
 
+// MARK: - ChaoticOrbit — two dots orbiting in counter-phase
+
+struct ChaoticOrbitLoader: View {
+    var size: CGFloat = 18
+    var color: Color = Theme.Neon.blue
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let period: Double = 1.5
+            let p = (t / period).truncatingRemainder(dividingBy: 1)
+            // Whole disc slowly rotates while the two dots oscillate on
+            // a horizontal axis with phase-offset scaling.
+            let spin = (t * 360 / (period * 1.667)).truncatingRemainder(dividingBy: 360)
+            ZStack {
+                orbitingDot(phase: p)
+                orbitingDot(phase: (p + 0.5).truncatingRemainder(dividingBy: 1))
+            }
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(spin))
+        }
+    }
+
+    private func orbitingDot(phase p: Double) -> some View {
+        let cos2  = cos(p * 2 * .pi)
+        let sin2  = sin(p * 2 * .pi)
+        let x     = CGFloat(0.25 * cos2) * size
+        let scale = CGFloat(0.5 + 0.5 * sin2)
+        let alpha = 0.35 + 0.65 * max(0, 0.5 + 0.5 * sin2)
+        return Circle()
+            .fill(color)
+            .frame(width: size * 0.4, height: size * 0.4)
+            .scaleEffect(scale)
+            .opacity(alpha)
+            .offset(x: x)
+    }
+}
+
+// MARK: - Grid — 3×3 pulse cascade
+
+struct GridLoader: View {
+    var size: CGFloat = 18
+    var color: Color = Theme.Neon.blue
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let period: Double = 1.2
+            let dot = size * 0.22
+            let gap = size * 0.12
+
+            VStack(spacing: gap) {
+                ForEach(0..<3, id: \.self) { row in
+                    HStack(spacing: gap) {
+                        ForEach(0..<3, id: \.self) { col in
+                            let i = row * 3 + col
+                            let offset = Double(i) / 9.0
+                            let phase = ((t / period) + offset)
+                                .truncatingRemainder(dividingBy: 1)
+                            let s = phase < 0.5 ? phase * 2 : (1 - phase) * 2
+                            Circle()
+                                .fill(color)
+                                .frame(width: dot, height: dot)
+                                .scaleEffect(0.5 + 0.5 * s)
+                                .opacity(0.4 + 0.6 * s)
+                        }
+                    }
+                }
+            }
+            .frame(width: size, height: size)
+        }
+    }
+}
+
+// MARK: - Reuleaux — rotating equilateral curved triangle
+
+struct ReuleauxLoader: View {
+    var size: CGFloat = 18
+    var color: Color = Theme.Neon.blue
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let rotation = (t * 360 / 1.5).truncatingRemainder(dividingBy: 360)
+            ReuleauxShape()
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(rotation))
+        }
+    }
+}
+
+private struct ReuleauxShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let radius: CGFloat = min(rect.width, rect.height) / 2 * 0.92
+        let cx: CGFloat = rect.midX
+        let cy: CGFloat = rect.midY
+        var v: [CGPoint] = []
+        for i in 0..<3 {
+            let a: Double = Double(i) * 2.0 * .pi / 3.0 - .pi / 2.0
+            let x: CGFloat = cx + radius * CGFloat(cos(a))
+            let y: CGFloat = cy + radius * CGFloat(sin(a))
+            v.append(CGPoint(x: x, y: y))
+        }
+        var p = Path()
+        p.move(to: v[0])
+        for i in 0..<3 {
+            let center = v[(i + 2) % 3]
+            let start = v[i]
+            let end   = v[(i + 1) % 3]
+            let r = sqrt(pow(start.x - center.x, 2) + pow(start.y - center.y, 2))
+            let startAngle = atan2(start.y - center.y, start.x - center.x)
+            let endAngle   = atan2(end.y - center.y, end.x - center.x)
+            p.addArc(
+                center: center,
+                radius: r,
+                startAngle: .radians(startAngle),
+                endAngle: .radians(endAngle),
+                clockwise: false
+            )
+        }
+        return p
+    }
+}
+
+// MARK: - Change — two rounded squares spinning in opposite directions
+
+struct ChangeLoader: View {
+    var size: CGFloat = 18
+    var color: Color = Theme.Neon.blue
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let rotation = (t * 360 / 2.0).truncatingRemainder(dividingBy: 360)
+            ZStack {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .stroke(color, lineWidth: 1.5)
+                    .frame(width: size * 0.7, height: size * 0.7)
+                    .rotationEffect(.degrees(rotation))
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .stroke(color.opacity(0.65), lineWidth: 1.5)
+                    .frame(width: size * 0.7, height: size * 0.7)
+                    .rotationEffect(.degrees(-rotation + 45))
+            }
+            .frame(width: size, height: size)
+        }
+    }
+}
+
 // MARK: - Rotating loader — cycles variants every `intervalSeconds`
 
 struct RotatingLoader: View {
@@ -123,10 +276,14 @@ struct RotatingLoader: View {
     var body: some View {
         Group {
             switch LoaderVariant.allCases[index] {
-            case .dotSpinner: DotSpinnerLoader(size: size, color: color)
-            case .quantum:    QuantumLoader(size: size, color: color)
-            case .cardio:     CardioLoader(color: color, size: size)
-            case .trio:       TrioLoader(size: size, color: color)
+            case .dotSpinner:   DotSpinnerLoader(size: size, color: color)
+            case .quantum:      QuantumLoader(size: size, color: color)
+            case .cardio:       CardioLoader(color: color, size: size)
+            case .trio:         TrioLoader(size: size, color: color)
+            case .chaoticOrbit: ChaoticOrbitLoader(size: size, color: color)
+            case .grid:         GridLoader(size: size, color: color)
+            case .reuleaux:     ReuleauxLoader(size: size, color: color)
+            case .change:       ChangeLoader(size: size, color: color)
             }
         }
         .frame(width: size, height: size)

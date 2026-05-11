@@ -82,6 +82,61 @@ final class ActivityEngine: ObservableObject {
         return session.projectName
     }
 
+    /// Bring whichever terminal is hosting zellij to the foreground and
+    /// focus the right tab. Used by the expanded panel's agent-row click
+    /// and by toast notifications (tap to jump to that agent).
+    func focus(_ session: Session) {
+        switch session.terminalKind {
+        case .zellij(let info):
+            // 1. Bring the terminal app forward FIRST so the user sees
+            //    the tab swap happen, not just a flash later. Activating
+            //    after firing the zellij command races with zellij's
+            //    own redraw and is the most common reason the toast
+            //    redirect "sometimes" doesn't seem to do anything.
+            let knownTerminals: Set<String> = [
+                "com.apple.Terminal",
+                "com.googlecode.iterm2",
+                "io.alacritty",
+                "net.kovidgoyal.kitty",
+                "com.mitchellh.ghostty",
+                "dev.warp.Warp-Stable",
+                "com.zeit.hyper",
+                "co.zeit.hyper",
+                "dev.zed.Zed",
+            ]
+            for app in NSWorkspace.shared.runningApplications {
+                if let bundleId = app.bundleIdentifier,
+                   knownTerminals.contains(bundleId) {
+                    app.activate(options: [.activateIgnoringOtherApps])
+                    break
+                }
+            }
+
+            // 2. Run the zellij focus command through a login shell so
+            //    PATH (cargo / brew / etc.) is loaded.
+            let escapedSession = info.zellijSession
+                .replacingOccurrences(of: "'", with: "'\\''")
+            var cmd = "zellij"
+            if !info.zellijSession.isEmpty {
+                cmd += " -s '\(escapedSession)'"
+            }
+            cmd += " action go-to-tab \(info.tabIndex)"
+
+            let task = Process()
+            task.launchPath = "/bin/zsh"
+            task.arguments = ["-l", "-c", cmd]
+            do {
+                try task.run()
+            } catch {
+                print("[Engine] zellij focus failed: \(error)")
+            }
+        case .generic:
+            NSWorkspace.shared.activateFileViewerSelecting(
+                [URL(fileURLWithPath: session.projectPath)]
+            )
+        }
+    }
+
     /// Mirrors the Hammerspoon webview's `RECENT_FINISHED_WINDOW_SECONDS`
     /// — anything finished within this many seconds counts as
     /// "recently active"; anything older falls into "OLDER FINISHED" and
@@ -296,21 +351,36 @@ final class ActivityEngine: ObservableObject {
     }
 
     private func notifySessionStateChange(_ session: Session, oldActivity: Activity) {
+        // Tapping the toast jumps to whichever terminal tab the agent
+        // is running in. Same focus path the expanded panel uses.
+        let focusAction: () -> Void = { [weak self] in
+            guard let self else { return }
+            // Resolve the LATEST snapshot of this session — the cached
+            // copy in the closure can go stale before the user clicks.
+            if let live = self.sessions.first(where: { $0.id == session.id }) {
+                self.focus(live)
+            } else {
+                self.focus(session)
+            }
+        }
+
         if session.activity == .waiting && oldActivity != .waiting {
             let toast = Toast(
-                title: "Claude needs your input",
-                subtitle: session.projectName,
-                activity: .waiting
+                variant: .attention,
+                taskId: displayLabel(for: session),
+                projectName: displayName(for: session),
+                message: "Waiting for approval"
             )
-            toastPanel.show(toast, corner: toastCorner, duration: 8)
+            toastPanel.show(toast, duration: 5, onTap: focusAction)
             if soundsEnabled { soundPlayer.playWaiting() }
         } else if session.activity == .done && oldActivity != .done {
             let toast = Toast(
-                title: "Finished",
-                subtitle: session.projectName,
-                activity: .done
+                variant: .success,
+                taskId: displayLabel(for: session),
+                projectName: displayName(for: session),
+                message: "Finished successfully"
             )
-            toastPanel.show(toast, corner: toastCorner, duration: 4)
+            toastPanel.show(toast, duration: 5, onTap: focusAction)
             if soundsEnabled { soundPlayer.playDone() }
         }
     }

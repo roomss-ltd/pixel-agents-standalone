@@ -47,53 +47,32 @@ struct NotchView: View {
     }
 
     var body: some View {
-        // The expanded view's insertion starts at the compact bar's
-        // EXACT size — non-uniform scale so width AND height match
-        // compactSize precisely. Combined with `.identity` on compact,
-        // the user sees one continuous bar growing into the panel
-        // rather than a second component appearing on top.
-        let xRatio: CGFloat = max(compactSize.width  / max(expandedSize.width,  1), 0.18)
-        let yRatio: CGFloat = max(compactSize.height / max(expandedSize.height, 1), 0.10)
-
         return VStack(spacing: 0) {
             HStack {
                 Spacer()
-                ZStack(alignment: .top) {
-                    if phase == .expanded {
-                        ExpandedView(
-                            isPinned: $isPinned,
-                            onCollapse: collapse,
-                            onSizeChange: { size in
-                                expandedSize = size
-                                onSizeChange(size)
-                            }
-                        )
-                        // Non-uniform scale anchored at the top: at t=0
-                        // the panel renders at exactly compactSize and
-                        // grows from there to (expandedWidth, expandedHeight).
-                        .transition(
-                            .modifier(
-                                active: ScaleToFitModifier(x: xRatio, y: yRatio, anchor: .top),
-                                identity: ScaleToFitModifier(x: 1, y: 1, anchor: .top)
-                            )
-                        )
-                        .zIndex(1)
-                    } else {
-                        CompactNotchView(onSizeChange: { size in
+                // ONE view for both phases — ExpandedView is told whether
+                // to render the compact-bar form or the full panel via
+                // `isExpanded`. Inside, its frame animates between the
+                // two sizes and the section / hairline / footer content
+                // appears or disappears with their own transitions.
+                // No two stacked views, no fade-on-top — a single
+                // morphing component.
+                ExpandedView(
+                    isExpanded: phase == .expanded,
+                    isPinned: $isPinned,
+                    onCollapse: collapse,
+                    onSizeChange: { size in
+                        if phase == .expanded {
+                            expandedSize = size
+                        } else {
                             compactSize = size
-                            onSizeChange(size)
-                        })
-                        // Compact swaps out instantly the moment phase
-                        // flips — the expanded view appears at the same
-                        // pixel size at t=0, so the user perceives a
-                        // single bar morphing rather than a fade.
-                        .transition(.identity)
-                        .zIndex(0)
+                        }
+                        onSizeChange(size)
                     }
-                }
-                // Strictly shape-bounded hit area — hover fires only when
-                // the cursor is over the actual visible black surface,
-                // never over the transparent corner pixels of the
+                )
+                // Strictly shape-bounded hit area — hover fires only
+                // when the cursor is over the actual visible black
+                // surface, never the transparent corner pixels of the
                 // bounding rect.
                 .contentShape(currentHitShape)
                 .onHover { hovering in
@@ -102,8 +81,7 @@ struct NotchView: View {
                 }
                 Spacer()
             }
-            // No top padding — each phase view extends ITS OWN black background
-            // up by `notchHeight` so it merges with the hardware notch.
+            // No top padding — the panel extends UP into the notch zone.
             Spacer()
         }
         .animation(Theme.Animations.notch, value: phase)
@@ -124,7 +102,15 @@ struct NotchView: View {
         // Suppress re-expansion until the cursor leaves the compact area
         // — fixes the "click chevron, panel collapses then immediately
         // re-opens because cursor is still over the compact surface".
+        // Auto-clear after a short window so the flag never gets stuck
+        // (e.g. when the cursor exited via a region SwiftUI's onHover
+        // didn't fire on, leaving manualCollapse true and blocking the
+        // next hover-to-expand).
         manualCollapse = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            self.manualCollapse = false
+        }
     }
 
     private func currentSize(for phase: Phase) -> CGSize {
@@ -134,15 +120,10 @@ struct NotchView: View {
         }
     }
 
-    /// Hit-test shape for the current phase — used by `.contentShape` so
-    /// `.onHover` only fires on the visible black surface.
+    /// Hit-test shape — same shape for both phases since the unified
+    /// view uses one shape that just resizes.
     private var currentHitShape: AnyShape {
-        switch phase {
-        case .compact:
-            return AnyShape(CompactBarShape(topRadius: 6, bottomRadius: 10))
-        case .expanded:
-            return AnyShape(DropPanelShape(cornerRadius: Theme.Layout.expandedCornerRadius))
-        }
+        AnyShape(CompactBarShape(topRadius: 6, bottomRadius: 10))
     }
 }
 
