@@ -13,6 +13,11 @@ import SwiftUI
 
 struct ToastView: View {
     let toast: Toast
+    /// True while the user has explicitly engaged with the toast via
+    /// ⌥+TAB. In that state we render brighter accents, scale up
+    /// slightly, and swap the subline to a keyboard-hint string so the
+    /// user knows TAB will redirect and ESC will dismiss.
+    var isEngaged: Bool = false
     var onClose: () -> Void = {}
     var onTap:   () -> Void = {}
 
@@ -58,7 +63,9 @@ struct ToastView: View {
             closeButton.padding(.trailing, 12)
         }
         .shadow(color: .black.opacity(0.5), radius: 12, x: 0, y: 6)
-        .shadow(color: glowColor, radius: 24)
+        .shadow(color: glowColor, radius: isEngaged ? 36 : 24)
+        .scaleEffect(isEngaged ? 1.03 : 1.0)
+        .animation(.easeOut(duration: 0.18), value: isEngaged)
     }
 
     // MARK: - Animated border
@@ -131,7 +138,10 @@ struct ToastView: View {
     }
 
     private var subline: String {
-        "\(toast.taskId) · \(toast.projectName) · \(toast.message)"
+        if isEngaged {
+            return "↵ TAB to open · ESC to dismiss"
+        }
+        return "\(toast.taskId) · \(toast.projectName) · \(toast.message)"
     }
 
     private var chipAccent: TaskChip.Accent {
@@ -142,16 +152,20 @@ struct ToastView: View {
     }
 
     private var edgeColor: Color {
+        let base: Color
         switch toast.variant {
-        case .attention: return Theme.Neon.amber.opacity(0.85)
-        case .success:   return Theme.Neon.green.opacity(0.85)
+        case .attention: base = Theme.Neon.amber
+        case .success:   base = Theme.Neon.green
         }
+        return base.opacity(isEngaged ? 1.0 : 0.85)
     }
 
     private var glowColor: Color {
+        let base: Color
         switch toast.variant {
-        case .attention: return Theme.Neon.amber.opacity(0.18)
-        case .success:   return Theme.Neon.green.opacity(0.20)
+        case .attention: base = Theme.Neon.amber
+        case .success:   base = Theme.Neon.green
         }
+        return base.opacity(isEngaged ? 0.45 : 0.20)
     }
 }

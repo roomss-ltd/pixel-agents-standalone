@@ -33,13 +33,49 @@ final class ToastPanel: NSPanel {
 
     private var autoDismissTask: DispatchWorkItem?
 
-    /// Global keyDown monitor that fires the toast's onTap action when
-    /// the user presses TAB while the toast is visible. Lives only for
-    /// the duration of one toast; recreated on every `show(_:)`.
-    private var tabKeyMonitor: Any?
+    // MARK: - Engagement state machine
+    //
+    // The toast is normally passive — clicks redirect, the X dismisses,
+    // the auto-dismiss timer fires after `duration`. A bare TAB binding
+    // is too aggressive (TAB has meaning in every text-input app), so
+    // we use a two-step flow:
+    //
+    //   1. Toast appears. Keyboard does nothing.
+    //   2. User presses ⌥+TAB. Toast "engages" — visual highlight,
+    //      4-second engagement window starts.
+    //   3. Within that window:
+    //        TAB → redirect + dismiss
+    //        ESC → dismiss without redirect
+    //        anything else → disengage (no action)
+    //
+    // This way TAB never collides with the focused app; the user has
+    // to deliberately opt in via the modifier first.
 
-    /// Tab keycode on macOS. Matches `event.keyCode`.
+    /// True while the toast is in the "engaged" state. Drives visual
+    /// highlight and the local keyboard handlers.
+    private var isEngaged: Bool = false
+
+    /// Always-on while the toast is visible. Listens for the engagement
+    /// hotkey (⌥+TAB).
+    private var engagementHotkeyMonitor: Any?
+
+    /// Only active while engaged. Listens for TAB / ESC / other.
+    private var engagedKeyMonitor: Any?
+
+    /// Auto-disengage if the user doesn't press TAB/ESC within this
+    /// many seconds of engaging.
+    private static let engagementTimeout: TimeInterval = 4
+    private var disengageTimeout: DispatchWorkItem?
+
+    /// Cached for re-rendering on engagement state change and for the
+    /// hotkey monitors that need to call the same action as a click.
+    private var currentToast: Toast?
+    private var currentOnTap: (() -> Void)?
+
+    // Keycodes.
     private static let tabKeyCode: UInt16 = 48
+    private static let escKeyCode: UInt16 = 53
+    private static let engagementMods: NSEvent.ModifierFlags = [.option]
 
     init() {
         super.init(
@@ -60,26 +96,18 @@ final class ToastPanel: NSPanel {
     }
 
     deinit {
-        if let m = tabKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = engagementHotkeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = engagedKeyMonitor { NSEvent.removeMonitor(m) }
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     func show(_ toast: Toast, duration: TimeInterval, onTap: @escaping () -> Void = {}) {
-        // Recreate the hosting view so the X / tap closures capture
-        // the current panel instance.
-        let view = ToastView(
-            toast: toast,
-            onClose: { [weak self] in self?.dismiss() },
-            onTap:   { [weak self] in
-                onTap()
-                self?.dismiss()
-            }
-        )
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(origin: .zero, size: Self.toastSize)
-        self.contentView = host
+        self.currentToast = toast
+        self.currentOnTap = onTap
+        self.isEngaged = false
+        installContent()
         self.setContentSize(Self.toastSize)
         anchorTopRight()
         orderFront(nil)
@@ -89,44 +117,131 @@ final class ToastPanel: NSPanel {
         autoDismissTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: task)
 
-        // While the toast is visible, an unmodified TAB triggers the
-        // same redirect as clicking the toast. `addGlobalMonitorForEvents`
-        // for keyDown requires Input Monitoring permission; if the user
-        // hasn't granted it the callback simply never fires and the
-        // click path is the only way to redirect. We don't suppress the
-        // event — the focused app still receives the TAB — but the
-        // collision window is small (5s per toast) and the user
-        // explicitly opted into this binding.
-        installTabKeyMonitor(onTap: onTap)
+        installEngagementHotkeyMonitor()
+        AgentLog.notify.info("toast shown taskId=\(toast.taskId, privacy: .public)")
     }
 
     private func dismiss() {
         autoDismissTask?.cancel()
         autoDismissTask = nil
-        removeTabKeyMonitor()
+        removeEngagementHotkeyMonitor()
+        disengage()
         orderOut(nil)
+        currentToast = nil
+        currentOnTap = nil
     }
 
-    private func installTabKeyMonitor(onTap: @escaping () -> Void) {
-        removeTabKeyMonitor()
-        tabKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard event.keyCode == Self.tabKeyCode else { return }
-            // Ignore Shift-Tab, ⌥-Tab, ⌃-Tab etc. — only bare TAB.
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard mods.isEmpty else { return }
+    /// Re-render the hosted ToastView with current `isEngaged` state.
+    /// Called on show and on every engage / disengage transition so the
+    /// visual highlight and subline reflect reality.
+    private func installContent() {
+        guard let toast = currentToast, let onTap = currentOnTap else { return }
+        let view = ToastView(
+            toast: toast,
+            isEngaged: isEngaged,
+            onClose: { [weak self] in self?.dismiss() },
+            onTap:   { [weak self] in
+                onTap()
+                self?.dismiss()
+            }
+        )
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(origin: .zero, size: Self.toastSize)
+        self.contentView = host
+    }
+
+    // MARK: - Engagement
+
+    private func installEngagementHotkeyMonitor() {
+        removeEngagementHotkeyMonitor()
+        engagementHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                AgentLog.notify.info("toast redirect via TAB")
-                onTap()
-                self.dismiss()
+                guard event.keyCode == Self.tabKeyCode else { return }
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                guard mods == Self.engagementMods else { return }
+                self.engage()
             }
         }
     }
 
-    private func removeTabKeyMonitor() {
-        if let m = tabKeyMonitor {
+    private func removeEngagementHotkeyMonitor() {
+        if let m = engagementHotkeyMonitor {
             NSEvent.removeMonitor(m)
-            tabKeyMonitor = nil
+            engagementHotkeyMonitor = nil
+        }
+    }
+
+    private func engage() {
+        // Pressing ⌥+TAB again while already engaged is a confirm —
+        // fire the redirect immediately. Saves the user a second keypress
+        // for "I really mean it."
+        if isEngaged {
+            triggerRedirect()
+            return
+        }
+        isEngaged = true
+        installContent()
+        installEngagedKeyMonitor()
+        scheduleAutoDisengage()
+        AgentLog.notify.info("toast engaged")
+    }
+
+    private func disengage() {
+        guard isEngaged else { return }
+        isEngaged = false
+        disengageTimeout?.cancel()
+        disengageTimeout = nil
+        removeEngagedKeyMonitor()
+        // Re-render so the subline returns to project · message and the
+        // border highlight relaxes. Only if the toast hasn't been
+        // dismissed already.
+        if currentToast != nil {
+            installContent()
+        }
+        AgentLog.notify.info("toast disengaged")
+    }
+
+    private func scheduleAutoDisengage() {
+        disengageTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.disengage() }
+        disengageTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.engagementTimeout, execute: work)
+    }
+
+    private func triggerRedirect() {
+        AgentLog.notify.info("toast redirect via engaged TAB")
+        currentOnTap?()
+        dismiss()
+    }
+
+    private func installEngagedKeyMonitor() {
+        removeEngagedKeyMonitor()
+        engagedKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self, self.isEngaged else { return }
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                switch event.keyCode {
+                case Self.tabKeyCode where mods.isEmpty:
+                    self.triggerRedirect()
+                case Self.escKeyCode where mods.isEmpty:
+                    AgentLog.notify.info("toast dismissed via engaged ESC")
+                    self.dismiss()
+                default:
+                    // Any other key — including a modified TAB — exits
+                    // the engaged state without firing the redirect, so
+                    // the user can keep typing in their app without
+                    // accidentally triggering it.
+                    self.disengage()
+                }
+            }
+        }
+    }
+
+    private func removeEngagedKeyMonitor() {
+        if let m = engagedKeyMonitor {
+            NSEvent.removeMonitor(m)
+            engagedKeyMonitor = nil
         }
     }
 

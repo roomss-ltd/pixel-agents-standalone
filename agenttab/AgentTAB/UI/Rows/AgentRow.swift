@@ -129,27 +129,38 @@ struct AgentRow: View {
         .opacity(hasWorktreePath ? 1.0 : 0.45)
     }
 
+    /// SwiftUI `Button` inside a nonactivating `NSPanel` sometimes fails
+     /// to fire its action — the panel never becomes key, so the
+     /// button's internal recognizer can swallow the press without
+     /// calling through. A `highPriorityGesture(TapGesture())` on a
+     /// styled `Image` is reliable in this context: it captures the
+     /// tap before the row's `.onTapGesture` bubbles, and it doesn't
+     /// require the host window to be key.
     private func actionButton(
         systemName: String,
         tooltip: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 18, height: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                )
-                .foregroundStyle(Theme.textStrong.opacity(0.85))
-        }
-        .buttonStyle(.plain)
-        .help(tooltip)
+        Image(systemName: systemName)
+            .font(.system(size: 10, weight: .semibold))
+            .frame(width: 18, height: 18)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+            )
+            .foregroundStyle(Theme.textStrong.opacity(0.85))
+            .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .help(tooltip)
+            .highPriorityGesture(
+                TapGesture().onEnded {
+                    AgentLog.panel.info("row action tap glyph=\(systemName, privacy: .public)")
+                    action()
+                }
+            )
     }
 
     // MARK: - Subviews
