@@ -26,11 +26,17 @@ struct AgentRow: View {
     @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
 
-    /// Show the hover action cluster when the cursor is over the row,
-    /// edit mode is off, and we actually have a resolvable worktree
-    /// path. Otherwise fall back to the status icon.
+    /// Show the hover action cluster whenever the cursor is over the
+    /// row and edit mode is off. Buttons are visually dimmed (and
+    /// no-op with a log line) when there's no resolvable path, so the
+    /// affordance is always discoverable even for Zellij-only sessions
+    /// that were never matched to a JSONL file.
     private var showsHoverActions: Bool {
-        isHovered && !isEdit && engine.worktreePath(for: session) != nil
+        isHovered && !isEdit
+    }
+
+    private var hasWorktreePath: Bool {
+        engine.worktreePath(for: session) != nil
     }
 
     var body: some View {
@@ -87,6 +93,9 @@ struct AgentRow: View {
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering
             }
+            if hovering {
+                AgentLog.panel.debug("row hover session=\(session.claudeSessionId, privacy: .public) hasPath=\(hasWorktreePath)")
+            }
         }
         .onTapGesture {
             if isEdit {
@@ -104,18 +113,20 @@ struct AgentRow: View {
     /// bubbling to the row's onTapGesture), so the body-tap → terminal
     /// behaviour is preserved everywhere outside these glyphs.
     private var hoverActions: some View {
-        HStack(spacing: 4) {
+        let pathTip = hasWorktreePath ? "" : " (no path resolved)"
+        return HStack(spacing: 4) {
             actionButton(
                 systemName: "folder.fill",
-                tooltip: "Reveal in Finder",
+                tooltip: "Reveal in Finder" + pathTip,
                 action: onOpenFolder
             )
             actionButton(
                 systemName: "chevron.left.forwardslash.chevron.right",
-                tooltip: "Open in Cursor / VS Code",
+                tooltip: "Open in Cursor / VS Code" + pathTip,
                 action: onOpenEditor
             )
         }
+        .opacity(hasWorktreePath ? 1.0 : 0.45)
     }
 
     private func actionButton(
