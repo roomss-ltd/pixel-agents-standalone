@@ -33,6 +33,14 @@ final class ToastPanel: NSPanel {
 
     private var autoDismissTask: DispatchWorkItem?
 
+    /// Global keyDown monitor that fires the toast's onTap action when
+    /// the user presses TAB while the toast is visible. Lives only for
+    /// the duration of one toast; recreated on every `show(_:)`.
+    private var tabKeyMonitor: Any?
+
+    /// Tab keycode on macOS. Matches `event.keyCode`.
+    private static let tabKeyCode: UInt16 = 48
+
     init() {
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.toastSize),
@@ -49,6 +57,10 @@ final class ToastPanel: NSPanel {
         // Accept clicks so the X button works. Mouse over transparent
         // edges is harmless because the panel is exactly content-sized.
         self.ignoresMouseEvents = false
+    }
+
+    deinit {
+        if let m = tabKeyMonitor { NSEvent.removeMonitor(m) }
     }
 
     override var canBecomeKey: Bool { false }
@@ -76,12 +88,46 @@ final class ToastPanel: NSPanel {
         let task = DispatchWorkItem { [weak self] in self?.dismiss() }
         autoDismissTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: task)
+
+        // While the toast is visible, an unmodified TAB triggers the
+        // same redirect as clicking the toast. `addGlobalMonitorForEvents`
+        // for keyDown requires Input Monitoring permission; if the user
+        // hasn't granted it the callback simply never fires and the
+        // click path is the only way to redirect. We don't suppress the
+        // event — the focused app still receives the TAB — but the
+        // collision window is small (5s per toast) and the user
+        // explicitly opted into this binding.
+        installTabKeyMonitor(onTap: onTap)
     }
 
     private func dismiss() {
         autoDismissTask?.cancel()
         autoDismissTask = nil
+        removeTabKeyMonitor()
         orderOut(nil)
+    }
+
+    private func installTabKeyMonitor(onTap: @escaping () -> Void) {
+        removeTabKeyMonitor()
+        tabKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard event.keyCode == Self.tabKeyCode else { return }
+            // Ignore Shift-Tab, ⌥-Tab, ⌃-Tab etc. — only bare TAB.
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard mods.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                AgentLog.notify.info("toast redirect via TAB")
+                onTap()
+                self.dismiss()
+            }
+        }
+    }
+
+    private func removeTabKeyMonitor() {
+        if let m = tabKeyMonitor {
+            NSEvent.removeMonitor(m)
+            tabKeyMonitor = nil
+        }
     }
 
     private func anchorTopRight() {
