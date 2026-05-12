@@ -422,9 +422,12 @@ final class ActivityEngine: ObservableObject {
         }
 
         // Tapping the toast jumps to whichever terminal tab the agent
-        // is running in. Same focus path the expanded panel uses.
+        // is running in, and (Phase 2.7) requests the auto-hidden notch
+        // peek so the user sees that the bar is still there when the
+        // toast leads them somewhere.
         let focusAction: () -> Void = { [weak self] in
             guard let self else { return }
+            NotificationCenter.default.post(name: .agentTabRequestPeek, object: nil)
             // Resolve the LATEST snapshot of this session — the cached
             // copy in the closure can go stale before the user clicks.
             if let live = self.sessions.first(where: { $0.id == session.id }) {

@@ -131,6 +131,11 @@ extension Notification.Name {
     /// Posted by NotchPanel when the user clicks outside the live region or
     /// presses Esc while the panel is up.
     static let agentTabRequestCollapse = Notification.Name("AgentTAB.RequestCollapse")
+
+    /// Posted when something (typically a toast tap) wants the
+    /// auto-hidden notch to briefly slide down so the user sees
+    /// what they're being navigated to.
+    static let agentTabRequestPeek = Notification.Name("AgentTAB.RequestPeek")
 }
 
 /// Custom transition modifier — non-uniform scaleEffect with anchor.

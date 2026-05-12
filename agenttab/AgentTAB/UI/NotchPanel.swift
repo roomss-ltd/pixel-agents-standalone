@@ -27,6 +27,34 @@ final class NotchPanel: NSPanel {
     private var mouseMonitor: Any?
     private var globalClickMonitor: Any?
     private var localKeyMonitor: Any?
+    private var edgeHoverMonitor: Any?
+    private var hotkeyMonitor: Any?
+
+    // MARK: - Visibility (Phase 2)
+
+    enum Visibility { case visible, hidden, peeking }
+
+    private(set) var visibility: Visibility = .visible
+
+    /// The Y origin the panel sits at while .visible. We cache it on each
+    /// reposition() so the slide animation can return to the right spot
+    /// even if the active screen changed while hidden.
+    private var visibleY: CGFloat = 0
+    private var currentScreen: NSScreen?
+
+    /// Cursor at top-edge of the active screen for this long → peek.
+    private static let edgeHoldSeconds: TimeInterval = 0.25
+    /// How long peek stays before re-hiding after the cursor leaves.
+    private static let peekHoldAfterLeave: TimeInterval = 3
+    /// Hotkey peek duration.
+    private static let peekHoldHotkey: TimeInterval = 5
+
+    private var edgeHoldStarted: Date?
+    private var pendingRehide: DispatchWorkItem?
+
+    /// ⌃⌥A → 0x00 (A keyCode) with .control + .option modifiers.
+    private static let hotkeyKeyCode: UInt16 = 0x00
+    private static let hotkeyMods: NSEvent.ModifierFlags = [.control, .option]
 
     init(rootView: AnyView) {
         super.init(
@@ -64,12 +92,34 @@ final class NotchPanel: NSPanel {
         startMouseMonitor()
         startGlobalClickMonitor()
         startEscMonitor()
+        startPeekRequestObserver()
+    }
+
+    private var peekObserver: NSObjectProtocol?
+
+    private func startPeekRequestObserver() {
+        peekObserver = NotificationCenter.default.addObserver(
+            forName: .agentTabRequestPeek,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.visibility != .visible {
+                    self.peek(duration: NotchPanel.peekHoldHotkey)
+                }
+            }
+        }
     }
 
     deinit {
         if let m = mouseMonitor { NSEvent.removeMonitor(m) }
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
         if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = edgeHoverMonitor { NSEvent.removeMonitor(m) }
+        if let m = hotkeyMonitor { NSEvent.removeMonitor(m) }
+        if let o = peekObserver { NotificationCenter.default.removeObserver(o) }
+        pendingRehide?.cancel()
     }
 
     override var canBecomeKey: Bool { false }
@@ -96,12 +146,143 @@ final class NotchPanel: NSPanel {
         let x = screenFrame.midX - panelWidth / 2
         let y = screenFrame.maxY - panelHeight
 
-        self.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight),
+        currentScreen = screen
+        visibleY = y
+
+        // If we're currently hidden / peeking on the new screen, keep
+        // that state — repositioning shouldn't force-reveal the panel.
+        let targetY: CGFloat
+        switch visibility {
+        case .visible, .peeking:
+            targetY = y
+        case .hidden:
+            targetY = y + panelHeight + 8
+        }
+
+        self.setFrame(NSRect(x: x, y: targetY, width: panelWidth, height: panelHeight),
                       display: true, animate: false)
 
         UserDefaults.standard.set(Double(topInset), forKey: "AgentTAB.lastNotchInset")
         updateClickability(force: true)
-        AgentLog.panel.info("anchored to screen=\(screen.localizedName, privacy: .public) hasNotch=\(topInset > 0)")
+        AgentLog.panel.info("anchored to screen=\(screen.localizedName, privacy: .public) hasNotch=\(topInset > 0) visibility=\(String(describing: self.visibility), privacy: .public)")
+    }
+
+    // MARK: - Auto-hide / peek (Phase 2)
+
+    /// External-display fullscreen requested the panel to disappear.
+    func autoHide() {
+        guard visibility != .hidden else { return }
+        animateTo(visible: false)
+        visibility = .hidden
+        installEdgeHoverMonitor()
+        installHotkeyMonitor()
+        AgentLog.panel.info("autoHide")
+    }
+
+    /// Conditions for auto-hide no longer apply (left fullscreen, moved
+    /// to built-in display, etc.) — fully restore.
+    func autoShow() {
+        guard visibility != .visible else { return }
+        pendingRehide?.cancel()
+        pendingRehide = nil
+        removeEdgeHoverMonitor()
+        removeHotkeyMonitor()
+        animateTo(visible: true)
+        visibility = .visible
+        AgentLog.panel.info("autoShow")
+    }
+
+    /// Slide the panel down briefly while still in auto-hide mode.
+    /// Triggered by top-edge hover, hotkey, or toast tap.
+    func peek(duration: TimeInterval = NotchPanel.peekHoldAfterLeave) {
+        guard visibility != .visible else { return }
+        animateTo(visible: true)
+        visibility = .peeking
+        schedulePeekEnd(after: duration)
+        AgentLog.panel.info("peek duration=\(duration)")
+    }
+
+    private func schedulePeekEnd(after seconds: TimeInterval) {
+        pendingRehide?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.visibility == .peeking else { return }
+            self.animateTo(visible: false)
+            self.visibility = .hidden
+        }
+        pendingRehide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func animateTo(visible: Bool) {
+        guard let screen = currentScreen else { return }
+        let frame = self.frame
+        let targetY: CGFloat = visible
+            ? visibleY
+            : visibleY + frame.height + 8
+        let target = NSRect(x: frame.origin.x, y: targetY, width: frame.width, height: frame.height)
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.animator().setFrame(target, display: true)
+        }
+        _ = screen   // silence unused warning when targetY uses visibleY only
+    }
+
+    // MARK: - Edge-hover & hotkey monitors (Phase 2)
+
+    private func installEdgeHoverMonitor() {
+        guard edgeHoverMonitor == nil else { return }
+        edgeHoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.evaluateEdgeHover() }
+        }
+    }
+
+    private func removeEdgeHoverMonitor() {
+        if let m = edgeHoverMonitor {
+            NSEvent.removeMonitor(m)
+            edgeHoverMonitor = nil
+        }
+        edgeHoldStarted = nil
+    }
+
+    private func evaluateEdgeHover() {
+        guard visibility == .hidden, let screen = currentScreen else { return }
+        let loc = NSEvent.mouseLocation
+        guard screen.frame.contains(loc) else { edgeHoldStarted = nil; return }
+        let nearTop = loc.y >= screen.frame.maxY - 2
+        if nearTop {
+            if let start = edgeHoldStarted {
+                if Date().timeIntervalSince(start) >= NotchPanel.edgeHoldSeconds {
+                    edgeHoldStarted = nil
+                    peek(duration: NotchPanel.peekHoldAfterLeave)
+                }
+            } else {
+                edgeHoldStarted = Date()
+            }
+        } else {
+            edgeHoldStarted = nil
+        }
+    }
+
+    private func installHotkeyMonitor() {
+        guard hotkeyMonitor == nil else { return }
+        hotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if event.keyCode == NotchPanel.hotkeyKeyCode,
+                   event.modifierFlags.intersection(.deviceIndependentFlagsMask) == NotchPanel.hotkeyMods {
+                    self.peek(duration: NotchPanel.peekHoldHotkey)
+                }
+            }
+        }
+    }
+
+    private func removeHotkeyMonitor() {
+        if let m = hotkeyMonitor {
+            NSEvent.removeMonitor(m)
+            hotkeyMonitor = nil
+        }
     }
 
     // MARK: - Click-through region

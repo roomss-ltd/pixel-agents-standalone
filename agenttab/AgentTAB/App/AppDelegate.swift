@@ -9,8 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine = ActivityEngine()
     let updater = UpdaterCoordinator()
     let screenTracker = ScreenTracker()
+    let fullscreenDetector = FullscreenDetector()
     private var onboardingWindow: NSWindow?
     private var trackerCancellable: AnyCancellable?
+    private var autoHideCancellable: AnyCancellable?
 
     /// The SwiftUI root needs `notchGeometry` in the environment, and
     /// the geometry depends on which screen the notch is on. We keep the
@@ -40,11 +42,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, let panel else { return }
                 self.installRootView(for: screen, into: panel)
                 panel.reposition(to: screen)
+                self.evaluateAutoHide(panel: panel)
             }
+
+        // Phase 2 — auto-hide on external-display fullscreen.
+        // Combine the cursor screen and the fullscreen set: if the
+        // active screen is external AND that display is currently
+        // running a fullscreen Space, slide the panel out of the way.
+        autoHideCancellable = Publishers.CombineLatest(
+            screenTracker.$activeScreen,
+            fullscreenDetector.$fullscreenDisplays
+        )
+        .sink { [weak panel] _, _ in
+            guard let panel else { return }
+            // Defer to next runloop so reposition() runs first when both
+            // publishers fire on the same tick.
+            DispatchQueue.main.async { [weak self, weak panel] in
+                guard let self, let panel else { return }
+                self.evaluateAutoHide(panel: panel)
+            }
+        }
 
         let onboardingDone = UserDefaults.standard.bool(forKey: "AgentTAB.onboarding.completed")
         if !onboardingDone {
             showOnboarding()
+        }
+    }
+
+    /// Predicate that decides the panel's visibility. Built-in display
+    /// is always visible. External display + fullscreen on that
+    /// display → auto-hide. Anything else → visible.
+    private func evaluateAutoHide(panel: NotchPanel) {
+        let screen = screenTracker.activeScreen
+        let isExternal = !screen.isBuiltIn
+        let displayID = screen.directDisplayID
+        let isFullscreen = displayID.map { fullscreenDetector.fullscreenDisplays.contains($0) } ?? false
+
+        if isExternal && isFullscreen {
+            panel.autoHide()
+        } else {
+            panel.autoShow()
         }
     }
 
