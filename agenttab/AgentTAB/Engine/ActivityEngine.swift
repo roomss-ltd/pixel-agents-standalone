@@ -166,6 +166,32 @@ final class ActivityEngine: ObservableObject {
     /// JSONL file having been discovered first, and lets us prune cleanly
     /// when the pane disappears from the status files.
     private var sessionsByZellijPaneId: [Int: UUID] = [:]
+
+    // MARK: - Notification gates (Phase 0)
+
+    /// Identifies what triggered a state-change consideration. Used to
+    /// gate notifications on whether the underlying source actually
+    /// advanced — re-running the engine over an unchanged source must
+    /// never produce a toast.
+    enum NotificationSource {
+        case jsonl(URL)
+        case zellij(paneId: Int, updatedAt: Date?)
+        case hook
+    }
+
+    /// Most recent source timestamp seen per session. JSONL: the highest
+    /// `Date()` we stamped from a parsed line. Zellij: the plugin's
+    /// `updated_at`. Hook: always advances (real-time, monotonic).
+    private var lastSourceTimestamp: [UUID: Date] = [:]
+
+    /// Per-session dedupe: identical (from, to) within 30s collapses.
+    private var lastNotifiedTransition: [UUID: (from: Activity, to: Activity, firedAt: Date)] = [:]
+
+    /// Global per-session throttle: at most one toast per minute.
+    private var lastNotifiedAt: [UUID: Date] = [:]
+
+    private static let dedupeWindow: TimeInterval = 30
+    private static let throttleWindow: TimeInterval = 60
     private let parser = TranscriptParser()
     private let permissionTimer = PermissionTimer()
     private let jsonlWatcher: JSONLWatcher
@@ -246,7 +272,7 @@ final class ActivityEngine: ObservableObject {
         sessionsByJsonlURL[jsonlURL] = session.id
         sessionsByClaudeId[claudeSessionId] = session.id
 
-        print("[Engine] \(isLive ? "Live" : "Historical") session: \(claudeSessionId) (\(projectName))")
+        AgentLog.engine.info("discovered session=\(claudeSessionId, privacy: .public) project=\(projectName, privacy: .public) live=\(isLive)")
     }
 
     private func applyLine(_ line: String, jsonlURL: URL) {
@@ -282,7 +308,9 @@ final class ActivityEngine: ObservableObject {
                           let idx = self.sessions.firstIndex(where: { $0.id == id }) else { return }
                     let oldActivity = self.sessions[idx].activity
                     self.sessions[idx].activity = .waiting
-                    self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity)
+                    self.sessions[idx].lastUpdate = Date()
+                    AgentLog.engine.info("transition permission-timer session=\(self.sessions[idx].claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→waiting")
+                    self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity, source: .hook)
                 }
             }
         } else {
@@ -291,10 +319,13 @@ final class ActivityEngine: ObservableObject {
         }
 
         if !events.isEmpty {
-            print("[Engine] Session \(session.claudeSessionId): \(events)")
+            AgentLog.parser.debug("session=\(session.claudeSessionId, privacy: .public) events=\(String(describing: events), privacy: .public)")
+        }
+        if oldActivity != session.activity {
+            AgentLog.engine.info("transition jsonl session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
         }
 
-        notifySessionStateChange(session, oldActivity: oldActivity)
+        notifySessionStateChange(session, oldActivity: oldActivity, source: .jsonl(jsonlURL))
     }
 
     private func applyHook(_ payload: HookPayload) {
@@ -347,10 +378,49 @@ final class ActivityEngine: ObservableObject {
         session.lastUpdate = Date()
         sessions[index] = session
         lastHookEvent[payload.sessionId] = Date()
-        notifySessionStateChange(session, oldActivity: oldActivity)
+        if oldActivity != session.activity {
+            AgentLog.engine.info("transition hook session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public) event=\(payload.hookEvent, privacy: .public)")
+        }
+        notifySessionStateChange(session, oldActivity: oldActivity, source: .hook)
     }
 
-    private func notifySessionStateChange(_ session: Session, oldActivity: Activity) {
+    private func notifySessionStateChange(
+        _ session: Session,
+        oldActivity: Activity,
+        source: NotificationSource
+    ) {
+        // Phase 0.4 — source-of-truth gate. Only proceed when the
+        // underlying source advanced compared to what we last saw for
+        // this session. Re-running over an unchanged source produces
+        // zero toasts.
+        if !sourceAdvanced(for: session.id, source: source) {
+            AgentLog.notify.debug("drop session=\(session.claudeSessionId, privacy: .public) reason=source-not-advanced")
+            return
+        }
+
+        // Only two transitions ever produce a toast: → .waiting and → .done.
+        let interesting =
+            (session.activity == .waiting && oldActivity != .waiting) ||
+            (session.activity == .done    && oldActivity != .done)
+        guard interesting else { return }
+
+        // Phase 0.5 — dedupe identical (from, to) within 30s.
+        let now = Date()
+        if let last = lastNotifiedTransition[session.id],
+           last.from == oldActivity,
+           last.to == session.activity,
+           now.timeIntervalSince(last.firedAt) < Self.dedupeWindow {
+            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=dedupe \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
+            return
+        }
+
+        // Phase 0.6 — global per-session throttle: 1/min.
+        if let last = lastNotifiedAt[session.id],
+           now.timeIntervalSince(last) < Self.throttleWindow {
+            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=throttle")
+            return
+        }
+
         // Tapping the toast jumps to whichever terminal tab the agent
         // is running in. Same focus path the expanded panel uses.
         let focusAction: () -> Void = { [weak self] in
@@ -364,25 +434,56 @@ final class ActivityEngine: ObservableObject {
             }
         }
 
-        if session.activity == .waiting && oldActivity != .waiting {
-            let toast = Toast(
+        let toast: Toast
+        if session.activity == .waiting {
+            toast = Toast(
                 variant: .attention,
                 taskId: displayLabel(for: session),
                 projectName: displayName(for: session),
                 message: "Waiting for approval"
             )
-            toastPanel.show(toast, duration: 5, onTap: focusAction)
             if soundsEnabled { soundPlayer.playWaiting() }
-        } else if session.activity == .done && oldActivity != .done {
-            let toast = Toast(
+        } else {
+            toast = Toast(
                 variant: .success,
                 taskId: displayLabel(for: session),
                 projectName: displayName(for: session),
                 message: "Finished successfully"
             )
-            toastPanel.show(toast, duration: 5, onTap: focusAction)
             if soundsEnabled { soundPlayer.playDone() }
         }
+        toastPanel.show(toast, duration: 5, onTap: focusAction)
+
+        lastNotifiedTransition[session.id] = (oldActivity, session.activity, now)
+        lastNotifiedAt[session.id] = now
+        AgentLog.notify.info("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
+    }
+
+    /// Returns true when the source's own timestamp has moved forward
+    /// relative to the last value we saw for this session. JSONL:
+    /// `session.lastUpdate` (parser writes Date() on each new line).
+    /// Zellij: the plugin's `updated_at`. Hook: always returns true —
+    /// hook events are real-time signals from the agent itself and never
+    /// "replay."
+    private func sourceAdvanced(for sessionId: UUID, source: NotificationSource) -> Bool {
+        let timestamp: Date?
+        switch source {
+        case .jsonl:
+            timestamp = sessions.first(where: { $0.id == sessionId })?.lastUpdate
+        case .zellij(_, let updatedAt):
+            timestamp = updatedAt
+        case .hook:
+            // Real-time. Always advance the marker so the next jsonl/
+            // zellij tick doesn't see a stale baseline.
+            lastSourceTimestamp[sessionId] = Date()
+            return true
+        }
+        guard let ts = timestamp else { return true }
+        if let prev = lastSourceTimestamp[sessionId], ts <= prev {
+            return false
+        }
+        lastSourceTimestamp[sessionId] = ts
+        return true
     }
 
     /// Apply a Zellij status snapshot. When the Zellij plugin is running it
@@ -399,9 +500,10 @@ final class ActivityEngine: ObservableObject {
             // `<session-name>.json`. We need that name to focus the right
             // session via `zellij -s <session-name> action go-to-tab N`.
             let sessionName = url.deletingPathExtension().lastPathComponent
+            let fileUpdatedAt = Date(timeIntervalSince1970: statusFile.updatedAt)
             for zSession in statusFile.sessions {
                 seenPaneIds.insert(zSession.paneId)
-                upsertZellijSession(zSession, sessionName: sessionName)
+                upsertZellijSession(zSession, sessionName: sessionName, fileUpdatedAt: fileUpdatedAt)
             }
         }
 
@@ -413,7 +515,12 @@ final class ActivityEngine: ObservableObject {
         }
     }
 
-    private func upsertZellijSession(_ z: ZellijSession, sessionName: String) {
+    /// Tracks panes that already logged a parse failure for their
+    /// `detail` field, so we only warn once per pane instead of once per
+    /// 1s status refresh.
+    private var warnedElapsedParseFailure: Set<Int> = []
+
+    private func upsertZellijSession(_ z: ZellijSession, sessionName: String, fileUpdatedAt: Date) {
         let info = ZellijInfo(
             paneId: z.paneId,
             tabIndex: z.tabNum,
@@ -421,14 +528,21 @@ final class ActivityEngine: ObservableObject {
             zellijSession: sessionName
         )
         let zellijActivity = mapZellijActivity(z)
-        // For finished states, the plugin sends the elapsed time as
-        // `5s ago` / `44m ago` / `169h ago` in `detail`. Parsing that
-        // back lets us bucket sessions correctly into RECENTLY ACTIVE
-        // (≤1h) vs OLDER FINISHED (>1h) — without it every refresh
-        // would stamp `lastUpdate = now`, forcing every finished tab
-        // into "recently active" forever.
+
+        // Phase 0.3 — for finished states, the plugin sends the elapsed
+        // time as `5s ago` / `44m ago` / `169h ago` in `detail`. When
+        // parsing succeeds we reconstruct `lastUpdate = now - elapsed`.
+        // When it fails (unrecognised format), we pass `nil` so the
+        // existing `lastUpdate` is PRESERVED — never stamped to `now`,
+        // which would otherwise force every finished tab into RECENTLY
+        // ACTIVE on each scan.
         let elapsed = elapsedSeconds(from: z.detail)
-        let zellijLastUpdate: Date = elapsed.map { Date().addingTimeInterval(-$0) } ?? Date()
+        let zellijLastUpdate: Date? = elapsed.map { Date().addingTimeInterval(-$0) }
+        if zellijLastUpdate == nil, let detail = z.detail, !detail.isEmpty,
+           !warnedElapsedParseFailure.contains(z.paneId) {
+            AgentLog.zellij.warning("could not parse elapsed='\(detail, privacy: .public)' for pane=\(z.paneId); preserving prior lastUpdate")
+            warnedElapsedParseFailure.insert(z.paneId)
+        }
 
         // 1) Already linked to this pane.
         if let id = sessionsByZellijPaneId[z.paneId],
@@ -436,7 +550,8 @@ final class ActivityEngine: ObservableObject {
             applyZellijUpdate(at: index, info: info,
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
-                              runId: z.runId)
+                              runId: z.runId,
+                              fileUpdatedAt: fileUpdatedAt)
             return
         }
 
@@ -453,7 +568,8 @@ final class ActivityEngine: ObservableObject {
             applyZellijUpdate(at: index, info: info,
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
-                              runId: runId)
+                              runId: runId,
+                              fileUpdatedAt: fileUpdatedAt)
             return
         }
 
@@ -467,21 +583,24 @@ final class ActivityEngine: ObservableObject {
         )
         session.terminalKind = .zellij(info)
         session.activity = zellijActivity
-        session.lastUpdate = zellijLastUpdate
+        // New session has no prior `lastUpdate` to preserve — fall back
+        // to `now` when elapsed parsing failed.
+        session.lastUpdate = zellijLastUpdate ?? Date()
         sessions.append(session)
         sessionsByZellijPaneId[z.paneId] = session.id
         if let runId = z.runId {
             sessionsByClaudeId[runId] = session.id
         }
-        print("[Engine] Zellij session: pane=\(z.paneId) tab=\(z.tabNum) name=\(z.tabName) activity=\(z.activity) elapsed=\(z.detail ?? "?") session=\(sessionName)")
+        AgentLog.zellij.info("discovered pane=\(z.paneId) tab=\(z.tabNum) name=\(z.tabName, privacy: .public) activity=\(z.activity, privacy: .public) elapsed=\(z.detail ?? "?", privacy: .public) session=\(sessionName, privacy: .public)")
     }
 
     private func applyZellijUpdate(
         at index: Int,
         info: ZellijInfo,
         activity: Activity,
-        lastUpdate: Date,
-        runId: String?
+        lastUpdate: Date?,
+        runId: String?,
+        fileUpdatedAt: Date
     ) {
         let oldActivity = sessions[index].activity
         sessions[index].terminalKind = .zellij(info)
@@ -498,10 +617,20 @@ final class ActivityEngine: ObservableObject {
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
         if !hookActive {
             sessions[index].activity = activity
-            sessions[index].lastUpdate = lastUpdate
+            // Phase 0.3 — nil means "preserve existing lastUpdate".
+            if let lastUpdate {
+                sessions[index].lastUpdate = lastUpdate
+            }
         }
         if oldActivity != sessions[index].activity {
-            notifySessionStateChange(sessions[index], oldActivity: oldActivity)
+            let cid = sessions[index].claudeSessionId
+            let newTag = sessions[index].activity.logTag
+            AgentLog.engine.info("transition zellij session=\(cid, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(newTag, privacy: .public) pane=\(info.paneId)")
+            notifySessionStateChange(
+                sessions[index],
+                oldActivity: oldActivity,
+                source: .zellij(paneId: info.paneId, updatedAt: fileUpdatedAt)
+            )
         }
     }
 

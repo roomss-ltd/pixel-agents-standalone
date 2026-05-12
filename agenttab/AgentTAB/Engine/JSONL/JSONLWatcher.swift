@@ -115,11 +115,28 @@ final class JSONLWatcher {
     }
 
     private func readNewLines(from fileURL: URL) {
-        let offset = fileOffsets[fileURL] ?? 0
+        let lastOffset = fileOffsets[fileURL] ?? 0
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
         defer { try? handle.close() }
 
         do {
+            // If the file shrank below our last offset, it was rotated /
+            // truncated — reset to 0 so we don't seek past EOF and miss
+            // every subsequent append. Otherwise the previously parsed
+            // bytes are guaranteed to be the same byte ranges, so
+            // resuming from `lastOffset` is the only way to stay
+            // idempotent across rescans triggered by the directory
+            // watcher.
+            let endOffset = (try? handle.seekToEnd()) ?? 0
+            let offset: UInt64
+            if endOffset < lastOffset {
+                AgentLog.watcher.warning("file shrank, resetting offset path=\(fileURL.lastPathComponent, privacy: .public) was=\(lastOffset) now=\(endOffset)")
+                offset = 0
+                lineBuffers[fileURL] = ""
+            } else {
+                offset = lastOffset
+            }
+
             try handle.seek(toOffset: offset)
             let data = handle.readDataToEndOfFile()
             guard !data.isEmpty else { return }
@@ -135,7 +152,7 @@ final class JSONLWatcher {
                 onLine?(fileURL, line)
             }
         } catch {
-            // file may have been rotated — restart watch
+            AgentLog.watcher.error("read failed path=\(fileURL.lastPathComponent, privacy: .public) error=\(String(describing: error), privacy: .public)")
         }
     }
 }
