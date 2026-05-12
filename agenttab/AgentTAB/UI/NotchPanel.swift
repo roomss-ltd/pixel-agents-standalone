@@ -79,20 +79,29 @@ final class NotchPanel: NSPanel {
 
     func anchorToNotch() {
         guard let screen = NSScreen.main else { return }
+        reposition(to: screen)
+    }
+
+    /// Reanchor to a specific screen. Called from the ScreenTracker
+    /// subscription so the panel follows the cursor across displays.
+    /// We jump rather than animate — animating across screens with
+    /// different resolutions and scales looks broken (the panel
+    /// appears to leap diagonally and snap into place).
+    func reposition(to screen: NSScreen) {
         let topInset = screen.safeAreaInsets.top
         let screenFrame = screen.frame
 
-        // Top-center, large enough for the largest panel size. The shape
-        // hangs below the notch — `liveSize` controls clickable area.
         let panelWidth: CGFloat = Theme.Layout.panelMaxWidth
         let panelHeight: CGFloat = Theme.Layout.panelMaxHeight
         let x = screenFrame.midX - panelWidth / 2
         let y = screenFrame.maxY - panelHeight
 
-        self.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
+        self.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight),
+                      display: true, animate: false)
 
         UserDefaults.standard.set(Double(topInset), forKey: "AgentTAB.lastNotchInset")
         updateClickability(force: true)
+        AgentLog.panel.info("anchored to screen=\(screen.localizedName, privacy: .public) hasNotch=\(topInset > 0)")
     }
 
     // MARK: - Click-through region
