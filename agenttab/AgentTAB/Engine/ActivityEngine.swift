@@ -82,6 +82,63 @@ final class ActivityEngine: ObservableObject {
         return session.projectName
     }
 
+    /// Resolved filesystem path for the agent's worktree, or nil when
+    /// the session is Zellij-only and was never matched to a JSONL
+    /// session (no path was ever discovered).
+    func worktreePath(for session: Session) -> String? {
+        guard !session.projectPath.isEmpty else { return nil }
+        return session.projectPath
+    }
+
+    /// Open the worktree folder in Finder. No-op if we don't have a
+    /// resolved path.
+    func openFolder(_ session: Session) {
+        guard let path = worktreePath(for: session) else {
+            AgentLog.engine.info("openFolder skipped: no path for session=\(session.claudeSessionId, privacy: .public)")
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        NSWorkspace.shared.open(url)
+        AgentLog.engine.info("openFolder \(path, privacy: .public)")
+    }
+
+    /// Cursor first, VS Code second. We pick whichever is installed; if
+    /// neither is found we fall back to Finder so the click isn't a
+    /// dead-end. Bundle id list covers both Cursor's older (ToDesktop)
+    /// and newer (com.cursor.Cursor) packaging.
+    private static let editorBundleIds: [String] = [
+        "com.todesktop.230313mzl4w4u92",   // Cursor (ToDesktop build)
+        "com.cursor.Cursor",                // Cursor (newer)
+        "com.microsoft.VSCode",             // Visual Studio Code
+        "com.visualstudio.code.oss",        // VSCodium
+    ]
+
+    func openEditor(_ session: Session) {
+        guard let path = worktreePath(for: session) else {
+            AgentLog.engine.info("openEditor skipped: no path for session=\(session.claudeSessionId, privacy: .public)")
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        let ws = NSWorkspace.shared
+
+        for bundleId in Self.editorBundleIds {
+            guard let appURL = ws.urlForApplication(withBundleIdentifier: bundleId) else { continue }
+            let config = NSWorkspace.OpenConfiguration()
+            ws.open([url], withApplicationAt: appURL, configuration: config) { _, error in
+                if let error {
+                    AgentLog.engine.error("openEditor failed bundle=\(bundleId, privacy: .public) error=\(String(describing: error), privacy: .public)")
+                } else {
+                    AgentLog.engine.info("openEditor \(bundleId, privacy: .public) \(path, privacy: .public)")
+                }
+            }
+            return
+        }
+        // Neither editor present — fall back to Finder so the click
+        // still does something.
+        AgentLog.engine.info("openEditor fallback to Finder (no Cursor/VSCode installed)")
+        openFolder(session)
+    }
+
     /// Bring whichever terminal is hosting zellij to the foreground and
     /// focus the right tab. Used by the expanded panel's agent-row click
     /// and by toast notifications (tap to jump to that agent).

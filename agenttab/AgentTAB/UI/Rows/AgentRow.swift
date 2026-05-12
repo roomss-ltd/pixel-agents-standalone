@@ -18,11 +18,20 @@ struct AgentRow: View {
     var isEdit: Bool = false
     var onClick: () -> Void = {}
     var onUnlink: () -> Void = {}
+    var onOpenFolder: () -> Void = {}
+    var onOpenEditor: () -> Void = {}
 
     enum Variant { case active, attention, finished, resting }
 
     @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
+
+    /// Show the hover action cluster when the cursor is over the row,
+    /// edit mode is off, and we actually have a resolvable worktree
+    /// path. Otherwise fall back to the status icon.
+    private var showsHoverActions: Bool {
+        isHovered && !isEdit && engine.worktreePath(for: session) != nil
+    }
 
     var body: some View {
         HStack(spacing: 7) {
@@ -48,8 +57,20 @@ struct AgentRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            statusIcon
-                .frame(width: 20, height: 20)
+            // Right slot — fixed 44pt so the row layout doesn't shift
+            // when hover swaps the contents.
+            ZStack(alignment: .trailing) {
+                if showsHoverActions {
+                    hoverActions
+                        .transition(.opacity)
+                } else {
+                    statusIcon
+                        .frame(width: 20, height: 20)
+                        .transition(.opacity)
+                }
+            }
+            .frame(width: 44, height: 20, alignment: .trailing)
+            .animation(.easeOut(duration: 0.12), value: showsHoverActions)
         }
         .padding(.horizontal, Theme.Layout.cardPaddingH)
         .padding(.vertical, Theme.Layout.cardPaddingV)
@@ -74,6 +95,50 @@ struct AgentRow: View {
                 onClick()
             }
         }
+    }
+
+    // MARK: - Hover actions
+
+    /// Two icon buttons revealed on hover. Each button consumes its own
+    /// tap (Button(.plain) is sufficient to prevent the gesture from
+    /// bubbling to the row's onTapGesture), so the body-tap → terminal
+    /// behaviour is preserved everywhere outside these glyphs.
+    private var hoverActions: some View {
+        HStack(spacing: 4) {
+            actionButton(
+                systemName: "folder.fill",
+                tooltip: "Reveal in Finder",
+                action: onOpenFolder
+            )
+            actionButton(
+                systemName: "chevron.left.forwardslash.chevron.right",
+                tooltip: "Open in Cursor / VS Code",
+                action: onOpenEditor
+            )
+        }
+    }
+
+    private func actionButton(
+        systemName: String,
+        tooltip: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 18, height: 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                )
+                .foregroundStyle(Theme.textStrong.opacity(0.85))
+        }
+        .buttonStyle(.plain)
+        .help(tooltip)
     }
 
     // MARK: - Subviews

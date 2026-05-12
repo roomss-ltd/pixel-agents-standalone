@@ -348,7 +348,9 @@ struct ExpandedView: View {
                     variant: variant(session),
                     isEdit: isEditMode,
                     onClick: { handleClick(session) },
-                    onUnlink: { engine.hide(session) }
+                    onUnlink: { engine.hide(session) },
+                    onOpenFolder: { engine.openFolder(session) },
+                    onOpenEditor: { engine.openEditor(session) }
                 )
             }
         }
