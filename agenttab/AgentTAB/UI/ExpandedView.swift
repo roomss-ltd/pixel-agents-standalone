@@ -52,6 +52,7 @@ struct ExpandedView: View {
 
     @State private var isOlderOpen: Bool = false   // closed by default — content-sized
     @State private var showSettings: Bool = false
+    @State private var showHistory: Bool = false   // weekly activity dashboard
     @State private var isEditMode: Bool = false
 
     /// Section ordering mode. `.recency` keeps the original behaviour
@@ -108,6 +109,13 @@ struct ExpandedView: View {
                     if showSettings {
                         SettingsBody()
                             .transition(.opacity)
+                    } else if showHistory {
+                        ActivityHistoryView(
+                            weekly: tokenTracker.weekly,
+                            projects: tokenTracker.weeklyProjects,
+                            onBack: { showHistory = false }
+                        )
+                        .transition(.opacity)
                     } else {
                         sections
                             .transition(.opacity)
@@ -138,6 +146,7 @@ struct ExpandedView: View {
         .animation(Theme.Animations.notch, value: isExpanded)
         .animation(Theme.Animations.notch, value: isOlderOpen)
         .animation(Theme.Animations.notch, value: showSettings)
+        .animation(Theme.Animations.notch, value: showHistory)
         .onPreferenceChange(ExpandedSizeKey.self) { size in
             onSizeChange(size)
         }
@@ -376,41 +385,39 @@ struct ExpandedView: View {
     /// Daily token-spend pill — total tokens across every agent that
     /// ran on this machine today. Sits at the top-left of the sections,
     /// mirroring the sort switcher on the right. Resets at midnight
-    /// (handled inside TokenTracker).
+    /// (handled inside TokenTracker). Tapping it flips the panel to the
+    /// 7-day activity dashboard.
     private var tokenCounter: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "circle.hexagongrid.fill")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Theme.Neon.blue)
-            Text(formatTokens(tokenTracker.todayTokens))
-                .font(.system(size: 10, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textStrong)
-            Text("tokens today")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(Theme.textFaint)
+        Button {
+            showSettings = false
+            tokenTracker.refreshWeekly()
+            withAnimation(Theme.Animations.notch) { showHistory = true }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "circle.hexagongrid.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Theme.Neon.blue)
+                Text(TokenTracker.format(tokenTracker.todayTokens))
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textStrong)
+                Text("tokens today")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 0.5)
+                    )
+            )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Theme.hairline, lineWidth: 0.5)
-                )
-        )
-        .help("Total tokens spent across all agents today — resets at midnight")
-    }
-
-    /// 1_234_567 → "1.2M", 45_678 → "45.7K", 312 → "312".
-    private func formatTokens(_ n: Int) -> String {
-        if n >= 1_000_000 {
-            return String(format: "%.1fM", Double(n) / 1_000_000)
-        } else if n >= 1_000 {
-            return String(format: "%.1fK", Double(n) / 1_000)
-        }
-        return "\(n)"
+        .buttonStyle(.plain)
+        .help("Tokens spent across all agents today — tap for the 7-day history")
     }
 
     // MARK: - Sort-mode toggle
@@ -519,6 +526,7 @@ struct ExpandedView: View {
         HStack {
             HStack(spacing: 6) {
                 FootBtn(systemImage: "gearshape", isOn: showSettings) {
+                    showHistory = false
                     showSettings.toggle()
                 }
                 FootBtn(systemImage: "pencil", isOn: isEditMode) {
