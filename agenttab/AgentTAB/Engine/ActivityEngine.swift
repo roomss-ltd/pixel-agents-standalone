@@ -252,18 +252,17 @@ final class ActivityEngine: ObservableObject {
 
     // MARK: - Urgent-finished reminders
 
-    /// An `.urgent` session that has been finished (and untouched) for
-    /// longer than this starts getting pink reminder pop-ups.
-    private static let urgentReminderThreshold: TimeInterval = 120   // 2 min
-
-    /// Rolling rate-limit: at most `urgentReminderCap` pink reminders
-    /// per session per `urgentReminderWindow`.
-    private static let urgentReminderWindow: TimeInterval = 120       // 2 min
+    /// After an `.urgent` session finishes, it gets at most
+    /// `urgentReminderCap` pink reminders, all within a single
+    /// `urgentReminderWindow` measured from the finish time — then it
+    /// goes quiet for good (until it runs and finishes again).
+    private static let urgentReminderWindow: TimeInterval = 120   // 2 min from finish
     private static let urgentReminderCap = 3
 
-    /// Per-session reminder state: how many times we've nagged in the
-    /// current window, and when that window opened.
-    private var urgentReminders: [UUID: (count: Int, windowStart: Date)] = [:]
+    /// How many reminders we've already fired for a given session's
+    /// current finished state. Cleared the moment the session stops
+    /// qualifying, so a fresh finish starts a clean count.
+    private var urgentReminders: [UUID: Int] = [:]
     private var urgentReminderTimer: AnyCancellable?
 
     // MARK: - Priority (Jira/Linear-style tab prioritisation)
@@ -374,39 +373,40 @@ final class ActivityEngine: ObservableObject {
             .sink { [weak self] _ in self?.checkUrgentReminders() }
     }
 
-    /// Fire a pink reminder for every `.urgent` session that's been
-    /// finished and untouched past the threshold, rate-limited to
-    /// `urgentReminderCap` per `urgentReminderWindow` per session.
+    /// Fire a pink reminder for `.urgent` sessions that have finished —
+    /// at most `urgentReminderCap` times, all inside a single
+    /// `urgentReminderWindow` measured from the finish time. Once the
+    /// cap is hit, or the window from the finish has elapsed, the
+    /// session goes quiet for good (until it runs and finishes again).
     private func checkUrgentReminders() {
         let now = Date()
 
         let qualifying = sessions.filter { s -> Bool in
             guard s.priority == .urgent, !s.isHistorical else { return false }
             switch s.activity {
-            case .done, .idle:
-                return now.timeIntervalSince(s.lastUpdate) > Self.urgentReminderThreshold
-            default:
-                return false
+            case .done, .idle: return true
+            default:           return false
             }
         }
 
         // Drop reminder state for sessions that no longer qualify —
-        // started processing again, removed, de-prioritised, etc. A
-        // fresh qualification later starts a clean window.
+        // resumed processing, removed, de-prioritised. The next time
+        // such a session finishes it starts a clean count, anchored to
+        // its new finish time.
         let qualifyingIds = Set(qualifying.map(\.id))
         urgentReminders = urgentReminders.filter { qualifyingIds.contains($0.key) }
 
         for session in qualifying {
-            var entry = urgentReminders[session.id] ?? (count: 0, windowStart: now)
-            if now.timeIntervalSince(entry.windowStart) >= Self.urgentReminderWindow {
-                entry = (count: 0, windowStart: now)   // roll the window
-            }
-            guard entry.count < Self.urgentReminderCap else {
-                urgentReminders[session.id] = entry
-                continue
-            }
-            entry.count += 1
-            urgentReminders[session.id] = entry
+            // Window is [finishTime, finishTime + 2min]. `lastUpdate` is
+            // the moment the session went done/idle and stays put while
+            // it's finished, so it's the finish-time anchor.
+            let windowEnd = session.lastUpdate.addingTimeInterval(Self.urgentReminderWindow)
+            guard now <= windowEnd else { continue }   // window elapsed → quiet
+
+            let count = urgentReminders[session.id] ?? 0
+            guard count < Self.urgentReminderCap else { continue }   // hit the cap → quiet
+
+            urgentReminders[session.id] = count + 1
             fireUrgentReminder(for: session)
         }
     }
