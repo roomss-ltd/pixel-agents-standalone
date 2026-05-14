@@ -112,10 +112,16 @@ struct AgentRow: View {
     // MARK: - Priority dropdown
 
     /// Linear-style priority picker. The label shows the current
-    /// priority's icon tinted by its colour; the dropdown lists all
-    /// five levels, Urgent at the top. `Menu` captures its own clicks,
-    /// so the row's body-tap (focus terminal) still works everywhere
-    /// else on the row.
+    /// priority's icon in its neon colour; the dropdown lists all five
+    /// levels, Urgent at the top. `Menu` captures its own clicks, so
+    /// the row's body-tap (focus terminal) still works everywhere else
+    /// on the row.
+    ///
+    /// `.menuStyle(.borderlessButton)` overrides the label's
+    /// `.foregroundStyle` with the control tint — so we drive the icon
+    /// colour via `.tint(...)` instead, which the borderless menu
+    /// style *does* respect. The colored background + border are an
+    /// extra belt so the level reads even at a glance.
     private var priorityMenu: some View {
         Menu {
             ForEach(Priority.allCases.reversed(), id: \.self) { level in
@@ -127,21 +133,21 @@ struct AgentRow: View {
             }
         } label: {
             Image(systemName: session.priority.systemImage)
-                .font(.system(size: 8.5, weight: .bold))
-                .foregroundStyle(session.priority.color)
-                .frame(width: 16, height: 16)
+                .font(.system(size: 9, weight: .bold))
+                .frame(width: 17, height: 17)
                 .background(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(session.priority.color.opacity(0.14))
+                        .fill(session.priority.color.opacity(0.18))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(session.priority.color.opacity(0.32), lineWidth: 0.5)
+                        .stroke(session.priority.color.opacity(0.55), lineWidth: 0.75)
                 )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .tint(session.priority.color)
         .help("Priority — \(session.priority.displayName)")
     }
 

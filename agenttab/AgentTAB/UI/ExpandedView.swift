@@ -288,7 +288,19 @@ struct ExpandedView: View {
 
     @ViewBuilder
     private var sections: some View {
+        let hasAny = !activeSessions.isEmpty || !attentionSessions.isEmpty
+            || !recentlyActiveSessions.isEmpty || !olderFinishedSessions.isEmpty
+
         VStack(spacing: 12) {
+            // Sort-mode switcher — only shown when there's something to
+            // sort. Lets the user flip every section between recency
+            // ordering and user-assigned priority ordering.
+            if hasAny {
+                HStack {
+                    Spacer()
+                    sortModeToggle
+                }
+            }
             if !activeSessions.isEmpty {
                 Section(label: "ACTIVE") {
                     grid(of: activeSessions, variant: .active)
@@ -329,6 +341,55 @@ struct ExpandedView: View {
                 emptyState
             }
         }
+    }
+
+    // MARK: - Sort-mode toggle
+
+    /// Visible two-segment switcher: Recency ⇄ Priority. Sits at the
+    /// top-right of the sections so the current ordering mode is
+    /// always obvious — not buried as a footer icon.
+    private var sortModeToggle: some View {
+        HStack(spacing: 2) {
+            sortSegment(.recency, label: "Recency", icon: "clock")
+            sortSegment(.priority, label: "Priority", icon: "flag.fill")
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                )
+        )
+    }
+
+    private func sortSegment(_ mode: SortMode, label: String, icon: String) -> some View {
+        let selected = sortMode == mode
+        return Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                sortModeRaw = mode.rawValue
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 8.5, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(selected ? Theme.textStrong : Theme.textDim)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(selected ? Theme.Neon.blueSoft : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(selected ? Theme.Neon.blueEdge : Color.clear, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var emptyState: some View {
@@ -387,16 +448,6 @@ struct ExpandedView: View {
                 FootBtn(systemImage: "pencil", isOn: isEditMode) {
                     isEditMode.toggle()
                 }
-                // Sort mode — clock = recency, flag = priority.
-                FootBtn(
-                    systemImage: sortMode == .priority ? "flag.fill" : "clock",
-                    isOn: sortMode == .priority
-                ) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        sortModeRaw = (sortMode == .recency ? SortMode.priority : .recency).rawValue
-                    }
-                }
-                .help(sortMode == .priority ? "Sorting by priority" : "Sorting by recency")
                 appMenuButton
             }
             Spacer()
