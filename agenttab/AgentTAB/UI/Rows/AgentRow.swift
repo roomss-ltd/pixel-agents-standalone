@@ -132,20 +132,26 @@ struct AgentRow: View {
                 }
             }
         } label: {
+            let accent = session.priority.color
             Image(systemName: session.priority.systemImage)
                 .font(.system(size: 9, weight: .bold))
                 .frame(width: 17, height: 17)
                 .background(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(session.priority.color.opacity(0.18))
+                        .fill(accent.opacity(0.22))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(session.priority.color.opacity(0.55), lineWidth: 0.75)
+                        .stroke(accent.opacity(0.7), lineWidth: 0.75)
                 )
-                // Minimal neon glow — a tight, low-opacity halo in the
-                // priority's own colour so the chip reads as "lit".
-                .shadow(color: session.priority.color.opacity(0.55), radius: 2.5)
+                // Neon glow — two stacked shadows in the priority's own
+                // colour: a tight bright core and a wider soft halo, so
+                // the chip genuinely glows against the black panel.
+                .shadow(color: accent.opacity(0.9), radius: 2)
+                .shadow(color: accent.opacity(0.55), radius: 5.5)
+                // A hair of padding so neither shadow is clipped by the
+                // menu label's tight bounds.
+                .padding(2)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
