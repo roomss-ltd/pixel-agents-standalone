@@ -113,14 +113,26 @@ struct NotchView: View {
             isMenuOpen = true
         }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
-            // Clear after a beat: when the menu closes the cursor is
-            // often still off-panel for an instant, which would fire a
-            // trailing .onHover(false). Holding the flag briefly lets
-            // that settle before normal hover tracking resumes.
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(250))
-                self.isMenuOpen = false
-            }
+            scheduleMenuClose()
+        }
+        // Custom in-app overlays (the per-row priority picker popover)
+        // get the exact same treatment as NSMenu tracking.
+        .onReceive(NotificationCenter.default.publisher(for: .agentTabOverlayOpen)) { _ in
+            isMenuOpen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentTabOverlayClosed)) { _ in
+            scheduleMenuClose()
+        }
+    }
+
+    /// Clear `isMenuOpen` after a beat: when a menu / popover closes the
+    /// cursor is often still off-panel for an instant, which would fire
+    /// a trailing `.onHover(false)`. Holding the flag briefly lets that
+    /// settle before normal hover tracking resumes.
+    private func scheduleMenuClose() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            self.isMenuOpen = false
         }
     }
 
@@ -164,6 +176,13 @@ extension Notification.Name {
     /// auto-hidden notch to briefly slide down so the user sees
     /// what they're being navigated to.
     static let agentTabRequestPeek = Notification.Name("AgentTAB.RequestPeek")
+
+    /// Posted by a custom in-app overlay (the per-row priority picker
+    /// popover) when it opens / closes. The panel and NotchView treat
+    /// these like NSMenu tracking — keep the panel expanded and
+    /// interactive while the overlay is up.
+    static let agentTabOverlayOpen   = Notification.Name("AgentTAB.OverlayOpen")
+    static let agentTabOverlayClosed = Notification.Name("AgentTAB.OverlayClosed")
 }
 
 /// Custom transition modifier — non-uniform scaleEffect with anchor.

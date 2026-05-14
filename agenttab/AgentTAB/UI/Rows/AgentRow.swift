@@ -26,6 +26,7 @@ struct AgentRow: View {
 
     @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
+    @State private var showPriorityPicker = false
 
     /// Show the hover action cluster whenever the cursor is over the
     /// row and edit mode is off. Buttons are visually dimmed (and
@@ -111,10 +112,7 @@ struct AgentRow: View {
 
     // MARK: - Priority dropdown
 
-    /// Linear-style priority picker — just the bare icon in the
-    /// priority's neon colour (no box, no glow). The chip is a plain
-    /// view with a transparent `Menu` overlaid as the click target /
-    /// dropdown host.
+    /// Bare icon in the priority's neon colour (no box, no glow).
     private var priorityChip: some View {
         Image(systemName: session.priority.systemImage)
             .font(.system(size: 10.5, weight: .bold))
@@ -122,28 +120,34 @@ struct AgentRow: View {
             .frame(width: 17, height: 17)
     }
 
+    /// The chip is a plain `Button` that opens a CUSTOM popover — not
+    /// an `NSMenu` — so the dropdown can be fully styled to the
+    /// neon-dark theme with colour-coded icons. The popover lives in
+    /// its own window outside the panel, so it posts
+    /// `.agentTabOverlayOpen` / `.agentTabOverlayClosed` to keep the
+    /// notch from collapsing while it's up (same guard NSMenus get).
     private var priorityMenu: some View {
-        priorityChip
-            .padding(2)
-            .overlay(
-                Menu {
-                    ForEach(Priority.allCases.reversed(), id: \.self) { level in
-                        Button {
-                            onSetPriority(level)
-                        } label: {
-                            Label(level.displayName, systemImage: level.systemImage)
-                        }
-                    }
-                } label: {
-                    // Invisible hit target — sized to the padded chip
-                    // by the overlay. The visible icon lives on
-                    // `priorityChip` underneath.
-                    Color.clear.contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
+        Button {
+            showPriorityPicker.toggle()
+        } label: {
+            priorityChip
+                .padding(2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Priority — \(session.priority.displayName)")
+        .popover(isPresented: $showPriorityPicker, arrowEdge: .bottom) {
+            PriorityPickerView(current: session.priority) { level in
+                onSetPriority(level)
+                showPriorityPicker = false
+            }
+        }
+        .onChange(of: showPriorityPicker) { _, open in
+            NotificationCenter.default.post(
+                name: open ? .agentTabOverlayOpen : .agentTabOverlayClosed,
+                object: nil
             )
-            .help("Priority — \(session.priority.displayName)")
+        }
     }
 
     // MARK: - Hover actions
@@ -317,6 +321,61 @@ struct AgentRow: View {
         if minutes < 60 { return "\(minutes)m ago" }
         let hours = Int(interval / 3600)
         return "\(hours)h ago"
+    }
+}
+
+// MARK: - Priority picker popover
+
+/// Styled dark dropdown for the per-row priority picker. Each row is
+/// the level's neon-coloured icon + name; the current level is
+/// highlighted and checkmarked. Replaces the native NSMenu so the
+/// dropdown matches the app's pitch-black neon aesthetic.
+private struct PriorityPickerView: View {
+    let current: Priority
+    let onPick: (Priority) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            // Urgent at the top, Sidequest at the bottom — matches the
+            // row chip's hierarchy and Linear's ordering.
+            ForEach(Priority.allCases.reversed(), id: \.self) { level in
+                row(level)
+            }
+        }
+        .padding(5)
+        .frame(width: 168)
+        .background(Color(red: 0x0E / 255.0, green: 0x0E / 255.0, blue: 0x10 / 255.0))
+    }
+
+    private func row(_ level: Priority) -> some View {
+        let isCurrent = level == current
+        return Button {
+            onPick(level)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: level.systemImage)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(level.color)
+                    .frame(width: 16)
+                Text(level.displayName)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textStrong)
+                Spacer(minLength: 0)
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(Theme.textDim)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5.5)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isCurrent ? Color.white.opacity(0.06) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -29,8 +29,7 @@ final class NotchPanel: NSPanel {
     private var localKeyMonitor: Any?
     private var edgeHoverMonitor: Any?
     private var hotkeyMonitor: Any?
-    private var menuBeginObserver: NSObjectProtocol?
-    private var menuEndObserver: NSObjectProtocol?
+    private var menuTrackingObservers: [NSObjectProtocol] = []
 
     /// True while an NSMenu spawned from inside the panel (the per-row
     /// priority dropdown, the footer "⋯" menu) is open. The menu popup
@@ -110,26 +109,40 @@ final class NotchPanel: NSPanel {
     }
 
     private func startMenuTrackingObservers() {
-        menuBeginObserver = NotificationCenter.default.addObserver(
-            forName: NSMenu.didBeginTrackingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.isMenuTracking = true }
-        }
-        menuEndObserver = NotificationCenter.default.addObserver(
-            forName: NSMenu.didEndTrackingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                // Hold the guard briefly past the menu closing — the
-                // selection click's leftMouseDown is delivered around
-                // the same instant the menu ends tracking, and it must
-                // still be covered or it'll collapse the panel.
-                try? await Task.sleep(for: .milliseconds(200))
-                self?.isMenuTracking = false
+        // NSMenu popups (e.g. the footer "⋯" menu) and our own custom
+        // popovers (the per-row priority picker) both live in windows
+        // outside the panel. Treat both the same way: while either is
+        // up, the panel's monitors must not collapse it.
+        let beginNames: [Notification.Name] = [
+            NSMenu.didBeginTrackingNotification,
+            .agentTabOverlayOpen,
+        ]
+        let endNames: [Notification.Name] = [
+            NSMenu.didEndTrackingNotification,
+            .agentTabOverlayClosed,
+        ]
+        for name in beginNames {
+            let obs = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.isMenuTracking = true }
             }
+            menuTrackingObservers.append(obs)
+        }
+        for name in endNames {
+            let obs = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    // Hold the guard briefly past the close — the
+                    // dismissing click's leftMouseDown lands around the
+                    // same instant, and must still be covered or it'll
+                    // collapse the panel.
+                    try? await Task.sleep(for: .milliseconds(200))
+                    self?.isMenuTracking = false
+                }
+            }
+            menuTrackingObservers.append(obs)
         }
     }
 
@@ -157,8 +170,7 @@ final class NotchPanel: NSPanel {
         if let m = edgeHoverMonitor { NSEvent.removeMonitor(m) }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m) }
         if let o = peekObserver { NotificationCenter.default.removeObserver(o) }
-        if let o = menuBeginObserver { NotificationCenter.default.removeObserver(o) }
-        if let o = menuEndObserver { NotificationCenter.default.removeObserver(o) }
+        for o in menuTrackingObservers { NotificationCenter.default.removeObserver(o) }
         pendingRehide?.cancel()
     }
 
