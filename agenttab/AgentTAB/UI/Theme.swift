@@ -55,6 +55,11 @@ enum Theme {
         static let amber      = Color(red: 0xFF/255.0, green: 0xAE/255.0, blue: 0x5B/255.0)
         static let amberSoft  = Color(red: 0xFF/255.0, green: 0xAE/255.0, blue: 0x5B/255.0).opacity(0.18)
         static let amberEdge  = Color(red: 0xFF/255.0, green: 0xAE/255.0, blue: 0x5B/255.0).opacity(0.50)
+
+        // Pink — urgent-finished reminder accent (#FF5BA8)
+        static let pink       = Color(red: 0xFF/255.0, green: 0x5B/255.0, blue: 0xA8/255.0)
+        static let pinkSoft   = Color(red: 0xFF/255.0, green: 0x5B/255.0, blue: 0xA8/255.0).opacity(0.18)
+        static let pinkEdge   = Color(red: 0xFF/255.0, green: 0x5B/255.0, blue: 0xA8/255.0).opacity(0.50)
     }
 
     // ── Activity colors (state semantics) ────────────────────────

@@ -109,6 +109,10 @@ struct ToastView: View {
             CheckGlyph()
                 .stroke(Theme.Neon.green,
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        case .urgentReminder:
+            WarnGlyph()
+                .stroke(Theme.Neon.pink,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
         }
     }
 
@@ -132,8 +136,9 @@ struct ToastView: View {
 
     private var headline: String {
         switch toast.variant {
-        case .attention: return "AgentTab needs input"
-        case .success:   return "Task complete"
+        case .attention:      return "AgentTab needs input"
+        case .success:        return "Task complete"
+        case .urgentReminder: return "Urgent agent still waiting"
         }
     }
 
@@ -146,26 +151,25 @@ struct ToastView: View {
 
     private var chipAccent: TaskChip.Accent {
         switch toast.variant {
-        case .attention: return .amber
-        case .success:   return .green
+        case .attention:      return .amber
+        case .success:        return .green
+        case .urgentReminder: return .pink
+        }
+    }
+
+    private var accentBase: Color {
+        switch toast.variant {
+        case .attention:      return Theme.Neon.amber
+        case .success:        return Theme.Neon.green
+        case .urgentReminder: return Theme.Neon.pink
         }
     }
 
     private var edgeColor: Color {
-        let base: Color
-        switch toast.variant {
-        case .attention: base = Theme.Neon.amber
-        case .success:   base = Theme.Neon.green
-        }
-        return base.opacity(isEngaged ? 1.0 : 0.85)
+        accentBase.opacity(isEngaged ? 1.0 : 0.85)
     }
 
     private var glowColor: Color {
-        let base: Color
-        switch toast.variant {
-        case .attention: base = Theme.Neon.amber
-        case .success:   base = Theme.Neon.green
-        }
-        return base.opacity(isEngaged ? 0.45 : 0.20)
+        accentBase.opacity(isEngaged ? 0.45 : 0.20)
     }
 }

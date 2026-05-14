@@ -16,8 +16,10 @@ struct Toast: Identifiable {
     let message: String      // e.g. "Waiting for approval", "Finished in 2m 14s"
 
     enum Variant {
-        case attention   // amber — agent needs input
-        case success     // green — task complete
+        case attention        // amber — agent needs input
+        case success          // green — task complete
+        case urgentReminder   // pink — an urgent agent finished and
+                              // has sat unattended past the threshold
     }
 }
 

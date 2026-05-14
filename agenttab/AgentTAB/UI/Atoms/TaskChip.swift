@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct TaskChip: View {
-    enum Accent { case green, blue, amber }
+    enum Accent { case green, blue, amber, pink }
     enum Size { case sm, xs }
 
     let id: String
@@ -66,6 +66,7 @@ struct TaskChip: View {
         case .green: return Theme.Chip.greenFg
         case .blue:  return Theme.Chip.blueFg
         case .amber: return Theme.Chip.amberFg
+        case .pink:  return Theme.Neon.pink
         }
     }
 
@@ -74,6 +75,7 @@ struct TaskChip: View {
         case .green: return Theme.Chip.greenBg
         case .blue:  return Theme.Chip.blueBg
         case .amber: return Theme.Chip.amberBg
+        case .pink:  return Theme.Neon.pink.opacity(0.10)
         }
     }
 
@@ -82,6 +84,7 @@ struct TaskChip: View {
         case .green: return Theme.Chip.greenEdge
         case .blue:  return Theme.Chip.blueEdge
         case .amber: return Theme.Chip.amberEdge
+        case .pink:  return Theme.Neon.pink.opacity(0.40)
         }
     }
 }

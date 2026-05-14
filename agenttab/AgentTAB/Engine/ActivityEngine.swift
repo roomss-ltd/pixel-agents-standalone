@@ -250,6 +250,22 @@ final class ActivityEngine: ObservableObject {
     private static let dedupeWindow: TimeInterval = 30
     private static let throttleWindow: TimeInterval = 60
 
+    // MARK: - Urgent-finished reminders
+
+    /// An `.urgent` session that has been finished (and untouched) for
+    /// longer than this starts getting pink reminder pop-ups.
+    private static let urgentReminderThreshold: TimeInterval = 120   // 2 min
+
+    /// Rolling rate-limit: at most `urgentReminderCap` pink reminders
+    /// per session per `urgentReminderWindow`.
+    private static let urgentReminderWindow: TimeInterval = 120       // 2 min
+    private static let urgentReminderCap = 3
+
+    /// Per-session reminder state: how many times we've nagged in the
+    /// current window, and when that window opened.
+    private var urgentReminders: [UUID: (count: Int, windowStart: Date)] = [:]
+    private var urgentReminderTimer: AnyCancellable?
+
     // MARK: - Priority (Jira/Linear-style tab prioritisation)
 
     private static let prioritiesKey = "AgentTAB.priorities"
@@ -344,6 +360,76 @@ final class ActivityEngine: ObservableObject {
             zellijReader?.start()
             print("[Engine] Zellij status reader active")
         }
+
+        startUrgentReminderTimer()
+    }
+
+    // MARK: - Urgent-finished reminder loop
+
+    private func startUrgentReminderTimer() {
+        // 30s tick: with a 3-per-2-min cap that produces ~3 reminders
+        // spread across each rolling 2-minute window.
+        urgentReminderTimer = Timer.publish(every: 30, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.checkUrgentReminders() }
+    }
+
+    /// Fire a pink reminder for every `.urgent` session that's been
+    /// finished and untouched past the threshold, rate-limited to
+    /// `urgentReminderCap` per `urgentReminderWindow` per session.
+    private func checkUrgentReminders() {
+        let now = Date()
+
+        let qualifying = sessions.filter { s -> Bool in
+            guard s.priority == .urgent, !s.isHistorical else { return false }
+            switch s.activity {
+            case .done, .idle:
+                return now.timeIntervalSince(s.lastUpdate) > Self.urgentReminderThreshold
+            default:
+                return false
+            }
+        }
+
+        // Drop reminder state for sessions that no longer qualify —
+        // started processing again, removed, de-prioritised, etc. A
+        // fresh qualification later starts a clean window.
+        let qualifyingIds = Set(qualifying.map(\.id))
+        urgentReminders = urgentReminders.filter { qualifyingIds.contains($0.key) }
+
+        for session in qualifying {
+            var entry = urgentReminders[session.id] ?? (count: 0, windowStart: now)
+            if now.timeIntervalSince(entry.windowStart) >= Self.urgentReminderWindow {
+                entry = (count: 0, windowStart: now)   // roll the window
+            }
+            guard entry.count < Self.urgentReminderCap else {
+                urgentReminders[session.id] = entry
+                continue
+            }
+            entry.count += 1
+            urgentReminders[session.id] = entry
+            fireUrgentReminder(for: session)
+        }
+    }
+
+    private func fireUrgentReminder(for session: Session) {
+        let focusAction: () -> Void = { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.post(name: .agentTabRequestPeek, object: nil)
+            if let live = self.sessions.first(where: { $0.id == session.id }) {
+                self.focus(live)
+            } else {
+                self.focus(session)
+            }
+        }
+        let toast = Toast(
+            variant: .urgentReminder,
+            taskId: displayLabel(for: session),
+            projectName: displayName(for: session),
+            message: "Urgent · finished, still unattended"
+        )
+        toastPanel.show(toast, duration: 5, onTap: focusAction)
+        if soundsEnabled { soundPlayer.playWaiting() }
+        AgentLog.notify.info("urgent reminder session=\(session.claudeSessionId, privacy: .public)")
     }
 
     private func discoverSession(jsonlURL: URL, projectHash: String, mtime: Date, isLive: Bool) {
