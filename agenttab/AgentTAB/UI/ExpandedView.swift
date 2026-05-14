@@ -35,6 +35,7 @@ private struct RightIntrinsicKey: PreferenceKey {
 
 struct ExpandedView: View {
     @EnvironmentObject var engine: ActivityEngine
+    @EnvironmentObject var tokenTracker: TokenTracker
     @Environment(\.notchGeometry) var geometry
 
     /// `false` renders the compact-bar form (just the header sized to a
@@ -61,6 +62,11 @@ struct ExpandedView: View {
     enum SortMode: String, CaseIterable { case recency, priority }
     @AppStorage("AgentTAB.sortMode") private var sortModeRaw: String = SortMode.recency.rawValue
     private var sortMode: SortMode { SortMode(rawValue: sortModeRaw) ?? .recency }
+
+    /// Bumped on every expand. Passed down to each AgentRow so its
+    /// staggered pop-in re-runs reliably even when LazyVGrid reuses the
+    /// row view (which keeps the row's `@State` alive).
+    @State private var expandGeneration: Int = 0
 
     /// Compact-form bar width. ~42pt wings host a single SLIM icon
     /// centred per side with explicit outer-edge padding so the icon
@@ -127,6 +133,12 @@ struct ExpandedView: View {
         .animation(Theme.Animations.notch, value: showSettings)
         .onPreferenceChange(ExpandedSizeKey.self) { size in
             onSizeChange(size)
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded {
+                expandGeneration &+= 1
+                tokenTracker.refresh()
+            }
         }
     }
 
@@ -292,11 +304,12 @@ struct ExpandedView: View {
             || !recentlyActiveSessions.isEmpty || !olderFinishedSessions.isEmpty
 
         VStack(spacing: 12) {
-            // Sort-mode switcher — only shown when there's something to
-            // sort. Lets the user flip every section between recency
-            // ordering and user-assigned priority ordering.
+            // Header row — daily token spend on the left, the
+            // recency/priority sort switcher on the right. Only shown
+            // when there's at least one session to look at.
             if hasAny {
                 HStack {
+                    tokenCounter
                     Spacer()
                     sortModeToggle
                 }
@@ -341,6 +354,48 @@ struct ExpandedView: View {
                 emptyState
             }
         }
+    }
+
+    // MARK: - Token counter
+
+    /// Daily token-spend pill — total tokens across every agent that
+    /// ran on this machine today. Sits at the top-left of the sections,
+    /// mirroring the sort switcher on the right. Resets at midnight
+    /// (handled inside TokenTracker).
+    private var tokenCounter: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "circle.hexagongrid.fill")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Theme.Neon.blue)
+            Text(formatTokens(tokenTracker.todayTokens))
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textStrong)
+            Text("tokens today")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                )
+        )
+        .help("Total tokens spent across all agents today — resets at midnight")
+    }
+
+    /// 1_234_567 → "1.2M", 45_678 → "45.7K", 312 → "312".
+    private func formatTokens(_ n: Int) -> String {
+        if n >= 1_000_000 {
+            return String(format: "%.1fM", Double(n) / 1_000_000)
+        } else if n >= 1_000 {
+            return String(format: "%.1fK", Double(n) / 1_000)
+        }
+        return "\(n)"
     }
 
     // MARK: - Sort-mode toggle
@@ -421,7 +476,8 @@ struct ExpandedView: View {
                     onUnlink: { engine.hide(session) },
                     onOpenFolder: { engine.openFolder(session) },
                     onOpenEditor: { engine.openEditor(session) },
-                    onSetPriority: { engine.setPriority($0, for: session) }
+                    onSetPriority: { engine.setPriority($0, for: session) },
+                    appearanceGeneration: expandGeneration
                 )
             }
         }

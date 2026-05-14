@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updater = UpdaterCoordinator()
     let screenTracker = ScreenTracker()
     let fullscreenDetector = FullscreenDetector()
+    let tokenTracker = TokenTracker()
     private var onboardingWindow: NSWindow?
     private var trackerCancellable: AnyCancellable?
     private var autoHideCancellable: AnyCancellable?
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = makeMenu()
 
         engine.start()
+        tokenTracker.start()
 
         let panel = NotchPanel(rootView: AnyView(EmptyView()))
         notchPanel = panel
@@ -95,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
             .environment(\.notchGeometry, geometry)
             .environmentObject(engine)
+            .environmentObject(tokenTracker)
 
         if let hostingView = panel.contentView as? NSHostingView<AnyView> {
             hostingView.rootView = AnyView(rootView)

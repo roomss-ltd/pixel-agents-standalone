@@ -21,6 +21,11 @@ struct AgentRow: View {
     var onOpenFolder: () -> Void = {}
     var onOpenEditor: () -> Void = {}
     var onSetPriority: (Priority) -> Void = { _ in }
+    /// Bumped by ExpandedView on every expand. AgentRow watches it so
+    /// the staggered pop-in re-runs each time the notch opens — even
+    /// when LazyVGrid reuses the same row view instance (which keeps
+    /// `@State` alive and would otherwise make the effect fire once).
+    var appearanceGeneration: Int = 0
 
     enum Variant { case active, attention, finished, resting }
 
@@ -118,9 +123,17 @@ struct AgentRow: View {
                 onClick()
             }
         }
-        .onAppear {
-            // Random delay → tabs reveal in a random order, not all at
-            // once. 0–0.4s spread keeps the whole grid settled fast.
+        .onAppear { staggerIn() }
+        .onChange(of: appearanceGeneration) { _, _ in staggerIn() }
+    }
+
+    /// Hide instantly, then spring back in after a random 0–0.4s delay.
+    /// The hide is committed on this runloop tick and the animated
+    /// reveal is deferred to the next, so SwiftUI can't coalesce them
+    /// into a no-op (which would skip the effect on re-expand).
+    private func staggerIn() {
+        hasAppeared = false
+        DispatchQueue.main.async {
             let delay = Double.random(in: 0 ... 0.4)
             withAnimation(.spring(response: 0.4, dampingFraction: 0.72).delay(delay)) {
                 hasAppeared = true
