@@ -111,39 +111,20 @@ struct AgentRow: View {
 
     // MARK: - Priority dropdown
 
-    /// Linear-style priority picker. The visible glowing chip is a
-    /// PLAIN view (so `.shadow` actually renders) — `Menu` with
-    /// `.borderlessButton` hosts its label in a button cell that clips
-    /// shadows to its bounds, which is why the glow was invisible. So
-    /// we render the chip directly and overlay a transparent `Menu`
-    /// purely as the click target / dropdown host.
+    /// Linear-style priority picker — just the bare icon in the
+    /// priority's neon colour (no box, no glow). The chip is a plain
+    /// view with a transparent `Menu` overlaid as the click target /
+    /// dropdown host.
     private var priorityChip: some View {
-        let accent = session.priority.color
-        return Image(systemName: session.priority.systemImage)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(accent)
+        Image(systemName: session.priority.systemImage)
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundStyle(session.priority.color)
             .frame(width: 17, height: 17)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(accent.opacity(0.22))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(accent.opacity(0.7), lineWidth: 0.75)
-            )
-            // Neon glow — two stacked shadows in the priority's own
-            // colour: a tight bright core and a wider soft halo. These
-            // render now because the chip is a normal view, not a Menu
-            // label.
-            .shadow(color: accent.opacity(0.95), radius: 2.5)
-            .shadow(color: accent.opacity(0.6), radius: 6)
     }
 
     private var priorityMenu: some View {
         priorityChip
-            // 4pt pad so the radius-6 halo isn't clipped by the
-            // surrounding HStack layout bounds.
-            .padding(4)
+            .padding(2)
             .overlay(
                 Menu {
                     ForEach(Priority.allCases.reversed(), id: \.self) { level in
@@ -155,7 +136,7 @@ struct AgentRow: View {
                     }
                 } label: {
                     // Invisible hit target — sized to the padded chip
-                    // by the overlay. The visible glow lives on
+                    // by the overlay. The visible icon lives on
                     // `priorityChip` underneath.
                     Color.clear.contentShape(Rectangle())
                 }
