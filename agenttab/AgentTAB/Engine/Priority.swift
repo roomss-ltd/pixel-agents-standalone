@@ -54,9 +54,11 @@ enum Priority: Int, CaseIterable, Codable {
         }
     }
 
-    /// Light, bright neon accents owned by Priority — the Theme palette
-    /// only has amber and a darker blue.
-    static let neonYellow = Color(red: 0xFF / 255.0, green: 0xF5 / 255.0, blue: 0x70 / 255.0)
-    static let neonBlue   = Color(red: 0x84 / 255.0, green: 0xC5 / 255.0, blue: 0xFF / 255.0)
-    static let neonRed    = Color(red: 0xFF / 255.0, green: 0x8C / 255.0, blue: 0x8C / 255.0)
+    /// Very light, bright neon accents owned by Priority — the Theme
+    /// palette only has amber and a darker blue. Kept pale on purpose
+    /// so the soft glow (see `AgentRow.priorityMenu`) reads as the
+    /// accent rather than the fill.
+    static let neonYellow = Color(red: 0xFF / 255.0, green: 0xFA / 255.0, blue: 0xB0 / 255.0)
+    static let neonBlue   = Color(red: 0xB4 / 255.0, green: 0xDC / 255.0, blue: 0xFF / 255.0)
+    static let neonRed    = Color(red: 0xFF / 255.0, green: 0xB6 / 255.0, blue: 0xB6 / 255.0)
 }

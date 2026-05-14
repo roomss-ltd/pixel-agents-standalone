@@ -143,6 +143,9 @@ struct AgentRow: View {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(session.priority.color.opacity(0.55), lineWidth: 0.75)
                 )
+                // Minimal neon glow — a tight, low-opacity halo in the
+                // priority's own colour so the chip reads as "lit".
+                .shadow(color: session.priority.color.opacity(0.55), radius: 2.5)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
