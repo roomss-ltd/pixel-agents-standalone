@@ -53,6 +53,15 @@ struct ExpandedView: View {
     @State private var showSettings: Bool = false
     @State private var isEditMode: Bool = false
 
+    /// Section ordering mode. `.recency` keeps the original behaviour
+    /// (tab-index for live sections, last-update for finished ones);
+    /// `.priority` sorts by the user-assigned Priority first, then
+    /// falls back to the same secondary key. Persisted so it sticks
+    /// across launches.
+    enum SortMode: String, CaseIterable { case recency, priority }
+    @AppStorage("AgentTAB.sortMode") private var sortModeRaw: String = SortMode.recency.rawValue
+    private var sortMode: SortMode { SortMode(rawValue: sortModeRaw) ?? .recency }
+
     /// Compact-form bar width. ~42pt wings host a single SLIM icon
     /// centred per side with explicit outer-edge padding so the icon
     /// sits clearly inside its allocated square (not flush against
@@ -350,7 +359,8 @@ struct ExpandedView: View {
                     onClick: { handleClick(session) },
                     onUnlink: { engine.hide(session) },
                     onOpenFolder: { engine.openFolder(session) },
-                    onOpenEditor: { engine.openEditor(session) }
+                    onOpenEditor: { engine.openEditor(session) },
+                    onSetPriority: { engine.setPriority($0, for: session) }
                 )
             }
         }
@@ -377,6 +387,16 @@ struct ExpandedView: View {
                 FootBtn(systemImage: "pencil", isOn: isEditMode) {
                     isEditMode.toggle()
                 }
+                // Sort mode — clock = recency, flag = priority.
+                FootBtn(
+                    systemImage: sortMode == .priority ? "flag.fill" : "clock",
+                    isOn: sortMode == .priority
+                ) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        sortModeRaw = (sortMode == .recency ? SortMode.priority : .recency).rawValue
+                    }
+                }
+                .help(sortMode == .priority ? "Sorting by priority" : "Sorting by recency")
                 appMenuButton
             }
             Spacer()
@@ -462,21 +482,40 @@ struct ExpandedView: View {
     /// compact and expanded views can never diverge.
     private var doneCount: Int { engine.recentlyActiveDoneSessions().count }
 
-    private var activeSessions: [Session] {
-        engine.displaySessions
-            .filter {
-                switch $0.activity {
-                case .thinking, .tool: return true
-                default: return false
+    /// Apply the active SortMode. In `.recency` the caller's
+    /// `secondary` comparator is the whole ordering (original
+    /// behaviour). In `.priority` we sort by Priority descending
+    /// first, then fall back to `secondary` within each level.
+    private func sortedByMode(
+        _ list: [Session],
+        secondary: @escaping (Session, Session) -> Bool
+    ) -> [Session] {
+        switch sortMode {
+        case .recency:
+            return list.sorted(by: secondary)
+        case .priority:
+            return list.sorted { a, b in
+                if a.priority != b.priority {
+                    return a.priority.rawValue > b.priority.rawValue
                 }
+                return secondary(a, b)
             }
-            .sorted(by: ActivityEngine.byTabIndexAsc)
+        }
+    }
+
+    private var activeSessions: [Session] {
+        let filtered = engine.displaySessions.filter {
+            switch $0.activity {
+            case .thinking, .tool: return true
+            default: return false
+            }
+        }
+        return sortedByMode(filtered, secondary: ActivityEngine.byTabIndexAsc)
     }
 
     private var attentionSessions: [Session] {
-        engine.displaySessions
-            .filter { $0.activity == .waiting }
-            .sorted(by: ActivityEngine.byTabIndexAsc)
+        let filtered = engine.displaySessions.filter { $0.activity == .waiting }
+        return sortedByMode(filtered, secondary: ActivityEngine.byTabIndexAsc)
     }
 
     /// Cutoff for the recently-active vs. older split. Lives on
@@ -485,42 +524,42 @@ struct ExpandedView: View {
     private static var recentFinishedWindow: TimeInterval { ActivityEngine.recentFinishedWindow }
 
     private var restingSessions: [Session] {
-        engine.displaySessions
-            .filter {
-                switch $0.activity {
-                case .done, .idle, .initState: return true
-                default: return false
-                }
+        let filtered = engine.displaySessions.filter {
+            switch $0.activity {
+            case .done, .idle, .initState: return true
+            default: return false
             }
-            .sorted { $0.lastUpdate > $1.lastUpdate }
+        }
+        return sortedByMode(filtered, secondary: { $0.lastUpdate > $1.lastUpdate })
     }
 
-    /// RECENTLY ACTIVE = only `.done` within the window. Idle / init
-    /// sessions are NEVER recent (idle by definition means they've been
-    /// quiet for a while, init means they just started — neither is a
-    /// "finished within the last hour" event).
+    /// RECENTLY ACTIVE = only `.done` within the window (or any
+    /// `.urgent` session, which never ages out — see
+    /// `engine.recentlyActiveDoneSessions()`).
     private var recentlyActiveSessions: [Session] {
-        engine.recentlyActiveDoneSessions()
+        sortedByMode(engine.recentlyActiveDoneSessions(),
+                     secondary: { $0.lastUpdate > $1.lastUpdate })
     }
 
     /// OLDER FINISHED = any `.done` or `.idle` session past the
     /// recently-active window, plus `.initState` (starting-but-stalled).
-    /// Same finished-state predicate as RECENTLY ACTIVE; only the
-    /// elapsed-time check flips.
+    /// `.urgent` sessions are explicitly excluded — they stay in
+    /// RECENTLY ACTIVE forever, mirroring the engine's predicate.
     private var olderFinishedSessions: [Session] {
         let now = Date()
-        return engine.displaySessions
-            .filter { s in
-                switch s.activity {
-                case .done, .idle:
-                    return now.timeIntervalSince(s.lastUpdate) > Self.recentFinishedWindow
-                case .initState:
-                    return true
-                default:
-                    return false
-                }
+        let filtered = engine.displaySessions.filter { s in
+            // Urgent never goes to OLDER, regardless of elapsed time.
+            if s.priority == .urgent { return false }
+            switch s.activity {
+            case .done, .idle:
+                return now.timeIntervalSince(s.lastUpdate) > Self.recentFinishedWindow
+            case .initState:
+                return true
+            default:
+                return false
             }
-            .sorted { $0.lastUpdate > $1.lastUpdate }
+        }
+        return sortedByMode(filtered, secondary: { $0.lastUpdate > $1.lastUpdate })
     }
 
     private var topActiveSession: Session? {

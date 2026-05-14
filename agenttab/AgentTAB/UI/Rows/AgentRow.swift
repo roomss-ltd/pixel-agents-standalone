@@ -20,6 +20,7 @@ struct AgentRow: View {
     var onUnlink: () -> Void = {}
     var onOpenFolder: () -> Void = {}
     var onOpenEditor: () -> Void = {}
+    var onSetPriority: (Priority) -> Void = { _ in }
 
     enum Variant { case active, attention, finished, resting }
 
@@ -40,7 +41,9 @@ struct AgentRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 6) {
+            priorityMenu
+
             TaskChip(
                 id: chipId,
                 accent: chipAccent,
@@ -104,6 +107,42 @@ struct AgentRow: View {
                 onClick()
             }
         }
+    }
+
+    // MARK: - Priority dropdown
+
+    /// Linear-style priority picker. The label shows the current
+    /// priority's icon tinted by its colour; the dropdown lists all
+    /// five levels, Urgent at the top. `Menu` captures its own clicks,
+    /// so the row's body-tap (focus terminal) still works everywhere
+    /// else on the row.
+    private var priorityMenu: some View {
+        Menu {
+            ForEach(Priority.allCases.reversed(), id: \.self) { level in
+                Button {
+                    onSetPriority(level)
+                } label: {
+                    Label(level.displayName, systemImage: level.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: session.priority.systemImage)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(session.priority.color)
+                .frame(width: 16, height: 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(session.priority.color.opacity(0.14))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(session.priority.color.opacity(0.32), lineWidth: 0.5)
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Priority — \(session.priority.displayName)")
     }
 
     // MARK: - Hover actions

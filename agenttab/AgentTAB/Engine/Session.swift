@@ -21,6 +21,10 @@ struct Session: Identifiable, Equatable {
     /// green "done" badge — that badge tracks completions that happened
     /// while AgentTAB was running.
     var isHistorical: Bool
+    /// User-assigned priority (Jira / Linear style). Persisted by the
+    /// engine, keyed by `claudeSessionId`, so it survives restarts.
+    /// An `.urgent` session never ages out of RECENTLY ACTIVE.
+    var priority: Priority
 
     init(claudeSessionId: String, projectName: String, projectPath: String) {
         self.id = UUID()
@@ -35,6 +39,7 @@ struct Session: Identifiable, Equatable {
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)
         self.isHistorical = false
+        self.priority = .default
     }
 }
 

@@ -249,6 +249,45 @@ final class ActivityEngine: ObservableObject {
 
     private static let dedupeWindow: TimeInterval = 30
     private static let throttleWindow: TimeInterval = 60
+
+    // MARK: - Priority (Jira/Linear-style tab prioritisation)
+
+    private static let prioritiesKey = "AgentTAB.priorities"
+
+    /// `claudeSessionId → Priority.rawValue`. Persisted so a user's
+    /// prioritisation survives an AgentTAB restart.
+    private var storedPriorities: [String: Int] {
+        get { (UserDefaults.standard.dictionary(forKey: Self.prioritiesKey) as? [String: Int]) ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Self.prioritiesKey) }
+    }
+
+    /// Priority stored for a given claude/run id, or the default when
+    /// the user hasn't assigned one. Used at session-discovery time.
+    func storedPriority(for claudeSessionId: String) -> Priority {
+        Priority(rawValue: storedPriorities[claudeSessionId] ?? Priority.default.rawValue) ?? .default
+    }
+
+    /// Assign a priority to a session — updates the live model and
+    /// persists immediately, keyed by `claudeSessionId`.
+    func setPriority(_ priority: Priority, for session: Session) {
+        guard let idx = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        sessions[idx].priority = priority
+        var map = storedPriorities
+        map[sessions[idx].claudeSessionId] = priority.rawValue
+        storedPriorities = map
+        AgentLog.engine.info("priority set session=\(self.sessions[idx].claudeSessionId, privacy: .public) priority=\(priority.displayName, privacy: .public)")
+    }
+
+    /// Move a stored priority across an id change. Zellij sessions
+    /// start keyed by `zellij-pane-N` and later surface a real
+    /// `run_id`; without this the user's assignment would be orphaned
+    /// under the old key.
+    private func migratePriorityKey(from oldId: String, to newId: String) {
+        var map = storedPriorities
+        guard let value = map.removeValue(forKey: oldId) else { return }
+        map[newId] = value
+        storedPriorities = map
+    }
     private let parser = TranscriptParser()
     private let permissionTimer = PermissionTimer()
     private let jsonlWatcher: JSONLWatcher
@@ -318,6 +357,7 @@ final class ActivityEngine: ObservableObject {
             projectPath: projectPath
         )
         session.lastUpdate = mtime
+        session.priority = storedPriority(for: claudeSessionId)
         if !isLive {
             // Historical session — never going to be touched by the live
             // parser. Mark it done so it shows up in the OLDER list with the
@@ -643,6 +683,7 @@ final class ActivityEngine: ObservableObject {
         )
         session.terminalKind = .zellij(info)
         session.activity = zellijActivity
+        session.priority = storedPriority(for: claudeId)
         // New session has no prior `lastUpdate` to preserve — fall back
         // to `now` when elapsed parsing failed.
         session.lastUpdate = zellijLastUpdate ?? Date()
@@ -668,9 +709,12 @@ final class ActivityEngine: ObservableObject {
 
         // Keep the runId index in sync if zellij surfaces it later.
         if let runId, sessions[index].claudeSessionId != runId {
-            sessionsByClaudeId.removeValue(forKey: sessions[index].claudeSessionId)
+            let oldId = sessions[index].claudeSessionId
+            sessionsByClaudeId.removeValue(forKey: oldId)
             sessions[index].claudeSessionId = runId
             sessionsByClaudeId[runId] = sessions[index].id
+            // Carry the user's priority assignment across the id change.
+            migratePriorityKey(from: oldId, to: runId)
         }
 
         let claudeId = sessions[index].claudeSessionId
@@ -754,7 +798,12 @@ final class ActivityEngine: ObservableObject {
             .filter { s in
                 switch s.activity {
                 case .done, .idle:
-                    return !s.isHistorical && s.lastUpdate >= cutoff
+                    guard !s.isHistorical else { return false }
+                    // Urgent tabs never age out into OLDER FINISHED —
+                    // they stay in RECENTLY ACTIVE regardless of how
+                    // much time has passed since they finished.
+                    if s.priority == .urgent { return true }
+                    return s.lastUpdate >= cutoff
                 default:
                     return false
                 }
