@@ -108,6 +108,12 @@ struct AgentRow: View {
         // elapses, then springs to full size + opacity.
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.82)
+        // `.identity` so an ambient `.animation(_:value:)` scope (the
+        // panel's isExpanded / isOlderOpen scopes) never layers a
+        // default fade-in on top of `staggerIn()`. Every row in every
+        // section then has exactly one appearance animation: the
+        // spring stagger.
+        .transition(.identity)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering

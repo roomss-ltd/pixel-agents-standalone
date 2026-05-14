@@ -68,6 +68,13 @@ struct ExpandedView: View {
     /// row view (which keeps the row's `@State` alive).
     @State private var expandGeneration: Int = 0
 
+    /// Same idea, scoped to the collapsible OLDER FINISHED section —
+    /// bumped when that section is opened so its rows stagger in on
+    /// open, exactly the way the always-visible sections stagger on
+    /// panel expand. Without a separate counter the OLDER rows would
+    /// either never stagger or re-stagger the whole panel.
+    @State private var olderGeneration: Int = 0
+
     /// Compact-form bar width. ~42pt wings host a single SLIM icon
     /// centred per side with explicit outer-edge padding so the icon
     /// sits clearly inside its allocated square (not flush against
@@ -139,6 +146,9 @@ struct ExpandedView: View {
                 expandGeneration &+= 1
                 tokenTracker.refresh()
             }
+        }
+        .onChange(of: isOlderOpen) { _, open in
+            if open { olderGeneration &+= 1 }
         }
     }
 
@@ -316,12 +326,12 @@ struct ExpandedView: View {
             }
             if !activeSessions.isEmpty {
                 Section(label: "ACTIVE") {
-                    grid(of: activeSessions, variant: .active)
+                    grid(of: activeSessions, variant: .active, generation: expandGeneration)
                 }
             }
             if !attentionSessions.isEmpty {
                 Section(label: "NEEDS ATTENTION", tint: .amber) {
-                    grid(of: attentionSessions, variant: .attention)
+                    grid(of: attentionSessions, variant: .attention, generation: expandGeneration)
                 }
             }
             // Recently active — finished within the last hour. Mirrors
@@ -329,11 +339,14 @@ struct ExpandedView: View {
             // always visible (not collapsed).
             if !recentlyActiveSessions.isEmpty {
                 Section(label: "RECENTLY ACTIVE") {
-                    grid(of: recentlyActiveSessions, variant: .finished)
+                    grid(of: recentlyActiveSessions, variant: .finished, generation: expandGeneration)
                 }
             }
             // Older finished — beyond an hour, or idle/init. Collapsible
             // so the panel stays compact when there's a long history.
+            // Uses `olderGeneration` so its rows stagger in when the
+            // section is opened — the same effect the always-visible
+            // sections get on panel expand.
             if !olderFinishedSessions.isEmpty {
                 Section(
                     label: "OLDER FINISHED · \(olderFinishedSessions.count)",
@@ -343,7 +356,9 @@ struct ExpandedView: View {
                 ) {
                     if isOlderOpen {
                         ScrollView(showsIndicators: false) {
-                            grid(of: olderFinishedSessions) { variantForOlder($0) }
+                            grid(of: olderFinishedSessions, generation: olderGeneration) {
+                                variantForOlder($0)
+                            }
                         }
                         .frame(maxHeight: Theme.Layout.cardHeight * 3 + 12)
                     }
@@ -457,12 +472,17 @@ struct ExpandedView: View {
         .frame(maxWidth: .infinity, minHeight: 140)
     }
 
-    private func grid(of sessions: [Session], variant: AgentRow.Variant) -> some View {
-        grid(of: sessions) { _ in variant }
+    private func grid(
+        of sessions: [Session],
+        variant: AgentRow.Variant,
+        generation: Int
+    ) -> some View {
+        grid(of: sessions, generation: generation) { _ in variant }
     }
 
     private func grid(
         of sessions: [Session],
+        generation: Int,
         variant: @escaping (Session) -> AgentRow.Variant
     ) -> some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
@@ -477,7 +497,7 @@ struct ExpandedView: View {
                     onOpenFolder: { engine.openFolder(session) },
                     onOpenEditor: { engine.openEditor(session) },
                     onSetPriority: { engine.setPriority($0, for: session) },
-                    appearanceGeneration: expandGeneration
+                    appearanceGeneration: generation
                 )
             }
         }
