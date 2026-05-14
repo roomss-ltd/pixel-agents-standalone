@@ -111,53 +111,58 @@ struct AgentRow: View {
 
     // MARK: - Priority dropdown
 
-    /// Linear-style priority picker. The label shows the current
-    /// priority's icon in its neon colour; the dropdown lists all five
-    /// levels, Urgent at the top. `Menu` captures its own clicks, so
-    /// the row's body-tap (focus terminal) still works everywhere else
-    /// on the row.
-    ///
-    /// `.menuStyle(.borderlessButton)` overrides the label's
-    /// `.foregroundStyle` with the control tint — so we drive the icon
-    /// colour via `.tint(...)` instead, which the borderless menu
-    /// style *does* respect. The colored background + border are an
-    /// extra belt so the level reads even at a glance.
+    /// Linear-style priority picker. The visible glowing chip is a
+    /// PLAIN view (so `.shadow` actually renders) — `Menu` with
+    /// `.borderlessButton` hosts its label in a button cell that clips
+    /// shadows to its bounds, which is why the glow was invisible. So
+    /// we render the chip directly and overlay a transparent `Menu`
+    /// purely as the click target / dropdown host.
+    private var priorityChip: some View {
+        let accent = session.priority.color
+        return Image(systemName: session.priority.systemImage)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(accent)
+            .frame(width: 17, height: 17)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(accent.opacity(0.22))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(accent.opacity(0.7), lineWidth: 0.75)
+            )
+            // Neon glow — two stacked shadows in the priority's own
+            // colour: a tight bright core and a wider soft halo. These
+            // render now because the chip is a normal view, not a Menu
+            // label.
+            .shadow(color: accent.opacity(0.95), radius: 2.5)
+            .shadow(color: accent.opacity(0.6), radius: 6)
+    }
+
     private var priorityMenu: some View {
-        Menu {
-            ForEach(Priority.allCases.reversed(), id: \.self) { level in
-                Button {
-                    onSetPriority(level)
+        priorityChip
+            // 4pt pad so the radius-6 halo isn't clipped by the
+            // surrounding HStack layout bounds.
+            .padding(4)
+            .overlay(
+                Menu {
+                    ForEach(Priority.allCases.reversed(), id: \.self) { level in
+                        Button {
+                            onSetPriority(level)
+                        } label: {
+                            Label(level.displayName, systemImage: level.systemImage)
+                        }
+                    }
                 } label: {
-                    Label(level.displayName, systemImage: level.systemImage)
+                    // Invisible hit target — sized to the padded chip
+                    // by the overlay. The visible glow lives on
+                    // `priorityChip` underneath.
+                    Color.clear.contentShape(Rectangle())
                 }
-            }
-        } label: {
-            let accent = session.priority.color
-            Image(systemName: session.priority.systemImage)
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 17, height: 17)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(accent.opacity(0.22))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(accent.opacity(0.7), lineWidth: 0.75)
-                )
-                // Neon glow — two stacked shadows in the priority's own
-                // colour: a tight bright core and a wider soft halo, so
-                // the chip genuinely glows against the black panel.
-                .shadow(color: accent.opacity(0.9), radius: 2)
-                .shadow(color: accent.opacity(0.55), radius: 5.5)
-                // A hair of padding so neither shadow is clipped by the
-                // menu label's tight bounds.
-                .padding(2)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .tint(session.priority.color)
-        .help("Priority — \(session.priority.displayName)")
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+            )
+            .help("Priority — \(session.priority.displayName)")
     }
 
     // MARK: - Hover actions
