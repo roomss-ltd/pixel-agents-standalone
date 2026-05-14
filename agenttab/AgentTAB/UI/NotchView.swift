@@ -19,6 +19,7 @@
 // `onSizeChange` reports the active rendered size so the host NSPanel
 // can size its live click-through region accordingly.
 
+import AppKit
 import SwiftUI
 
 struct NotchView: View {
@@ -28,6 +29,13 @@ struct NotchView: View {
     @State private var isHovered: Bool = false
     @State private var isPinned: Bool = false
     @State private var manualCollapse: Bool = false
+    /// True while an NSMenu (e.g. the per-row priority dropdown, the
+    /// footer "⋯" menu) is open. The menu popup is a separate window
+    /// that lives OUTSIDE the panel, so the cursor moving onto it would
+    /// otherwise fire `.onHover(false)` and collapse the panel out from
+    /// under the user. While this is set we pin the phase to expanded
+    /// and ignore hover changes entirely.
+    @State private var isMenuOpen: Bool = false
     @State private var compactSize: CGSize = CGSize(
         width: Theme.Layout.compactWidth,
         height: Theme.Layout.compactHeight
@@ -42,6 +50,9 @@ struct NotchView: View {
     enum Phase: Equatable { case compact, expanded }
 
     private var phase: Phase {
+        // A menu open over the panel must never let it collapse — the
+        // user is mid-interaction with a dropdown that belongs to it.
+        if isMenuOpen { return .expanded }
         if manualCollapse { return .compact }
         return (isHovered || isPinned) ? .expanded : .compact
     }
@@ -76,6 +87,10 @@ struct NotchView: View {
                 // bounding rect.
                 .contentShape(currentHitShape)
                 .onHover { hovering in
+                    // While a menu is open the cursor is over the menu
+                    // popup, not the panel — ignore the spurious
+                    // hover-out so the panel stays put.
+                    guard !isMenuOpen else { return }
                     isHovered = hovering
                     if !hovering { manualCollapse = false }
                 }
@@ -93,6 +108,19 @@ struct NotchView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentTabRequestCollapse)) { _ in
             collapse()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            isMenuOpen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            // Clear after a beat: when the menu closes the cursor is
+            // often still off-panel for an instant, which would fire a
+            // trailing .onHover(false). Holding the flag briefly lets
+            // that settle before normal hover tracking resumes.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(250))
+                self.isMenuOpen = false
+            }
         }
     }
 

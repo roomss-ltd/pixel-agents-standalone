@@ -29,6 +29,19 @@ final class NotchPanel: NSPanel {
     private var localKeyMonitor: Any?
     private var edgeHoverMonitor: Any?
     private var hotkeyMonitor: Any?
+    private var menuBeginObserver: NSObjectProtocol?
+    private var menuEndObserver: NSObjectProtocol?
+
+    /// True while an NSMenu spawned from inside the panel (the per-row
+    /// priority dropdown, the footer "⋯" menu) is open. The menu popup
+    /// is a separate window outside the panel's live region, so without
+    /// this guard:
+    ///   * the mouse-moved monitor would flip `ignoresMouseEvents` true
+    ///     (cursor is "outside" → panel goes click-through), and
+    ///   * the global-click monitor would treat the menu-item click as
+    ///     a "click outside → collapse" signal.
+    /// While set, both monitors leave the panel state untouched.
+    private var isMenuTracking = false
 
     // MARK: - Visibility (Phase 2)
 
@@ -93,6 +106,31 @@ final class NotchPanel: NSPanel {
         startGlobalClickMonitor()
         startEscMonitor()
         startPeekRequestObserver()
+        startMenuTrackingObservers()
+    }
+
+    private func startMenuTrackingObservers() {
+        menuBeginObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.isMenuTracking = true }
+        }
+        menuEndObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                // Hold the guard briefly past the menu closing — the
+                // selection click's leftMouseDown is delivered around
+                // the same instant the menu ends tracking, and it must
+                // still be covered or it'll collapse the panel.
+                try? await Task.sleep(for: .milliseconds(200))
+                self?.isMenuTracking = false
+            }
+        }
     }
 
     private var peekObserver: NSObjectProtocol?
@@ -119,6 +157,8 @@ final class NotchPanel: NSPanel {
         if let m = edgeHoverMonitor { NSEvent.removeMonitor(m) }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m) }
         if let o = peekObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = menuBeginObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = menuEndObserver { NotificationCenter.default.removeObserver(o) }
         pendingRehide?.cancel()
     }
 
@@ -316,6 +356,11 @@ final class NotchPanel: NSPanel {
     }
 
     private func updateClickability(force: Bool) {
+        // While a menu spawned from the panel is open the cursor is over
+        // the menu popup (outside `liveRegion()`). Leave the panel as it
+        // was — flipping to click-through here would break the menu
+        // interaction and collapse the panel.
+        guard !isMenuTracking else { return }
         let cursor = NSEvent.mouseLocation
         let region = liveRegion()
         let target = !region.contains(cursor)
@@ -332,6 +377,9 @@ final class NotchPanel: NSPanel {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // A click on a menu item spawned from the panel is not
+                // a "click outside" — don't collapse on it.
+                guard !self.isMenuTracking else { return }
                 let cursor = NSEvent.mouseLocation
                 if !self.liveRegion().contains(cursor) {
                     NotificationCenter.default.post(name: .agentTabRequestCollapse, object: nil)

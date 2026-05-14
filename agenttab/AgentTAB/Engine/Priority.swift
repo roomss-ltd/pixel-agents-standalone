@@ -32,23 +32,30 @@ enum Priority: Int, CaseIterable, Codable {
     var systemImage: String {
         switch self {
         case .sidequest: return "moon.zzz.fill"
-        case .low:       return "arrowtriangle.down.fill"
+        case .low:       return "chevron.down"
         case .medium:    return "equal"
-        case .high:      return "arrowtriangle.up.fill"
+        case .high:      return "chevron.up"
         case .urgent:    return "exclamationmark.octagon.fill"
         }
     }
 
+    /// Neon palette per the user's spec: Sidequest + Low are yellow,
+    /// Medium + High are blue, Urgent is red. Within each colour pair
+    /// the lower level is slightly dimmed so the hierarchy still reads
+    /// at a glance even though the hue is shared.
     var color: Color {
         switch self {
-        case .sidequest: return Theme.textFaint
-        case .low:       return Theme.Neon.blue.opacity(0.7)
-        case .medium:    return Theme.textDim
-        case .high:      return Theme.Neon.amber
+        case .sidequest: return Priority.neonYellow.opacity(0.62)
+        case .low:       return Priority.neonYellow
+        case .medium:    return Theme.Neon.blue.opacity(0.62)
+        case .high:      return Theme.Neon.blue
         case .urgent:    return Priority.urgentRed
         }
     }
 
+    /// Neon yellow — the Theme palette only has amber (orange-ish), so
+    /// Priority owns its own bright yellow.
+    static let neonYellow = Color(red: 0xFF / 255.0, green: 0xE0 / 255.0, blue: 0x4E / 255.0)
     /// Urgent gets its own red — the Theme palette stops at amber.
     static let urgentRed = Color(red: 0xFF / 255.0, green: 0x5B / 255.0, blue: 0x5B / 255.0)
 }
