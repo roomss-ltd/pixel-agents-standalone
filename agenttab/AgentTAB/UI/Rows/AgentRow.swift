@@ -27,6 +27,12 @@ struct AgentRow: View {
     @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
     @State private var showPriorityPicker = false
+    /// Drives the staggered "pop-in" when the panel expands. Each row
+    /// starts hidden and reveals itself after its own random delay, so
+    /// the grid fills in one tab at a time in a random order rather
+    /// than every tab fading in together. `@State` resets to false
+    /// each time the row re-enters the hierarchy (i.e. every expand).
+    @State private var hasAppeared = false
 
     /// Show the hover action cluster whenever the cursor is over the
     /// row and edit mode is off. Buttons are visually dimmed (and
@@ -93,6 +99,10 @@ struct AgentRow: View {
                 )
         )
         .contentShape(Rectangle())
+        // Staggered random pop-in: hidden until the row's own delay
+        // elapses, then springs to full size + opacity.
+        .opacity(hasAppeared ? 1 : 0)
+        .scaleEffect(hasAppeared ? 1 : 0.82)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering
@@ -106,6 +116,14 @@ struct AgentRow: View {
                 onUnlink()
             } else {
                 onClick()
+            }
+        }
+        .onAppear {
+            // Random delay → tabs reveal in a random order, not all at
+            // once. 0–0.4s spread keeps the whole grid settled fast.
+            let delay = Double.random(in: 0 ... 0.4)
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.72).delay(delay)) {
+                hasAppeared = true
             }
         }
     }
