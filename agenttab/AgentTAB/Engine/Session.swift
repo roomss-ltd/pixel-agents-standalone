@@ -7,7 +7,11 @@ struct Session: Identifiable, Equatable {
     /// one — keeps hooks, JSONL and zellij looking up the same Session.
     var claudeSessionId: String
     let projectName: String
-    let projectPath: String
+    /// Filesystem path of the agent's worktree. Mutable because a
+    /// Zellij session learns its path lazily from the plugin's `cwd`
+    /// field (it isn't known when the session is first created from a
+    /// bare pane id).
+    var projectPath: String
     var activity: Activity
     var currentTool: String?              // human-readable, e.g. "Editing foo.swift"
     var activeToolIds: Set<String>

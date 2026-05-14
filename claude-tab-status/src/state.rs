@@ -83,6 +83,10 @@ pub struct SessionInfo {
     pub last_event_ts: u64,
     /// Last tool name used — carried across Tool→Thinking transitions.
     pub last_tool_name: Option<String>,
+    /// Working directory of the agent, from the Claude/Codex hook's
+    /// `cwd` field. Surfaced in the status file so the AgentTAB overlay
+    /// can open the worktree in Finder / an editor.
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +96,9 @@ pub struct HookPayload {
     pub run_id: Option<String>,
     pub hook_event: String,
     pub tool_name: Option<String>,
+    /// Agent working directory — forwarded by the hook scripts from the
+    /// Claude/Codex hook JSON's `cwd` field.
+    pub cwd: Option<String>,
 }
 
 #[derive(Default)]

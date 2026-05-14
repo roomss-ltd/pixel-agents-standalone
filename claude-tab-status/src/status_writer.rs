@@ -94,8 +94,15 @@ fn build_status_json(state: &PluginState) -> String {
             format!("\"{}\"", escape_json_string(&detail))
         };
 
+        let cwd_json = match &session.cwd {
+            Some(cwd) if !cwd.is_empty() => {
+                format!("\"{}\"", escape_json_string(cwd))
+            }
+            _ => "null".to_string(),
+        };
+
         sessions_json.push(format!(
-            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\"}}",
+            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\",\"cwd\":{}}}",
             session.pane_id,
             escape_json_string(&session.run_id),
             tab_num,
@@ -103,6 +110,7 @@ fn build_status_json(state: &PluginState) -> String {
             icon,
             detail_json,
             activity_str,
+            cwd_json,
         ));
     }
 

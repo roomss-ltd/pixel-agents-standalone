@@ -651,6 +651,7 @@ final class ActivityEngine: ObservableObject {
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
                               runId: z.runId,
+                              cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
             return
         }
@@ -669,6 +670,7 @@ final class ActivityEngine: ObservableObject {
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
                               runId: runId,
+                              cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
             return
         }
@@ -679,7 +681,10 @@ final class ActivityEngine: ObservableObject {
         var session = Session(
             claudeSessionId: claudeId,
             projectName: projectName,
-            projectPath: ""
+            // Worktree path comes from the plugin's `cwd` field. Older
+            // plugin builds don't send it — then it stays empty and the
+            // Finder/editor actions stay disabled for this row.
+            projectPath: z.cwd ?? ""
         )
         session.terminalKind = .zellij(info)
         session.activity = zellijActivity
@@ -701,11 +706,19 @@ final class ActivityEngine: ObservableObject {
         activity: Activity,
         lastUpdate: Date?,
         runId: String?,
+        cwd: String?,
         fileUpdatedAt: Date
     ) {
         let oldActivity = sessions[index].activity
         sessions[index].terminalKind = .zellij(info)
         sessions[index].isHistorical = false
+
+        // Learn / refresh the worktree path from the plugin's `cwd`.
+        // Only overwrite with a non-empty value so a transient missing
+        // field never clears a path we already had.
+        if let cwd, !cwd.isEmpty, sessions[index].projectPath != cwd {
+            sessions[index].projectPath = cwd
+        }
 
         // Keep the runId index in sync if zellij surfaces it later.
         if let runId, sessions[index].claudeSessionId != runId {

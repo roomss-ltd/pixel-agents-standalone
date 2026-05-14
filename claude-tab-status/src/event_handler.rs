@@ -125,9 +125,17 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
             activity: Activity::Init,
             last_event_ts: 0,
             last_tool_name: None,
+            cwd: payload.cwd.clone(),
         });
     if let Some(run_id) = assigned_run_id {
         session.run_id = run_id;
+    }
+    // Keep cwd fresh — the hook sends it on every event, and an agent
+    // can `cd` mid-session.
+    if let Some(cwd) = &payload.cwd {
+        if !cwd.is_empty() {
+            session.cwd = Some(cwd.clone());
+        }
     }
 
     // Track last tool name across transitions.

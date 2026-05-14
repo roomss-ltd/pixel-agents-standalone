@@ -20,7 +20,8 @@ PAYLOAD=$(echo "$INPUT" | jq -c --arg pid "$ZELLIJ_PANE_ID" '
     pane_id: ($pid | tonumber),
     session_id: .session_id,
     hook_event: .hook_event_name,
-    tool_name: .tool_name
+    tool_name: .tool_name,
+    cwd: .cwd
   }
 ' 2>/dev/null) || exit 0
 [ -z "$PAYLOAD" ] && exit 0

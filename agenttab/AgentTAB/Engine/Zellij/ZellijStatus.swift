@@ -20,13 +20,16 @@ struct ZellijSession: Codable {
     let icon: String
     let detail: String?
     let activity: String        // "Init", "Thinking", "Tool", "Waiting", "Done", "Idle"
+    /// Agent working directory, forwarded from the Claude/Codex hook's
+    /// `cwd`. Nil for older plugin builds that didn't write it.
+    let cwd: String?
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id"
         case runId = "run_id"
         case tabNum = "tab_num"
         case tabName = "tab_name"
-        case icon, detail, activity
+        case icon, detail, activity, cwd
     }
 }
 
