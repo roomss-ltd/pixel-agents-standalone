@@ -11,6 +11,10 @@ struct ActivityHistoryView: View {
     let projects: [ProjectSpend]
     let onBack: () -> Void
 
+    /// Day whose bar the cursor is currently over — drives the
+    /// hover readout (token spend) above that column.
+    @State private var hoveredDay: Date?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -88,30 +92,52 @@ struct ActivityHistoryView: View {
         let maxTokens = max(weekly.map(\.tokens).max() ?? 1, 1)
         return HStack(alignment: .bottom, spacing: 6) {
             ForEach(weekly) { day in
+                let hovered = hoveredDay == day.day
                 VStack(spacing: 4) {
-                    // Agent count for the day — blank when nothing ran.
-                    Text(day.agentCount > 0 ? "\(day.agentCount)" : " ")
+                    // Top readout — hovering a column swaps the day's
+                    // agent count for its exact token spend.
+                    Text(topLabel(for: day, hovered: hovered))
                         .font(.system(size: 8, weight: .bold))
                         .monospacedDigit()
-                        .foregroundStyle(Theme.textDim)
+                        .foregroundStyle(hovered ? Theme.Neon.blue : Theme.textDim)
+                        .lineLimit(1)
+                        .fixedSize()
 
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(
                             day.tokens > 0
-                                ? Theme.Neon.blue.opacity(isToday(day.day) ? 1.0 : 0.78)
-                                : Color.white.opacity(0.06)
+                                ? Theme.Neon.blue.opacity(
+                                    hovered ? 1.0 : (isToday(day.day) ? 0.92 : 0.7)
+                                  )
+                                : Color.white.opacity(hovered ? 0.12 : 0.06)
                         )
                         .frame(height: barHeight(day.tokens, max: maxTokens))
 
                     Text(weekdayLabel(day.day))
                         .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundStyle(isToday(day.day) ? Theme.Neon.blue : Theme.textFaint)
+                        .foregroundStyle(
+                            hovered || isToday(day.day) ? Theme.Neon.blue : Theme.textFaint
+                        )
                 }
                 .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onHover { inside in
+                    hoveredDay = inside ? day.day : (hoveredDay == day.day ? nil : hoveredDay)
+                }
             }
         }
         .frame(height: 108)
         .padding(.vertical, 2)
+        .animation(.easeOut(duration: 0.12), value: hoveredDay)
+    }
+
+    /// Top-of-column text: token spend while hovered, otherwise the
+    /// day's agent count (blank when nothing ran).
+    private func topLabel(for day: DailyActivity, hovered: Bool) -> String {
+        if hovered {
+            return TokenTracker.format(day.tokens)
+        }
+        return day.agentCount > 0 ? "\(day.agentCount)" : " "
     }
 
     private func barHeight(_ tokens: Int, max: Int) -> CGFloat {
