@@ -39,23 +39,24 @@ enum Priority: Int, CaseIterable, Codable {
         }
     }
 
-    /// Neon palette per the user's spec: Sidequest + Low are yellow,
-    /// Medium + High are blue, Urgent is red. Within each colour pair
-    /// the lower level is slightly dimmed so the hierarchy still reads
-    /// at a glance even though the hue is shared.
+    /// Neon palette: Sidequest is white, Low is neon yellow, Medium +
+    /// High are neon blue (Medium slightly dimmed so the pair still
+    /// reads as a hierarchy), Urgent is neon red. All three accent
+    /// hues are deliberately light, bright tones so they glow against
+    /// the pitch-black panel.
     var color: Color {
         switch self {
-        case .sidequest: return Priority.neonYellow.opacity(0.62)
+        case .sidequest: return .white
         case .low:       return Priority.neonYellow
-        case .medium:    return Theme.Neon.blue.opacity(0.62)
-        case .high:      return Theme.Neon.blue
-        case .urgent:    return Priority.urgentRed
+        case .medium:    return Priority.neonBlue.opacity(0.72)
+        case .high:      return Priority.neonBlue
+        case .urgent:    return Priority.neonRed
         }
     }
 
-    /// Neon yellow — the Theme palette only has amber (orange-ish), so
-    /// Priority owns its own bright yellow.
-    static let neonYellow = Color(red: 0xFF / 255.0, green: 0xE0 / 255.0, blue: 0x4E / 255.0)
-    /// Urgent gets its own red — the Theme palette stops at amber.
-    static let urgentRed = Color(red: 0xFF / 255.0, green: 0x5B / 255.0, blue: 0x5B / 255.0)
+    /// Light, bright neon accents owned by Priority — the Theme palette
+    /// only has amber and a darker blue.
+    static let neonYellow = Color(red: 0xFF / 255.0, green: 0xF5 / 255.0, blue: 0x70 / 255.0)
+    static let neonBlue   = Color(red: 0x84 / 255.0, green: 0xC5 / 255.0, blue: 0xFF / 255.0)
+    static let neonRed    = Color(red: 0xFF / 255.0, green: 0x8C / 255.0, blue: 0x8C / 255.0)
 }
