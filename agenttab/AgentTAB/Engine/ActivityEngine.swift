@@ -437,6 +437,22 @@ final class ActivityEngine: ObservableObject {
         let projectName = SessionDiscovery.hashToProjectName(projectHash)
         let projectPath = "/" + projectHash.replacingOccurrences(of: "-", with: "/")
 
+        // If a session for this claude/run id already exists (Zellij
+        // surfaced it before JSONL discovered the file), just attach
+        // the URL to that session instead of creating a duplicate
+        // generic row. Without this, JSONL lines route to the
+        // duplicate and the visible Zellij row never receives the
+        // subagent / tool state — the subagent badge never appears.
+        if let existingId = sessionsByClaudeId[claudeSessionId],
+           let idx = sessions.firstIndex(where: { $0.id == existingId }) {
+            sessionsByJsonlURL[jsonlURL] = existingId
+            if sessions[idx].projectPath.isEmpty {
+                sessions[idx].projectPath = projectPath
+            }
+            AgentLog.engine.info("attached jsonl to existing session=\(claudeSessionId, privacy: .public) project=\(projectName, privacy: .public)")
+            return
+        }
+
         var session = Session(
             claudeSessionId: claudeSessionId,
             projectName: projectName,
@@ -795,6 +811,9 @@ final class ActivityEngine: ObservableObject {
         cwd: String?,
         fileUpdatedAt: Date
     ) {
+        // Track by id, not index — the array may mutate below if we
+        // merge a duplicate JSONL-only session into this one.
+        let targetId = sessions[index].id
         let oldActivity = sessions[index].activity
         sessions[index].terminalKind = .zellij(info)
         sessions[index].isHistorical = false
@@ -809,13 +828,27 @@ final class ActivityEngine: ObservableObject {
         // Keep the runId index in sync if zellij surfaces it later.
         if let runId, sessions[index].claudeSessionId != runId {
             let oldId = sessions[index].claudeSessionId
+
+            // If a separate session was already discovered under this
+            // runId (JSONL got the file before zellij surfaced the
+            // run_id), fold its tool / subagent state and JSONL URL
+            // mapping into this zellij row, then remove the duplicate.
+            // Without this, subagent updates land on the hidden
+            // duplicate and the visible row never shows the badge.
+            if let dupId = sessionsByClaudeId[runId], dupId != targetId {
+                mergeDuplicate(into: targetId, duplicate: dupId)
+            }
+
             sessionsByClaudeId.removeValue(forKey: oldId)
-            sessions[index].claudeSessionId = runId
-            sessionsByClaudeId[runId] = sessions[index].id
+            guard let idx = sessions.firstIndex(where: { $0.id == targetId }) else { return }
+            sessions[idx].claudeSessionId = runId
+            sessionsByClaudeId[runId] = targetId
             // Carry the user's priority assignment across the id change.
             migratePriorityKey(from: oldId, to: runId)
         }
 
+        // Re-resolve index after the possible merge / mutation.
+        guard let index = sessions.firstIndex(where: { $0.id == targetId }) else { return }
         let claudeId = sessions[index].claudeSessionId
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
         if !hookActive {
@@ -835,6 +868,46 @@ final class ActivityEngine: ObservableObject {
                 source: .zellij(paneId: info.paneId, updatedAt: fileUpdatedAt)
             )
         }
+    }
+
+    /// Fold a duplicate session (typically a JSONL-only generic row
+    /// discovered before zellij surfaced its run_id) into a target
+    /// zellij row, then drop the duplicate. Carries over the tool /
+    /// subagent state that the JSONL parser was populating, reroutes
+    /// the duplicate's JSONL URL mappings, and clears its indices.
+    private func mergeDuplicate(into targetId: UUID, duplicate dupId: UUID) {
+        guard let dupIdx = sessions.firstIndex(where: { $0.id == dupId }),
+              let tgtIdx = sessions.firstIndex(where: { $0.id == targetId })
+        else { return }
+
+        let dup = sessions[dupIdx]
+        let dupClaudeId = dup.claudeSessionId
+
+        // Take over JSONL-populated state — keep target's values when
+        // the duplicate has nothing useful to add.
+        sessions[tgtIdx].subagentTools.merge(dup.subagentTools) { _, new in new }
+        sessions[tgtIdx].activeToolIds.formUnion(dup.activeToolIds)
+        sessions[tgtIdx].activeToolNames.merge(dup.activeToolNames) { _, new in new }
+        if sessions[tgtIdx].currentTool == nil {
+            sessions[tgtIdx].currentTool = dup.currentTool
+        }
+        if sessions[tgtIdx].projectPath.isEmpty {
+            sessions[tgtIdx].projectPath = dup.projectPath
+        }
+
+        // Reroute any JSONL urls that pointed at the duplicate so
+        // future lines land on the visible zellij row.
+        for (url, id) in sessionsByJsonlURL where id == dupId {
+            sessionsByJsonlURL[url] = targetId
+        }
+
+        // Drop the duplicate's indices and remove it from the array.
+        if sessionsByClaudeId[dupClaudeId] == dupId {
+            sessionsByClaudeId.removeValue(forKey: dupClaudeId)
+        }
+        sessions.remove(at: dupIdx)
+
+        AgentLog.engine.info("merged duplicate session into zellij row claudeId=\(dupClaudeId, privacy: .public)")
     }
 
     private func mapZellijActivity(_ z: ZellijSession) -> Activity {
