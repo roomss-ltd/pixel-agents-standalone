@@ -47,6 +47,17 @@ struct Session: Identifiable, Equatable {
     }
 }
 
+extension Session {
+    /// How many subagents (spawned via the Task / Agent tool) are
+    /// currently running tools. Each parent tool id in `subagentTools`
+    /// is one subagent invocation; it counts as "active" while it has
+    /// any in-flight tool call. Zero for sessions that have no
+    /// subagent activity (the common case).
+    var activeSubagentCount: Int {
+        subagentTools.values.filter { !$0.isEmpty }.count
+    }
+}
+
 enum TerminalKind: Equatable {
     case generic(String?)              // optional term_program string
     case zellij(ZellijInfo)
