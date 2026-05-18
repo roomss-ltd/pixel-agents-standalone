@@ -241,11 +241,22 @@ final class ActivityEngine: ObservableObject {
     /// `updated_at`. Hook: always advances (real-time, monotonic).
     private var lastSourceTimestamp: [UUID: Date] = [:]
 
+    /// Which kind of toast a notification produces. Used as part of the
+    /// throttle key so a "waiting" toast doesn't eat the budget of a
+    /// subsequent "done" toast (the most common reason a finish-toast
+    /// silently went missing — agent asked for approval, ran, finished,
+    /// done dropped because waiting fired < 60s ago).
+    private enum NotifyTarget: Hashable { case waiting, done }
+
     /// Per-session dedupe: identical (from, to) within 30s collapses.
+    /// Cleared as soon as the session is observed leaving the cached
+    /// target state — re-entry after a pass-through (waiting → tool → done,
+    /// or done → thinking → done from a re-prompt) counts as fresh.
     private var lastNotifiedTransition: [UUID: (from: Activity, to: Activity, firedAt: Date)] = [:]
 
-    /// Global per-session throttle: at most one toast per minute.
-    private var lastNotifiedAt: [UUID: Date] = [:]
+    /// Per-(session, target) throttle: at most one toast of a given kind
+    /// per minute, but waiting and done budgets are independent.
+    private var lastNotifiedAt: [UUID: [NotifyTarget: Date]] = [:]
 
     private static let dedupeWindow: TimeInterval = 30
     private static let throttleWindow: TimeInterval = 60
@@ -597,11 +608,24 @@ final class ActivityEngine: ObservableObject {
             return
         }
 
+        // If the session has visibly left the state we previously notified
+        // on (waiting → tool after approval, or done → thinking after a
+        // fresh prompt), clear the cached dedupe entry. The next entry back
+        // into waiting/done is a genuinely new event and must not be
+        // collapsed against the stale (from, to) tuple from before.
+        if let last = lastNotifiedTransition[session.id],
+           oldActivity == last.to,
+           session.activity != last.to {
+            lastNotifiedTransition.removeValue(forKey: session.id)
+        }
+
         // Only two transitions ever produce a toast: → .waiting and → .done.
-        let interesting =
-            (session.activity == .waiting && oldActivity != .waiting) ||
-            (session.activity == .done    && oldActivity != .done)
-        guard interesting else { return }
+        let target: NotifyTarget
+        switch session.activity {
+        case .waiting where oldActivity != .waiting: target = .waiting
+        case .done    where oldActivity != .done:    target = .done
+        default: return
+        }
 
         // Phase 0.5 — dedupe identical (from, to) within 30s.
         let now = Date()
@@ -613,10 +637,13 @@ final class ActivityEngine: ObservableObject {
             return
         }
 
-        // Phase 0.6 — global per-session throttle: 1/min.
-        if let last = lastNotifiedAt[session.id],
+        // Phase 0.6 — per-(session, target) throttle: 1/min per kind.
+        // Waiting and done budgets are independent so a just-fired
+        // "waiting" toast can't suppress the follow-up "done" toast.
+        if let last = lastNotifiedAt[session.id]?[target],
            now.timeIntervalSince(last) < Self.throttleWindow {
-            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=throttle")
+            let kind = String(describing: target)
+            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=throttle target=\(kind, privacy: .public)")
             return
         }
 
@@ -657,7 +684,9 @@ final class ActivityEngine: ObservableObject {
         toastPanel.show(toast, duration: 5, onTap: focusAction)
 
         lastNotifiedTransition[session.id] = (oldActivity, session.activity, now)
-        lastNotifiedAt[session.id] = now
+        var perTarget = lastNotifiedAt[session.id] ?? [:]
+        perTarget[target] = now
+        lastNotifiedAt[session.id] = perTarget
         AgentLog.notify.info("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
     }
 
