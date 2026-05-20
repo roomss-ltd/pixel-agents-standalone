@@ -76,6 +76,11 @@ struct AgentRow: View {
                         .foregroundStyle(activityColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    // Live "how long it's been running" clock, right next
+                    // to the activity text. Present only while the agent
+                    // is actually working (runStartedAt != nil), so it
+                    // never lingers on finished/idle rows.
+                    elapsedClock
                     // Surfaced only when something is actually spawning
                     // — keeps the row uncluttered for normal sessions.
                     if session.activeSubagentCount > 0 {
@@ -192,6 +197,41 @@ struct AgentRow: View {
                 object: nil
             )
         }
+    }
+
+    // MARK: - Elapsed run clock
+
+    /// Monospaced live timer shown beside the activity text while the
+    /// agent is working. `TimelineView(.periodic)` ticks it once a second
+    /// without any engine churn; it disappears the moment the run ends
+    /// because `runStartedAt` goes nil. Higher layout priority than the
+    /// activity text so a long "Running: …" string truncates before the
+    /// clock gets squeezed out.
+    @ViewBuilder
+    private var elapsedClock: some View {
+        if let start = session.runStartedAt {
+            TimelineView(.periodic(from: start, by: 1)) { context in
+                Text(Self.elapsedString(from: start, to: context.date))
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(activityColor.opacity(0.8))
+            }
+            .lineLimit(1)
+            .layoutPriority(1)
+        }
+    }
+
+    /// `m:ss`, escalating to `h:mm:ss` past an hour. Mirrors the compact
+    /// clock style used elsewhere in the panel.
+    static func elapsedString(from start: Date, to now: Date) -> String {
+        let total = max(0, Int(now.timeIntervalSince(start)))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 
     // MARK: - Subagent badge

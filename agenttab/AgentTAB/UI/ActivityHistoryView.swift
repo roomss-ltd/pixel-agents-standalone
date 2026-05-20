@@ -8,12 +8,15 @@ import SwiftUI
 
 struct ActivityHistoryView: View {
     let weekly: [DailyActivity]
-    let projects: [ProjectSpend]
+    let projects: [ProjectGroup]
     let onBack: () -> Void
 
     /// Day whose bar the cursor is currently over — drives the
     /// hover readout (token spend) above that column.
     @State private var hoveredDay: Date?
+
+    /// Root-project names whose worktree breakdown is expanded.
+    @State private var expanded: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -149,6 +152,15 @@ struct ActivityHistoryView: View {
 
     // MARK: - Projects list
 
+    /// Resting cap for the worked-on list. Grows 80% taller while any
+    /// project's worktree breakdown is open, so the expanded rows have
+    /// more room and the panel itself stretches to match (it sizes to
+    /// content). Animated via the same scope that toggles `expanded`.
+    private var listMaxHeight: CGFloat {
+        let base: CGFloat = 132
+        return expanded.isEmpty ? base : base * 1.8
+    }
+
     @ViewBuilder
     private var projectsList: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -170,41 +182,88 @@ struct ActivityHistoryView: View {
             } else {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 4) {
-                        ForEach(projects) { project in
-                            projectRow(project)
+                        ForEach(projects) { group in
+                            projectRow(group)
                         }
                     }
                 }
-                .frame(maxHeight: 132)
+                .frame(maxHeight: listMaxHeight)
             }
         }
     }
 
-    private func projectRow(_ project: ProjectSpend) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Theme.Neon.blue)
-                .frame(width: 5, height: 5)
-            Text(project.name)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Theme.textStrong)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 8)
-            Text(TokenTracker.format(project.tokens))
-                .font(.system(size: 11, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textDim)
-            Text("·")
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.textFaint)
-            Text("\(project.activeDays)d")
-                .font(.system(size: 10, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textFaint)
+    private func projectRow(_ group: ProjectGroup) -> some View {
+        let isOpen = expanded.contains(group.id)
+        return VStack(spacing: 0) {
+            // Project-level header: root name + rolled-up spend. The
+            // whole row toggles the breakdown when there are worktrees.
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.Neon.blue)
+                    .frame(width: 5, height: 5)
+                Text(group.name)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textStrong)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                // Count pill — how many worktrees fold into this project.
+                if group.hasWorktrees {
+                    Text("\(group.members.count)")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Neon.blue)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Theme.Neon.blue.opacity(0.14)))
+                }
+
+                Spacer(minLength: 8)
+                Text(TokenTracker.format(group.tokens))
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textDim)
+                Text("·")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textFaint)
+                Text("\(group.activeDays)d")
+                    .font(.system(size: 10, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textFaint)
+
+                // Disclosure chevron — only when there's a breakdown.
+                if group.hasWorktrees {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.textFaint)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: 10)
+                } else {
+                    // Keep the right edge aligned with grouped rows.
+                    Color.clear.frame(width: 10, height: 1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard group.hasWorktrees else { return }
+                withAnimation(.easeOut(duration: 0.14)) {
+                    if isOpen { expanded.remove(group.id) } else { expanded.insert(group.id) }
+                }
+            }
+
+            // Worktree breakdown — the root checkout plus each branch,
+            // each with its own spend, so the numbers reconcile.
+            if isOpen {
+                VStack(spacing: 2) {
+                    ForEach(group.members) { member in
+                        memberRow(member, root: group.name)
+                    }
+                }
+                .padding(.bottom, 5)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.white.opacity(0.025))
@@ -213,6 +272,39 @@ struct ActivityHistoryView: View {
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 )
         )
+    }
+
+    /// One constituent checkout inside an expanded project — the root
+    /// (shown as "main") or a worktree (shown by its branch name).
+    private func memberRow(_ member: ProjectSpend, root: String) -> some View {
+        let isMain = member.name == root
+        let branch = isMain ? "main" : String(member.name.dropFirst(root.count + 1))
+        return HStack(spacing: 7) {
+            Image(systemName: isMain ? "house.fill" : "arrow.triangle.branch")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+                .frame(width: 12)
+            Text(branch)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Theme.textDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(TokenTracker.format(member.tokens))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textFaint)
+            Text("·")
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.textFaint.opacity(0.7))
+            Text("\(member.activeDays)d")
+                .font(.system(size: 9.5))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textFaint.opacity(0.7))
+        }
+        .padding(.leading, 22)
+        .padding(.trailing, 12)
+        .padding(.vertical, 2)
     }
 
     private var dashLine: some View {

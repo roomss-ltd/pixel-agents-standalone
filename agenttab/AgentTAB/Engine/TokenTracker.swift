@@ -22,13 +22,32 @@ struct DailyActivity: Identifiable, Equatable {
     let projects: [String]  // project names worked on that day
 }
 
-/// A project's total token spend over the weekly window — "what the
-/// agents were working on."
+/// A single checkout's token spend over the weekly window — either the
+/// root project itself ("alven-estate-agent") or one of its worktrees
+/// ("alven-estate-agent/feat-x"). These are the leaves that get rolled
+/// up into a `ProjectGroup`.
 struct ProjectSpend: Identifiable, Equatable {
     var id: String { name }
     let name: String
     let tokens: Int
     let activeDays: Int
+}
+
+/// A root project with its token spend rolled up across the root
+/// checkout and every worktree branched off it. The weekly history
+/// lists one of these per repo; worktrees live in `members` and are
+/// revealed behind a per-row dropdown so the top line reads as
+/// "spend on this project" while the breakdown stays one tap away.
+struct ProjectGroup: Identifiable, Equatable {
+    var id: String { name }
+    let name: String              // root project, e.g. "alven-estate-agent"
+    let tokens: Int               // summed across the root checkout + all worktrees
+    let activeDays: Int           // distinct days any constituent was active
+    let members: [ProjectSpend]   // root + worktrees, sorted by tokens desc
+
+    /// True only when there's something beyond the root checkout to
+    /// reveal — the sole case where the dropdown is worth showing.
+    var hasWorktrees: Bool { members.contains { $0.name != name } }
 }
 
 @MainActor
@@ -40,9 +59,10 @@ final class TokenTracker: ObservableObject {
     /// Always exactly 7 entries, oldest first, including zero days.
     @Published private(set) var weekly: [DailyActivity] = []
 
-    /// Projects worked on across the weekly window, sorted by token
-    /// spend descending. Populated alongside `weekly`.
-    @Published private(set) var weeklyProjects: [ProjectSpend] = []
+    /// Root projects worked on across the weekly window, sorted by token
+    /// spend descending. Worktrees are folded into their root's
+    /// `members`. Populated alongside `weekly`.
+    @Published private(set) var weeklyProjects: [ProjectGroup] = []
 
     private let projectsDir: URL
     private var timer: AnyCancellable?
@@ -204,9 +224,16 @@ final class TokenTracker: ObservableObject {
     /// per-project token spend across the window. `days` is exactly 7
     /// entries (oldest → newest), zero-filled; `projects` is sorted by
     /// token spend descending.
+    /// Root project for a checkout name: everything before the first
+    /// "/". "alven-estate-agent/feat-x" → "alven-estate-agent"; a bare
+    /// "cyndex-backend" is its own root.
+    nonisolated static func rootProject(of name: String) -> String {
+        name.split(separator: "/", maxSplits: 1).first.map(String.init) ?? name
+    }
+
     private nonisolated static func scanWeekly(
         projectsDir: URL
-    ) -> (days: [DailyActivity], projects: [ProjectSpend]) {
+    ) -> (days: [DailyActivity], projects: [ProjectGroup]) {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
         guard let weekStart = cal.date(byAdding: .day, value: -6, to: todayStart) else {
@@ -286,12 +313,40 @@ final class TokenTracker: ObservableObject {
             )
         }
 
-        let projectsList: [ProjectSpend] = projectTokens
-            .map { name, tokens in
-                ProjectSpend(name: name, tokens: tokens, activeDays: projectDays[name]?.count ?? 0)
-            }
-            .sorted { $0.tokens > $1.tokens }
+        // Per-checkout leaves: one entry per "repo" or "repo/branch".
+        let leaves: [ProjectSpend] = projectTokens.map { name, tokens in
+            ProjectSpend(name: name, tokens: tokens, activeDays: projectDays[name]?.count ?? 0)
+        }
 
-        return (days, projectsList)
+        // Roll the leaves up by root project (the part before the first
+        // "/"). Token spend sums; active days take the union of each
+        // constituent's day set so a day worked across two worktrees
+        // counts once.
+        var membersByRoot: [String: [ProjectSpend]] = [:]
+        for leaf in leaves {
+            let root = rootProject(of: leaf.name)
+            membersByRoot[root, default: []].append(leaf)
+        }
+
+        let groups: [ProjectGroup] = membersByRoot.map { root, members in
+            let totalTokens = members.reduce(0) { $0 + $1.tokens }
+            let dayUnion = members.reduce(into: Set<Date>()) { acc, m in
+                acc.formUnion(projectDays[m.name] ?? [])
+            }
+            // Root checkout first (if present), then worktrees by spend.
+            let ordered = members.sorted { a, b in
+                if (a.name == root) != (b.name == root) { return a.name == root }
+                return a.tokens > b.tokens
+            }
+            return ProjectGroup(
+                name: root,
+                tokens: totalTokens,
+                activeDays: dayUnion.count,
+                members: ordered
+            )
+        }
+        .sorted { $0.tokens > $1.tokens }
+
+        return (days, groups)
     }
 }

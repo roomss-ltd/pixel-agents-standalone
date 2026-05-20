@@ -502,6 +502,7 @@ final class ActivityEngine: ObservableObject {
             // Tool ID tracking and currentTool from JSONL still useful, but activity sticks.
             session.activity = oldActivity
         }
+        session.refreshRunClock()
         sessions[index] = session
 
         // Drive permission timer ONLY when hooks aren't installed. With hooks
@@ -519,6 +520,7 @@ final class ActivityEngine: ObservableObject {
                     let oldActivity = self.sessions[idx].activity
                     self.sessions[idx].activity = .waiting
                     self.sessions[idx].lastUpdate = Date()
+                    self.sessions[idx].refreshRunClock()
                     AgentLog.engine.info("transition permission-timer session=\(self.sessions[idx].claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→waiting")
                     self.notifySessionStateChange(self.sessions[idx], oldActivity: oldActivity, source: .hook)
                 }
@@ -586,6 +588,7 @@ final class ActivityEngine: ObservableObject {
         }
 
         session.lastUpdate = Date()
+        session.refreshRunClock()
         sessions[index] = session
         lastHookEvent[payload.sessionId] = Date()
         if oldActivity != session.activity {
@@ -823,6 +826,7 @@ final class ActivityEngine: ObservableObject {
         // New session has no prior `lastUpdate` to preserve — fall back
         // to `now` when elapsed parsing failed.
         session.lastUpdate = zellijLastUpdate ?? Date()
+        session.refreshRunClock()
         sessions.append(session)
         sessionsByZellijPaneId[z.paneId] = session.id
         if let runId = z.runId {
@@ -886,6 +890,7 @@ final class ActivityEngine: ObservableObject {
             if let lastUpdate {
                 sessions[index].lastUpdate = lastUpdate
             }
+            sessions[index].refreshRunClock()
         }
         if oldActivity != sessions[index].activity {
             let cid = sessions[index].claudeSessionId

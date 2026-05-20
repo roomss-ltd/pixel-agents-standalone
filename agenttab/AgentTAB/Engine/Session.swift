@@ -18,6 +18,13 @@ struct Session: Identifiable, Equatable {
     var activeToolNames: [String: String]    // toolId -> toolName
     var subagentTools: [String: Set<String>]
     var lastUpdate: Date
+    /// When the agent started working the current turn. Set the moment a
+    /// session leaves a finished/idle state and clears the moment it
+    /// returns to one — so the UI can show a live "how long it's been
+    /// running" clock that climbs across Bash → thinking → Read etc. and
+    /// resets only when the turn ends. `nil` whenever the agent is idle
+    /// or done. Maintained centrally via `refreshRunClock()`.
+    var runStartedAt: Date?
     var terminalKind: TerminalKind
     /// True when this session was surfaced from a stale jsonl file at
     /// startup (not actively producing output in this run). Historical
@@ -41,6 +48,7 @@ struct Session: Identifiable, Equatable {
         self.activeToolNames = [:]
         self.subagentTools = [:]
         self.lastUpdate = Date()
+        self.runStartedAt = nil
         self.terminalKind = .generic(nil)
         self.isHistorical = false
         self.priority = .default
@@ -55,6 +63,19 @@ extension Session {
     /// subagent activity (the common case).
     var activeSubagentCount: Int {
         subagentTools.values.filter { !$0.isEmpty }.count
+    }
+
+    /// Keeps `runStartedAt` consistent with the current `activity`. Call
+    /// after any activity mutation; it's idempotent. The run clock starts
+    /// when the agent begins working and is left untouched while it stays
+    /// running (so the elapsed time keeps climbing across tools), then
+    /// clears the instant the agent is `.done`/`.idle`.
+    mutating func refreshRunClock() {
+        if activity.isRunning {
+            if runStartedAt == nil { runStartedAt = Date() }
+        } else {
+            runStartedAt = nil
+        }
     }
 }
 

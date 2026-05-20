@@ -10,6 +10,17 @@ enum Activity: Equatable {
 }
 
 extension Activity {
+    /// True while the agent is actively working a turn — the run clock
+    /// counts during these states. `.waiting` still counts (the turn
+    /// hasn't finished, it's just paused for approval); only `.done` and
+    /// `.idle` stop the clock.
+    var isRunning: Bool {
+        switch self {
+        case .initState, .thinking, .tool, .waiting: return true
+        case .done, .idle:                           return false
+        }
+    }
+
     var rank: Int {
         switch self {
         case .waiting:   return 5
