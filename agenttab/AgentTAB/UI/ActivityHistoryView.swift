@@ -32,8 +32,7 @@ struct ActivityHistoryView: View {
             case .month:
                 barChart(tracker.days(for: .month), dense: true)
             case .window:
-                // TODO Task 6: replace with SquaresHistoryGrid
-                barChart(tracker.days(for: .window), dense: true)
+                SquaresHistoryGrid(days: tracker.days(for: .window))
             }
             projectsList
         }
@@ -341,5 +340,166 @@ struct ActivityHistoryView: View {
         let f = DateFormatter()
         f.dateFormat = "EEEEE"
         return f.string(from: date)
+    }
+}
+
+struct SquaresHistoryGrid: View {
+    let days: [DailyActivity]      // exactly 119, oldest first
+
+    @State private var hovered: DailyActivity?
+
+    private let cols = 17
+    private let rows = 7
+    private let gap: CGFloat = 5
+    private let rowLabelWidth: CGFloat = 14
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            hoverChip
+            GeometryReader { geo in
+                let cell = max(((geo.size.width - rowLabelWidth) / CGFloat(cols)) - gap, 12)
+                HStack(alignment: .top, spacing: gap) {
+                    rowLabels(cell: cell)
+                    grid(cell: cell)
+                }
+            }
+            .frame(height: CGFloat(rows) * 34 + CGFloat(rows - 1) * gap)
+        }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    // MARK: hover chip
+
+    @ViewBuilder
+    private var hoverChip: some View {
+        if let d = hovered {
+            HStack(spacing: 6) {
+                Text(dateLabel(d.day))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.Neon.blue)
+                Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                Text("\(TokenTracker.format(d.tokens)) tokens")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textStrong)
+                if d.agentCount > 0 {
+                    Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                    Text("\(d.agentCount) agent\(d.agentCount == 1 ? "" : "s")")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.textDim)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 0.5)
+                    )
+            )
+        } else {
+            Color.clear.frame(height: 25)
+        }
+    }
+
+    // MARK: row labels (M W F)
+
+    private func rowLabels(cell: CGFloat) -> some View {
+        VStack(spacing: gap) {
+            ForEach(0 ..< rows, id: \.self) { r in
+                let labels: [Int: String] = [1: "M", 3: "W", 5: "F"]
+                Text(labels[r] ?? "")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+                    .frame(width: rowLabelWidth, height: cell, alignment: .trailing)
+            }
+        }
+    }
+
+    // MARK: grid
+
+    private func grid(cell: CGFloat) -> some View {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let todayRow = (cal.component(.weekday, from: today) - 1) % 7
+
+        var byDate: [Date: DailyActivity] = [:]
+        for d in days { byDate[d.day] = d }
+
+        let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
+        let firstColMonday: Date = {
+            let daysBack = (cols - 1) * 7 + todayRow
+            return cal.date(byAdding: .day, value: -daysBack, to: today)!
+        }()
+
+        return HStack(spacing: gap) {
+            ForEach(0 ..< cols, id: \.self) { c in
+                VStack(spacing: gap) {
+                    ForEach(0 ..< rows, id: \.self) { r in
+                        cellView(
+                            col: c, row: r, cell: cell,
+                            firstDay: firstColMonday,
+                            todayRow: todayRow,
+                            today: today,
+                            byDate: byDate,
+                            maxTokens: maxTokens
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cellView(
+        col: Int, row: Int, cell: CGFloat,
+        firstDay: Date, todayRow: Int, today: Date,
+        byDate: [Date: DailyActivity], maxTokens: Int
+    ) -> some View {
+        let cal = Calendar.current
+        let dayOffset = col * 7 + row
+        let date = cal.date(byAdding: .day, value: dayOffset, to: firstDay)!
+        let isFuture = date > today
+        let isToday = cal.isDate(date, inSameDayAs: today)
+
+        let activity = byDate[date]
+        let tokens = activity?.tokens ?? 0
+        let fill: Color = {
+            if isFuture { return .clear }
+            if tokens == 0 { return Color.white.opacity(0.04) }
+            let pct = Double(tokens) / Double(maxTokens) * 100
+            switch pct {
+            case ..<26:  return Theme.Neon.blue.opacity(0.22)
+            case ..<51:  return Theme.Neon.blue.opacity(0.45)
+            case ..<76:  return Theme.Neon.blue.opacity(0.70)
+            default:     return Theme.Neon.blue.opacity(1.00)
+            }
+        }()
+
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(fill)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isToday ? Theme.Neon.blue : Color.clear, lineWidth: 1)
+            )
+            .frame(width: cell, height: cell)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if isFuture { return }
+                if inside {
+                    hovered = activity ?? DailyActivity(day: date, tokens: 0, agentCount: 0, projects: [])
+                } else if hovered?.day == date {
+                    hovered = nil
+                }
+            }
+    }
+
+    private func dateLabel(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE MMM d"
+        return f.string(from: d)
     }
 }
