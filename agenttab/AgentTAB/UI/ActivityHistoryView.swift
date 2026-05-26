@@ -12,7 +12,7 @@ struct ActivityHistoryView: View {
     @ObservedObject var tracker: TokenTracker
     let onBack: () -> Void
 
-    /// Active range slice of the tracker's 119-day history. The range
+    /// Active range slice of the tracker's 364-day history. The range
     /// pills in the header mutate this; defaults to 7 days.
     @State private var range: TokenTracker.HistoryRange = .week
 
@@ -20,8 +20,13 @@ struct ActivityHistoryView: View {
     /// hover readout (token spend) above that column.
     @State private var hoveredDay: Date?
 
+    /// Root names of project groups currently expanded to reveal
+    /// their per-worktree breakdown. Single-worktree groups are
+    /// never expandable so their root name never lives here.
+    @State private var expandedGroups: Set<String> = []
+
     private var days: [DailyActivity] { tracker.days(for: range) }
-    private var projectsForRange: [ProjectSpend] { tracker.projects(for: range) }
+    private var projectGroups: [ProjectGroup] { tracker.projectGroups(for: range) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -124,7 +129,7 @@ struct ActivityHistoryView: View {
         HStack(spacing: 6) {
             summaryStat(value: TokenTracker.format(totalTokens), label: "tokens", accent: Theme.Neon.blue)
             dot
-            summaryStat(value: "\(projectsForRange.count)", label: projectsForRange.count == 1 ? "project" : "projects", accent: Theme.Neon.green)
+            summaryStat(value: "\(projectGroups.count)", label: projectGroups.count == 1 ? "project" : "projects", accent: Theme.Neon.green)
             dot
             summaryStat(value: "\(activeDays)", label: activeDays == 1 ? "active day" : "active days", accent: Theme.Neon.amber)
             Spacer()
@@ -274,7 +279,7 @@ struct ActivityHistoryView: View {
                 dashLine
             }
 
-            if projectsForRange.isEmpty {
+            if projectGroups.isEmpty {
                 Text("No agent activity in this range.")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textFaint)
@@ -282,9 +287,9 @@ struct ActivityHistoryView: View {
                     .padding(.vertical, 8)
             } else {
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 4) {
-                        ForEach(projectsForRange) { project in
-                            projectRow(project)
+                    LazyVStack(spacing: 4) {
+                        ForEach(projectGroups) { group in
+                            projectRow(group)
                         }
                     }
                 }
@@ -293,31 +298,66 @@ struct ActivityHistoryView: View {
         }
     }
 
-    private func projectRow(_ project: ProjectSpend) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Theme.Neon.blue)
-                .frame(width: 5, height: 5)
-            Text(project.name)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Theme.textStrong)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 8)
-            Text(TokenTracker.format(project.tokens))
-                .font(.system(size: 11, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textDim)
-            Text("·")
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.textFaint)
-            Text("\(project.activeDays)d")
-                .font(.system(size: 10, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textFaint)
+    @ViewBuilder
+    private func projectRow(_ group: ProjectGroup) -> some View {
+        let isExpandable = group.worktrees.count > 1
+        let expanded = expandedGroups.contains(group.rootName)
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                if isExpandable {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.textFaint)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 8)
+                } else {
+                    Circle()
+                        .fill(Theme.Neon.blue)
+                        .frame(width: 5, height: 5)
+                        .frame(width: 8)
+                }
+                Text(group.rootName)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textStrong)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(TokenTracker.format(group.tokens))
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textDim)
+                Text("·")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textFaint)
+                Text("\(group.activeDays)d")
+                    .font(.system(size: 10, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textFaint)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard isExpandable else { return }
+                withAnimation(.easeOut(duration: 0.18)) {
+                    if expanded {
+                        expandedGroups.remove(group.rootName)
+                    } else {
+                        expandedGroups.insert(group.rootName)
+                    }
+                }
+            }
+
+            if isExpandable && expanded {
+                VStack(spacing: 2) {
+                    ForEach(group.worktrees) { worktree in
+                        worktreeRow(worktree, rootName: group.rootName)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.white.opacity(0.025))
@@ -326,6 +366,42 @@ struct ActivityHistoryView: View {
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 )
         )
+    }
+
+    /// Indented sub-row inside an expanded group. Shows just the
+    /// branch name (the "/feat-x" half of "repo/feat-x") and the
+    /// per-worktree token + active-day count in a quieter style than
+    /// the parent row.
+    private func worktreeRow(_ worktree: ProjectSpend, rootName: String) -> some View {
+        let branch: String = {
+            if let slash = worktree.name.firstIndex(of: "/") {
+                return String(worktree.name[worktree.name.index(after: slash)...])
+            }
+            return "main"
+        }()
+        return HStack(spacing: 6) {
+            Text("└")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textFaint)
+                .padding(.leading, 4)
+            Text(branch)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Theme.textDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(TokenTracker.format(worktree.tokens))
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textFaint)
+            Text("·")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textFaint)
+            Text("\(worktree.activeDays)d")
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textFaint)
+        }
     }
 
     private var dashLine: some View {
