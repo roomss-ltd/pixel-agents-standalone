@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import AgentTAB
 
 @MainActor
@@ -58,9 +59,16 @@ final class TokenTrackerHistoryTests: XCTestCase {
     }
 
     /// Wait for the detached scan in `refreshHistory()` to publish.
+    /// Subscribes to the window publisher and fulfills on the first
+    /// non-empty emission — deterministic and fast on the happy path,
+    /// versus a fixed sleep that flakes on slow CI.
     private func waitForScan(_ tracker: TokenTracker) async {
-        try? await Task.sleep(nanoseconds: 400_000_000)
-        _ = tracker.days(for: .week)
+        let exp = XCTestExpectation(description: "ranged history published")
+        let cancellable = tracker.$daysWindow
+            .dropFirst()
+            .sink { _ in exp.fulfill() }
+        await fulfillment(of: [exp], timeout: 2.0)
+        cancellable.cancel()
     }
 
     func testRangedHistoryBucketsByRange() async throws {
