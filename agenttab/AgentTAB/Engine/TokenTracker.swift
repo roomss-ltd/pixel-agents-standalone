@@ -36,12 +36,46 @@ final class TokenTracker: ObservableObject {
     /// Total tokens spent across all agents on the local machine today.
     @Published private(set) var todayTokens: Int = 0
 
-    /// Last-7-days breakdown, populated on demand by `refreshWeekly()`.
-    /// Always exactly 7 entries, oldest first, including zero days.
-    @Published private(set) var weekly: [DailyActivity] = []
+    /// Which tail-window of the 119-day history to expose.
+    enum HistoryRange {
+        case week, month, window
+        var days: Int { self == .week ? 7 : self == .month ? 30 : 119 }
+    }
 
-    /// Projects worked on across the weekly window, sorted by token
-    /// spend descending. Populated alongside `weekly`.
+    /// Per-range day buckets, populated on demand by `refreshHistory()`.
+    /// Each array is exactly `range.days` entries, oldest first, including
+    /// zero days.
+    @Published private(set) var daysShort:  [DailyActivity] = []
+    @Published private(set) var daysMonth:  [DailyActivity] = []
+    @Published private(set) var daysWindow: [DailyActivity] = []
+
+    /// Per-range project rollups, sorted by token spend descending.
+    /// Populated alongside the matching `days*` array.
+    @Published private(set) var projectsShort:  [ProjectSpend] = []
+    @Published private(set) var projectsMonth:  [ProjectSpend] = []
+    @Published private(set) var projectsWindow: [ProjectSpend] = []
+
+    func days(for range: HistoryRange) -> [DailyActivity] {
+        switch range {
+        case .week:   return daysShort
+        case .month:  return daysMonth
+        case .window: return daysWindow
+        }
+    }
+
+    func projects(for range: HistoryRange) -> [ProjectSpend] {
+        switch range {
+        case .week:   return projectsShort
+        case .month:  return projectsMonth
+        case .window: return projectsWindow
+        }
+    }
+
+    // TODO Task 3: remove these three shims once the view layer migrates
+    // to days(for:)/projects(for:)/refreshHistory().
+    @available(*, deprecated, message: "Removed in Task 3 — use days(for:)")
+    @Published private(set) var weekly: [DailyActivity] = []
+    @available(*, deprecated, message: "Removed in Task 3 — use projects(for:)")
     @Published private(set) var weeklyProjects: [ProjectSpend] = []
 
     private let projectsDir: URL
@@ -181,50 +215,71 @@ final class TokenTracker: ObservableObject {
         return Calendar.current.isDate(date, inSameDayAs: currentDay)
     }
 
-    // MARK: - Weekly history
+    // MARK: - Ranged history
 
-    /// Kick off a fresh 7-day scan. The heavy file walk runs off the
-    /// main actor; `weekly` is republished when it completes, so the
-    /// history view just observes it. Cheap to call on every history
-    /// open — a stale `weekly` shows instantly while the rescan runs.
-    func refreshWeekly() {
+    /// Kick off a fresh ranged scan covering the widest window (119d).
+    /// Cheap to call on every history open — stale buckets stay visible
+    /// while the rescan runs.
+    func refreshHistory() {
         let dir = projectsDir
         Task.detached(priority: .utility) {
-            let result = Self.scanWeekly(projectsDir: dir)
+            let result = Self.scanRanges(projectsDir: dir)
             await MainActor.run { [weak self] in
-                self?.weekly = result.days
-                self?.weeklyProjects = result.projects
+                self?.daysShort      = result.short.days
+                self?.daysMonth      = result.month.days
+                self?.daysWindow     = result.window.days
+                self?.projectsShort  = result.short.projects
+                self?.projectsMonth  = result.month.projects
+                self?.projectsWindow = result.window.projects
+                // TODO Task 3: drop these side-publishes once the view
+                // layer migrates off `weekly`/`weeklyProjects`.
+                self?.weekly = result.short.days
+                self?.weeklyProjects = result.short.projects
             }
         }
     }
 
-    /// Pure file walk — safe to run off the main actor. Buckets every
-    /// `assistant` line's tokens by the day of its `timestamp`, records
-    /// which sessions / projects were active each day, and aggregates
-    /// per-project token spend across the window. `days` is exactly 7
-    /// entries (oldest → newest), zero-filled; `projects` is sorted by
-    /// token spend descending.
-    private nonisolated static func scanWeekly(
+    @available(*, deprecated, message: "Removed in Task 3 — use refreshHistory()")
+    func refreshWeekly() {
+        // Populate the deprecated published props for any pre-Task-3
+        // readers, then trigger the real ranged scan.
+        refreshHistory()
+    }
+
+    /// Pure file walk over the widest window (119 days). Records every
+    /// assistant line's tokens keyed by (day, project, session) so we can
+    /// derive per-range day buckets AND per-range per-project rollups
+    /// from a single pass.
+    private nonisolated static func scanRanges(
         projectsDir: URL
-    ) -> (days: [DailyActivity], projects: [ProjectSpend]) {
+    ) -> (
+        short:  (days: [DailyActivity], projects: [ProjectSpend]),
+        month:  (days: [DailyActivity], projects: [ProjectSpend]),
+        window: (days: [DailyActivity], projects: [ProjectSpend])
+    ) {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
-        guard let weekStart = cal.date(byAdding: .day, value: -6, to: todayStart) else {
-            return ([], [])
+        guard let windowStart = cal.date(byAdding: .day, value: -118, to: todayStart) else {
+            return (([], []), ([], []), ([], []))
         }
 
         let isoFractional = ISO8601DateFormatter()
         isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let isoPlain = ISO8601DateFormatter()
 
-        var buckets: [Date: (tokens: Int, sessions: Set<String>, projects: Set<String>)] = [:]
-        var projectTokens: [String: Int] = [:]
-        var projectDays: [String: Set<Date>] = [:]
+        // Per-day total tokens (across all projects) and the set of sessions
+        // active that day — used to build DailyActivity.
+        var dayTokens:   [Date: Int]         = [:]
+        var daySessions: [Date: Set<String>] = [:]
+        var dayProjects: [Date: Set<String>] = [:]
+        // Per (day, project) tokens — used to build per-range ProjectSpend
+        // without a second walk.
+        var dayProjectTokens: [Date: [String: Int]] = [:]
 
         let fm = FileManager.default
         guard let projects = try? fm.contentsOfDirectory(
             at: projectsDir, includingPropertiesForKeys: nil
-        ) else { return ([], []) }
+        ) else { return (([], []), ([], []), ([], [])) }
 
         for project in projects {
             guard let isDir = (try? project.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory,
@@ -239,9 +294,8 @@ final class TokenTracker: ObservableObject {
             for file in files where file.pathExtension == "jsonl" {
                 let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
                     .contentModificationDate ?? .distantPast
-                // A file untouched in the last week can't hold this
-                // week's lines.
-                guard mtime >= weekStart else { continue }
+                // A file untouched in the window can't hold a window line.
+                guard mtime >= windowStart else { continue }
                 let sessionId = file.deletingPathExtension().lastPathComponent
                 guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
 
@@ -254,7 +308,7 @@ final class TokenTracker: ObservableObject {
                     else { continue }
 
                     let day = cal.startOfDay(for: ts)
-                    guard day >= weekStart, day <= todayStart else { continue }
+                    guard day >= windowStart, day <= todayStart else { continue }
 
                     let message = json["message"] as? [String: Any]
                     let usage = message?["usage"] as? [String: Any]
@@ -263,35 +317,49 @@ final class TokenTracker: ObservableObject {
                         + (usage?["cache_creation_input_tokens"] as? Int ?? 0)
                         + (usage?["cache_read_input_tokens"] as? Int ?? 0)
 
-                    var bucket = buckets[day] ?? (0, [], [])
-                    bucket.tokens += tokens
-                    bucket.sessions.insert(sessionId)
-                    bucket.projects.insert(projectName)
-                    buckets[day] = bucket
-
-                    projectTokens[projectName, default: 0] += tokens
-                    projectDays[projectName, default: []].insert(day)
+                    dayTokens[day, default: 0] += tokens
+                    daySessions[day, default: []].insert(sessionId)
+                    dayProjects[day, default: []].insert(projectName)
+                    dayProjectTokens[day, default: [:]][projectName, default: 0] += tokens
                 }
             }
         }
 
-        let days: [DailyActivity] = (0 ..< 7).compactMap { offset in
-            guard let day = cal.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
-            let b = buckets[day]
-            return DailyActivity(
-                day: day,
-                tokens: b?.tokens ?? 0,
-                agentCount: b?.sessions.count ?? 0,
-                projects: Array(b?.projects ?? []).sorted()
-            )
+        func slice(daysBack: Int) -> (days: [DailyActivity], projects: [ProjectSpend]) {
+            guard let start = cal.date(byAdding: .day, value: -(daysBack - 1), to: todayStart) else {
+                return ([], [])
+            }
+            let days: [DailyActivity] = (0 ..< daysBack).compactMap { offset in
+                guard let day = cal.date(byAdding: .day, value: offset, to: start) else { return nil }
+                return DailyActivity(
+                    day: day,
+                    tokens: dayTokens[day] ?? 0,
+                    agentCount: daySessions[day]?.count ?? 0,
+                    projects: Array(dayProjects[day] ?? []).sorted()
+                )
+            }
+
+            var totals: [String: Int]           = [:]
+            var activeDays: [String: Set<Date>] = [:]
+            for day in days where day.tokens > 0 {
+                if let perProject = dayProjectTokens[day.day] {
+                    for (name, tokens) in perProject {
+                        totals[name, default: 0] += tokens
+                        activeDays[name, default: []].insert(day.day)
+                    }
+                }
+            }
+            let projectList = totals
+                .map { name, t in ProjectSpend(name: name, tokens: t, activeDays: activeDays[name]?.count ?? 0) }
+                .sorted { $0.tokens > $1.tokens }
+
+            return (days, projectList)
         }
 
-        let projectsList: [ProjectSpend] = projectTokens
-            .map { name, tokens in
-                ProjectSpend(name: name, tokens: tokens, activeDays: projectDays[name]?.count ?? 0)
-            }
-            .sorted { $0.tokens > $1.tokens }
-
-        return (days, projectsList)
+        return (
+            short:  slice(daysBack: 7),
+            month:  slice(daysBack: 30),
+            window: slice(daysBack: 119)
+        )
     }
 }
