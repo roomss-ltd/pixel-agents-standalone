@@ -1,8 +1,10 @@
-// ActivityHistoryView — weekly activity dashboard shown in place of the
-// agent grid when the user taps the token counter. Hand-rolled bar
-// chart (7 bars, no Charts dependency) so it matches the pitch-black
-// neon theme exactly: daily token spend, agent count per day, and the
-// projects worked on across the window.
+// ActivityHistoryView — activity dashboard shown in place of the agent
+// grid when the user taps the token counter. Three ranges sharing the
+// same view: 7-day bar chart, 30-day dense bar variant, and a
+// 119-day GitHub-style squares heatmap. Hand-rolled (no Charts
+// dependency) so it matches the pitch-black neon theme exactly:
+// daily token spend, agent count per day, and the projects worked
+// on across the active range.
 
 import SwiftUI
 
@@ -269,7 +271,7 @@ struct ActivityHistoryView: View {
             }
 
             if projectsForRange.isEmpty {
-                Text("No agent activity in the last 7 days.")
+                Text("No agent activity in this range.")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, alignment: .center)

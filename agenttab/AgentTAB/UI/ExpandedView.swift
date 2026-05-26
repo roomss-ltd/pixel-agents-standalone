@@ -52,7 +52,7 @@ struct ExpandedView: View {
 
     @State private var isOlderOpen: Bool = false   // closed by default — content-sized
     @State private var showSettings: Bool = false
-    @State private var showHistory: Bool = false   // weekly activity dashboard
+    @State private var showHistory: Bool = false   // activity dashboard (7d / 30d / squares)
     @State private var isEditMode: Bool = false
 
     /// Section ordering mode. `.recency` keeps the original behaviour
@@ -385,7 +385,7 @@ struct ExpandedView: View {
     /// ran on this machine today. Sits at the top-left of the sections,
     /// mirroring the sort switcher on the right. Resets at midnight
     /// (handled inside TokenTracker). Tapping it flips the panel to the
-    /// 7-day activity dashboard.
+    /// activity dashboard (7d / 30d / squares).
     private var tokenCounter: some View {
         Button {
             showSettings = false
@@ -416,7 +416,7 @@ struct ExpandedView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Tokens spent across all agents today — tap for the 7-day history")
+        .help("Tokens spent across all agents today — tap for the activity history")
     }
 
     // MARK: - Sort-mode toggle

@@ -13,7 +13,7 @@
 import Foundation
 import Combine
 
-/// One day's slice of agent activity, used by the weekly history view.
+/// One day's slice of agent activity, used by the history dashboard.
 struct DailyActivity: Identifiable, Equatable {
     var id: Date { day }
     let day: Date           // start of day
@@ -22,8 +22,8 @@ struct DailyActivity: Identifiable, Equatable {
     let projects: [String]  // project names worked on that day
 }
 
-/// A project's total token spend over the weekly window — "what the
-/// agents were working on."
+/// A project's total token spend over the active history range —
+/// "what the agents were working on."
 struct ProjectSpend: Identifiable, Equatable {
     var id: String { name }
     let name: String
