@@ -29,12 +29,13 @@ struct ActivityHistoryView: View {
             barChart
             projectsList
         }
+        .animation(.easeOut(duration: 0.18), value: range)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button(action: onBack) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 10, weight: .bold))
@@ -52,11 +53,51 @@ struct ActivityHistoryView: View {
             .buttonStyle(.plain)
             .help("Back to agents")
 
-            Text("Last 7 days")
-                .font(.system(size: 12.5, weight: .bold))
-                .foregroundStyle(Theme.textStrong)
+            rangeSwitcher
             Spacer()
         }
+    }
+
+    private var rangeSwitcher: some View {
+        HStack(spacing: 0) {
+            rangePill(.week,   label: "7d")
+            rangePill(.month,  label: "30d")
+            rangePill(.window, icon: "square.grid.3x3.fill")
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func rangePill(_ r: TokenTracker.HistoryRange, label: String? = nil, icon: String? = nil) -> some View {
+        Button {
+            range = r
+        } label: {
+            Group {
+                if let label {
+                    Text(label)
+                        .font(.system(size: 10.5, weight: .bold))
+                } else if let icon {
+                    Image(systemName: icon).font(.system(size: 9, weight: .bold))
+                }
+            }
+            .foregroundStyle(range == r ? Theme.Neon.blue : Theme.textDim)
+            .frame(minWidth: 30)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(range == r ? Theme.Neon.blue.opacity(0.18) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Summary strip
