@@ -26,7 +26,8 @@ final class TokenTrackerHistoryTests: XCTestCase {
         let projectDir = tempRoot.appendingPathComponent(project)
         try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
         let file = projectDir.appendingPathComponent("\(session).jsonl")
-        let day = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date())!
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let day = Calendar.current.date(byAdding: .day, value: -daysAgo, to: todayStart)!
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let ts = iso.string(from: day)
