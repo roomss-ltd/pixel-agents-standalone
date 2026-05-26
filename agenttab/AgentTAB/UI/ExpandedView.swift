@@ -95,7 +95,7 @@ struct ExpandedView: View {
         VStack(spacing: 0) {
             // Header — always present, lives in the notch zone.
             notchLevelHeader(edgeInset: edgeInset, notchSpan: notchSpan)
-                .frame(height: max(geometry.notchHeight, Theme.Layout.compactHeight))
+                .frame(height: geometry.hasNotch ? geometry.notchHeight : Theme.Layout.compactHeight)
 
             // Below the notch — only when expanded. Has its own
             // .transition so the inner content fades / slides as the
