@@ -78,9 +78,9 @@ final class TokenTrackerHistoryTests: XCTestCase {
                                daysAgo: 5, input: 2_000)
         try writeAssistantLine(project: "-Users-x-repoB", session: "s2",
                                daysAgo: 40, output: 5_000)
-        // Outside the 119-day window — must be excluded from every range.
+        // Outside the 364-day window — must be excluded from every range.
         try writeAssistantLine(project: "-Users-x-repoB", session: "s2",
-                               daysAgo: 200, output: 9_999)
+                               daysAgo: 400, output: 9_999)
 
         let tracker = TokenTracker(projectsDir: tempRoot)
         tracker.refreshHistory()
@@ -92,7 +92,7 @@ final class TokenTrackerHistoryTests: XCTestCase {
 
         XCTAssertEqual(week.count, 7)
         XCTAssertEqual(month.count, 30)
-        XCTAssertEqual(win.count, 119)
+        XCTAssertEqual(win.count, 364)
 
         // Today + 5-days-ago = 3_000 tokens in week range.
         XCTAssertEqual(week.reduce(0) { $0 + $1.tokens }, 3_000)
@@ -100,8 +100,45 @@ final class TokenTrackerHistoryTests: XCTestCase {
         XCTAssertEqual(month.reduce(0) { $0 + $1.tokens }, 3_000)
         // Window picks up the 40-days-ago line.
         XCTAssertEqual(win.reduce(0) { $0 + $1.tokens }, 8_000)
-        // 200-days-ago line excluded.
+        // 400-days-ago line excluded.
         XCTAssertFalse(win.contains { $0.tokens == 9_999 })
+    }
+
+    func testProjectGroupsByRoot() async throws {
+        // Two worktrees of repoA (plain root + a feat branch) plus a
+        // single-worktree repoB — all on day 1 so they fall inside .week.
+        // Project hashes need a "Desktop" segment for SessionDiscovery's
+        // root/worktree splitter to fire.
+        try writeAssistantLine(project: "-Users-x-Desktop-repoA", session: "s1",
+                               daysAgo: 1, input: 1_000)
+        try writeAssistantLine(project: "-Users-x-Desktop-repoA--worktrees-feat-foo", session: "s2",
+                               daysAgo: 1, input: 2_500)
+        try writeAssistantLine(project: "-Users-x-Desktop-repoB", session: "s3",
+                               daysAgo: 1, input: 800)
+
+        let tracker = TokenTracker(projectsDir: tempRoot)
+        tracker.refreshHistory()
+        await waitForScan(tracker)
+
+        let groups = tracker.projectGroups(for: .week)
+        XCTAssertEqual(groups.count, 2)
+
+        // Sorted by tokens desc: repoA (3500) before repoB (800).
+        XCTAssertEqual(groups[0].rootName, "repoA")
+        XCTAssertEqual(groups[0].tokens, 3_500)
+        XCTAssertEqual(groups[0].worktrees.count, 2)
+        // Sorted by tokens desc within the group.
+        XCTAssertEqual(groups[0].worktrees[0].name, "repoA/feat-foo")
+        XCTAssertEqual(groups[0].worktrees[0].tokens, 2_500)
+        XCTAssertEqual(groups[0].worktrees[1].name, "repoA")
+        XCTAssertEqual(groups[0].worktrees[1].tokens, 1_000)
+        // Active days de-duplicated across worktrees (same day).
+        XCTAssertEqual(groups[0].activeDays, 1)
+
+        XCTAssertEqual(groups[1].rootName, "repoB")
+        XCTAssertEqual(groups[1].tokens, 800)
+        XCTAssertEqual(groups[1].worktrees.count, 1)
+        XCTAssertEqual(groups[1].worktrees[0].name, "repoB")
     }
 
     func testRangedProjectsRollupIsPerRange() async throws {

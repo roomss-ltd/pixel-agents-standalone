@@ -31,15 +31,27 @@ struct ProjectSpend: Identifiable, Equatable {
     let activeDays: Int
 }
 
+/// A root project (top-level repo folder) with one or more worktrees
+/// nested under it. The history dashboard shows a root row by default
+/// and lets the user expand it to see per-worktree totals. `tokens`
+/// and `activeDays` are summed/de-duplicated across the worktrees.
+struct ProjectGroup: Identifiable, Equatable {
+    var id: String { rootName }
+    let rootName: String
+    let tokens: Int
+    let activeDays: Int
+    let worktrees: [ProjectSpend]   // sorted by tokens desc; .name is "root/branch" (or just "root" for single-worktree)
+}
+
 @MainActor
 final class TokenTracker: ObservableObject {
     /// Total tokens spent across all agents on the local machine today.
     @Published private(set) var todayTokens: Int = 0
 
-    /// Which tail-window of the 119-day history to expose.
+    /// Which tail-window of the 364-day history to expose.
     enum HistoryRange {
         case week, month, window
-        var days: Int { self == .week ? 7 : self == .month ? 30 : 119 }
+        var days: Int { self == .week ? 7 : self == .month ? 30 : 364 }
     }
 
     /// Per-range day buckets, populated on demand by `refreshHistory()`.
@@ -55,6 +67,13 @@ final class TokenTracker: ObservableObject {
     @Published private(set) var projectsMonth:  [ProjectSpend] = []
     @Published private(set) var projectsWindow: [ProjectSpend] = []
 
+    /// Per-range project rollups grouped by root folder. Worktrees of
+    /// the same repo collapse into a single `ProjectGroup` so the UI
+    /// can show one row per repo with an expand affordance.
+    @Published private(set) var groupsShort:  [ProjectGroup] = []
+    @Published private(set) var groupsMonth:  [ProjectGroup] = []
+    @Published private(set) var groupsWindow: [ProjectGroup] = []
+
     func days(for range: HistoryRange) -> [DailyActivity] {
         switch range {
         case .week:   return daysShort
@@ -68,6 +87,14 @@ final class TokenTracker: ObservableObject {
         case .week:   return projectsShort
         case .month:  return projectsMonth
         case .window: return projectsWindow
+        }
+    }
+
+    func projectGroups(for range: HistoryRange) -> [ProjectGroup] {
+        switch range {
+        case .week:   return groupsShort
+        case .month:  return groupsMonth
+        case .window: return groupsWindow
         }
     }
 
@@ -210,7 +237,7 @@ final class TokenTracker: ObservableObject {
 
     // MARK: - Ranged history
 
-    /// Kick off a fresh ranged scan covering the widest window (119d).
+    /// Kick off a fresh ranged scan covering the widest window (364d).
     /// Cheap to call on every history open — stale buckets stay visible
     /// while the rescan runs.
     func refreshHistory() {
@@ -224,25 +251,28 @@ final class TokenTracker: ObservableObject {
                 self?.projectsShort  = result.short.projects
                 self?.projectsMonth  = result.month.projects
                 self?.projectsWindow = result.window.projects
+                self?.groupsShort    = result.short.groups
+                self?.groupsMonth    = result.month.groups
+                self?.groupsWindow   = result.window.groups
             }
         }
     }
 
-    /// Pure file walk over the widest window (119 days). Records every
+    /// Pure file walk over the widest window (364 days). Records every
     /// assistant line's tokens keyed by (day, project, session) so we can
     /// derive per-range day buckets AND per-range per-project rollups
-    /// from a single pass.
+    /// (both flat-by-worktree and grouped-by-root) from a single pass.
     private nonisolated static func scanRanges(
         projectsDir: URL
     ) -> (
-        short:  (days: [DailyActivity], projects: [ProjectSpend]),
-        month:  (days: [DailyActivity], projects: [ProjectSpend]),
-        window: (days: [DailyActivity], projects: [ProjectSpend])
+        short:  (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]),
+        month:  (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]),
+        window: (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup])
     ) {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
-        guard let windowStart = cal.date(byAdding: .day, value: -118, to: todayStart) else {
-            return (([], []), ([], []), ([], []))
+        guard let windowStart = cal.date(byAdding: .day, value: -363, to: todayStart) else {
+            return (([], [], []), ([], [], []), ([], [], []))
         }
 
         let isoFractional = ISO8601DateFormatter()
@@ -261,7 +291,7 @@ final class TokenTracker: ObservableObject {
         let fm = FileManager.default
         guard let projects = try? fm.contentsOfDirectory(
             at: projectsDir, includingPropertiesForKeys: nil
-        ) else { return (([], []), ([], []), ([], [])) }
+        ) else { return (([], [], []), ([], [], []), ([], [], [])) }
 
         for project in projects {
             guard let isDir = (try? project.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory,
@@ -307,9 +337,9 @@ final class TokenTracker: ObservableObject {
             }
         }
 
-        func slice(daysBack: Int) -> (days: [DailyActivity], projects: [ProjectSpend]) {
+        func slice(daysBack: Int) -> (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]) {
             guard let start = cal.date(byAdding: .day, value: -(daysBack - 1), to: todayStart) else {
-                return ([], [])
+                return ([], [], [])
             }
             let days: [DailyActivity] = (0 ..< daysBack).compactMap { offset in
                 guard let day = cal.date(byAdding: .day, value: offset, to: start) else { return nil }
@@ -335,13 +365,42 @@ final class TokenTracker: ObservableObject {
                 .map { name, t in ProjectSpend(name: name, tokens: t, activeDays: activeDays[name]?.count ?? 0) }
                 .sorted { $0.tokens > $1.tokens }
 
-            return (days, projectList)
+            // Roll the per-worktree spend up to the root folder. A name
+            // like "repo/feat-x" groups under "repo"; a plain "repo"
+            // forms its own single-worktree group.
+            var rootTokens:     [String: Int]       = [:]
+            var rootActiveDays: [String: Set<Date>] = [:]
+            var rootWorktrees:  [String: [ProjectSpend]] = [:]
+            for spend in projectList {
+                let root: String
+                if let slash = spend.name.firstIndex(of: "/") {
+                    root = String(spend.name[..<slash])
+                } else {
+                    root = spend.name
+                }
+                rootTokens[root, default: 0] += spend.tokens
+                rootActiveDays[root, default: []].formUnion(activeDays[spend.name] ?? [])
+                rootWorktrees[root, default: []].append(spend)
+            }
+            let groupList = rootTokens
+                .map { root, tokens in
+                    let worktrees = (rootWorktrees[root] ?? []).sorted { $0.tokens > $1.tokens }
+                    return ProjectGroup(
+                        rootName: root,
+                        tokens: tokens,
+                        activeDays: rootActiveDays[root]?.count ?? 0,
+                        worktrees: worktrees
+                    )
+                }
+                .sorted { $0.tokens > $1.tokens }
+
+            return (days, projectList, groupList)
         }
 
         return (
             short:  slice(daysBack: 7),
             month:  slice(daysBack: 30),
-            window: slice(daysBack: 119)
+            window: slice(daysBack: 364)
         )
     }
 }
