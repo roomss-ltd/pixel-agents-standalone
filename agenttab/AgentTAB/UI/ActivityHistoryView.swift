@@ -158,7 +158,10 @@ struct ActivityHistoryView: View {
             ForEach(days) { day in
                 let hovered = hoveredDay == day.day
                 let bottomText = dense ? bottomTick(for: day) : weekdayLabel(day.day)
-                let isWeekTick = dense && bottomText.trimmingCharacters(in: .whitespaces).isEmpty == false
+                // True only on Sunday columns — the hairline anchors
+                // the weekly rhythm, independent of whether today also
+                // happens to carry a label.
+                let isWeekStart = dense && Calendar.current.component(.weekday, from: day.day) == 1
                 VStack(spacing: 4) {
                     // Top readout — hovering a column swaps the day's
                     // agent count for its exact token spend. Hover label
@@ -182,7 +185,7 @@ struct ActivityHistoryView: View {
                             )
                             .frame(height: barHeight(day.tokens, max: maxTokens))
 
-                        if isWeekTick {
+                        if isWeekStart {
                             Rectangle()
                                 .fill(Theme.hairline)
                                 .frame(height: 0.5)
@@ -226,14 +229,16 @@ struct ActivityHistoryView: View {
     }
 
     /// Sparse bottom tick for the 30d/dense chart: day-of-month for
-    /// today and the start of each locale-defined week; a space for
-    /// other days so column heights stay aligned.
+    /// today and the start of each Sunday-first week; a space for
+    /// other days so column heights stay aligned. Sunday anchor
+    /// matches the squares heatmap, keeping the two views aligned
+    /// regardless of locale firstWeekday.
     private func bottomTick(for day: DailyActivity) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(day.day) {
             return "\(cal.component(.day, from: day.day))"
         }
-        if cal.component(.weekday, from: day.day) == cal.firstWeekday {
+        if cal.component(.weekday, from: day.day) == 1 {
             return "\(cal.component(.day, from: day.day))"
         }
         return " "
@@ -434,7 +439,7 @@ struct SquaresHistoryGrid: View {
         for d in days { byDate[d.day] = d }
 
         let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
-        let firstColMonday: Date = {
+        let firstColDay: Date = {
             let daysBack = (cols - 1) * 7 + todayRow
             return cal.date(byAdding: .day, value: -daysBack, to: today)!
         }()
@@ -445,7 +450,7 @@ struct SquaresHistoryGrid: View {
                     ForEach(0 ..< rows, id: \.self) { r in
                         cellView(
                             col: c, row: r, cell: cell,
-                            firstDay: firstColMonday,
+                            firstDay: firstColDay,
                             todayRow: todayRow,
                             today: today,
                             byDate: byDate,
