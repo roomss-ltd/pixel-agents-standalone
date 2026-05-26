@@ -357,7 +357,10 @@ struct SquaresHistoryGrid: View {
         VStack(alignment: .leading, spacing: 6) {
             hoverChip
             GeometryReader { geo in
-                let cell = max(((geo.size.width - rowLabelWidth) / CGFloat(cols)) - gap, 12)
+                // Clamp to the same 34pt height baked into the outer
+                // frame so the last row never clips when the panel is
+                // slightly wider than expected.
+                let cell = min(max(((geo.size.width - rowLabelWidth) / CGFloat(cols)) - gap, 12), 34)
                 HStack(alignment: .top, spacing: gap) {
                     rowLabels(cell: cell)
                     grid(cell: cell)
@@ -482,8 +485,11 @@ struct SquaresHistoryGrid: View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
             .fill(fill)
             .overlay(
+                // White stroke stays visible against every fill tier —
+                // a Theme.Neon.blue stroke disappears into a q4 fill,
+                // which is exactly when today is busiest.
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isToday ? Theme.Neon.blue : Color.clear, lineWidth: 1)
+                    .stroke(isToday ? Color.white.opacity(0.95) : Color.clear, lineWidth: 1.2)
             )
             .frame(width: cell, height: cell)
             .contentShape(Rectangle())
