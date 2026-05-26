@@ -7,13 +7,20 @@
 import SwiftUI
 
 struct ActivityHistoryView: View {
-    let weekly: [DailyActivity]
-    let projects: [ProjectSpend]
+    @ObservedObject var tracker: TokenTracker
     let onBack: () -> Void
+
+    /// Active range slice of the tracker's 119-day history. Defaults to
+    /// the same 7-day window the view used to be hardwired to; Tasks 4-7
+    /// add the UI to mutate it.
+    @State private var range: TokenTracker.HistoryRange = .week
 
     /// Day whose bar the cursor is currently over — drives the
     /// hover readout (token spend) above that column.
     @State private var hoveredDay: Date?
+
+    private var days: [DailyActivity] { tracker.days(for: range) }
+    private var projectsForRange: [ProjectSpend] { tracker.projects(for: range) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -54,14 +61,14 @@ struct ActivityHistoryView: View {
 
     // MARK: - Summary strip
 
-    private var totalTokens: Int { weekly.reduce(0) { $0 + $1.tokens } }
-    private var activeDays: Int { weekly.filter { $0.tokens > 0 }.count }
+    private var totalTokens: Int { days.reduce(0) { $0 + $1.tokens } }
+    private var activeDays: Int { days.filter { $0.tokens > 0 }.count }
 
     private var summaryStrip: some View {
         HStack(spacing: 6) {
             summaryStat(value: TokenTracker.format(totalTokens), label: "tokens", accent: Theme.Neon.blue)
             dot
-            summaryStat(value: "\(projects.count)", label: projects.count == 1 ? "project" : "projects", accent: Theme.Neon.green)
+            summaryStat(value: "\(projectsForRange.count)", label: projectsForRange.count == 1 ? "project" : "projects", accent: Theme.Neon.green)
             dot
             summaryStat(value: "\(activeDays)", label: activeDays == 1 ? "active day" : "active days", accent: Theme.Neon.amber)
             Spacer()
@@ -89,9 +96,9 @@ struct ActivityHistoryView: View {
     // MARK: - Bar chart
 
     private var barChart: some View {
-        let maxTokens = max(weekly.map(\.tokens).max() ?? 1, 1)
+        let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
         return HStack(alignment: .bottom, spacing: 6) {
-            ForEach(weekly) { day in
+            ForEach(days) { day in
                 let hovered = hoveredDay == day.day
                 VStack(spacing: 4) {
                     // Top readout — hovering a column swaps the day's
@@ -161,7 +168,7 @@ struct ActivityHistoryView: View {
                 dashLine
             }
 
-            if projects.isEmpty {
+            if projectsForRange.isEmpty {
                 Text("No agent activity in the last 7 days.")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textFaint)
@@ -170,7 +177,7 @@ struct ActivityHistoryView: View {
             } else {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 4) {
-                        ForEach(projects) { project in
+                        ForEach(projectsForRange) { project in
                             projectRow(project)
                         }
                     }

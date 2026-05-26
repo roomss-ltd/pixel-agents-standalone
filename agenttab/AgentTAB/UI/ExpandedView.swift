@@ -111,8 +111,7 @@ struct ExpandedView: View {
                             .transition(.opacity)
                     } else if showHistory {
                         ActivityHistoryView(
-                            weekly: tokenTracker.weekly,
-                            projects: tokenTracker.weeklyProjects,
+                            tracker: tokenTracker,
                             onBack: { showHistory = false }
                         )
                         .transition(.opacity)
@@ -390,7 +389,7 @@ struct ExpandedView: View {
     private var tokenCounter: some View {
         Button {
             showSettings = false
-            tokenTracker.refreshWeekly()
+            tokenTracker.refreshHistory()
             withAnimation(Theme.Animations.notch) { showHistory = true }
         } label: {
             HStack(spacing: 5) {

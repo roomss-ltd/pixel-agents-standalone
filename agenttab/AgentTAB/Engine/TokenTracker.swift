@@ -71,13 +71,6 @@ final class TokenTracker: ObservableObject {
         }
     }
 
-    // TODO Task 3: remove these three shims once the view layer migrates
-    // to days(for:)/projects(for:)/refreshHistory().
-    @available(*, deprecated, message: "Removed in Task 3 — use days(for:)")
-    @Published private(set) var weekly: [DailyActivity] = []
-    @available(*, deprecated, message: "Removed in Task 3 — use projects(for:)")
-    @Published private(set) var weeklyProjects: [ProjectSpend] = []
-
     private let projectsDir: URL
     private var timer: AnyCancellable?
 
@@ -231,19 +224,8 @@ final class TokenTracker: ObservableObject {
                 self?.projectsShort  = result.short.projects
                 self?.projectsMonth  = result.month.projects
                 self?.projectsWindow = result.window.projects
-                // TODO Task 3: drop these side-publishes once the view
-                // layer migrates off `weekly`/`weeklyProjects`.
-                self?.weekly = result.short.days
-                self?.weeklyProjects = result.short.projects
             }
         }
-    }
-
-    @available(*, deprecated, message: "Removed in Task 3 — use refreshHistory()")
-    func refreshWeekly() {
-        // Populate the deprecated published props for any pre-Task-3
-        // readers, then trigger the real ranged scan.
-        refreshHistory()
     }
 
     /// Pure file walk over the widest window (119 days). Records every
