@@ -34,15 +34,68 @@ struct ActivityHistoryView: View {
             summaryStrip
             switch range {
             case .week:
-                barChart(tracker.days(for: .week), dense: false)
+                VStack(alignment: .leading, spacing: 6) {
+                    barHoverChip
+                    barChart(tracker.days(for: .week), dense: false)
+                }
             case .month:
-                barChart(tracker.days(for: .month), dense: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    barHoverChip
+                    barChart(tracker.days(for: .month), dense: true)
+                }
             case .window:
                 SquaresHistoryGrid(days: tracker.days(for: .window))
             }
             projectsList
         }
         .animation(.easeOut(duration: 0.18), value: range)
+    }
+
+    /// Floating readout above the bar chart. The dense 30d columns are
+    /// too narrow to fit a full token string in their top label, so
+    /// this chip carries the authoritative value (date · tokens ·
+    /// agents). Mirrors the squares grid's hover chip styling and
+    /// reserves the same vertical slot when nothing is hovered.
+    @ViewBuilder
+    private var barHoverChip: some View {
+        if let date = hoveredDay,
+           let day = days.first(where: { $0.day == date }) {
+            HStack(spacing: 6) {
+                Text(chipDateLabel(day.day))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.Neon.blue)
+                Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                Text("\(TokenTracker.format(day.tokens)) tokens")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textStrong)
+                if day.agentCount > 0 {
+                    Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                    Text("\(day.agentCount) agent\(day.agentCount == 1 ? "" : "s")")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.textDim)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 0.5)
+                    )
+            )
+        } else {
+            Color.clear.frame(height: 25)
+        }
+    }
+
+    private func chipDateLabel(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE MMM d"
+        return f.string(from: d)
     }
 
     // MARK: - Header
