@@ -128,7 +128,7 @@ struct ActivityHistoryView: View {
         HStack(spacing: 0) {
             rangePill(.week,   label: "7d",  a11y: "Last 7 days")
             rangePill(.month,  label: "30d", a11y: "Last 30 days")
-            rangePill(.window, icon: "square.grid.3x3.fill", a11y: "Last 119 days, squares view")
+            rangePill(.window, icon: "square.grid.3x3.fill", a11y: "Last 52 weeks, squares view")
         }
         .padding(2)
         .background(
