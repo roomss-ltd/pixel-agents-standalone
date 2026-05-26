@@ -60,9 +60,9 @@ struct ActivityHistoryView: View {
 
     private var rangeSwitcher: some View {
         HStack(spacing: 0) {
-            rangePill(.week,   label: "7d")
-            rangePill(.month,  label: "30d")
-            rangePill(.window, icon: "square.grid.3x3.fill")
+            rangePill(.week,   label: "7d",  a11y: "Last 7 days")
+            rangePill(.month,  label: "30d", a11y: "Last 30 days")
+            rangePill(.window, icon: "square.grid.3x3.fill", a11y: "Last 119 days, squares view")
         }
         .padding(2)
         .background(
@@ -76,7 +76,12 @@ struct ActivityHistoryView: View {
     }
 
     @ViewBuilder
-    private func rangePill(_ r: TokenTracker.HistoryRange, label: String? = nil, icon: String? = nil) -> some View {
+    private func rangePill(
+        _ r: TokenTracker.HistoryRange,
+        label: String? = nil,
+        icon: String? = nil,
+        a11y: String
+    ) -> some View {
         Button {
             range = r
         } label: {
@@ -98,6 +103,8 @@ struct ActivityHistoryView: View {
             )
         }
         .buttonStyle(.plain)
+        .help(a11y)
+        .accessibilityLabel(a11y)
     }
 
     // MARK: - Summary strip
