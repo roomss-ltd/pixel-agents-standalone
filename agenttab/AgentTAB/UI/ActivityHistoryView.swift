@@ -44,7 +44,13 @@ struct ActivityHistoryView: View {
                     barChart(tracker.days(for: .month), dense: true)
                 }
             case .window:
-                SquaresHistoryGrid(days: tracker.days(for: .window))
+                VStack(alignment: .leading, spacing: 6) {
+                    barHoverChip
+                    SquaresHistoryGrid(
+                        days: tracker.days(for: .window),
+                        hoveredDay: $hoveredDay
+                    )
+                }
             }
             projectsList
         }
@@ -79,6 +85,7 @@ struct ActivityHistoryView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            .frame(height: 25, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color.white.opacity(0.05))
@@ -481,89 +488,31 @@ struct ActivityHistoryView: View {
 struct SquaresHistoryGrid: View {
     let days: [DailyActivity]      // up to 364 entries, oldest first
 
-    @State private var hovered: DailyActivity?
+    /// Owned by the parent — the hover chip above the grid reads from
+    /// this same binding so squares share a chip with the bar charts.
+    @Binding var hoveredDay: Date?
 
     /// Hard upper bound — matches the .window range (52 weeks).
     private let maxCols = 52
     private let rows = 7
     private let gap: CGFloat = 3
-    private let rowLabelWidth: CGFloat = 14
     /// The widest a cell is allowed to draw — drives both the per-cell
     /// clamp and the outer frame height so the slot lines up with the
     /// bar chart's vertical footprint (~109pt).
     private let maxCell: CGFloat = 13
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            hoverChip
-            GeometryReader { geo in
-                // Cell sizing: divide the available width by the full
-                // 52-week budget, subtract the gap, and clamp into the
-                // GitHub range. At narrow widths the cell floors at 8pt
-                // so the grid stays legible.
-                let available = geo.size.width - rowLabelWidth
-                let cell = min(max((available / CGFloat(maxCols)) - gap, 8), maxCell)
-                // Then back-solve how many full columns actually fit.
-                let cols = min(maxCols, max(1, Int(floor(available / (cell + gap)))))
-                HStack(alignment: .top, spacing: gap) {
-                    rowLabels(cell: cell)
-                    grid(cell: cell, cols: cols)
-                }
-            }
-            .frame(height: CGFloat(rows) * maxCell + CGFloat(rows - 1) * gap)
+        GeometryReader { geo in
+            // Cell sizing: divide the available width by the full
+            // 52-week budget, subtract the gap, and clamp into the
+            // GitHub range. At narrow widths the cell floors at 8pt
+            // so the grid stays legible.
+            let cell = min(max((geo.size.width / CGFloat(maxCols)) - gap, 8), maxCell)
+            // Then back-solve how many full columns actually fit.
+            let cols = min(maxCols, max(1, Int(floor(geo.size.width / (cell + gap)))))
+            grid(cell: cell, cols: cols)
         }
-        .animation(.easeOut(duration: 0.12), value: hovered)
-    }
-
-    // MARK: hover chip
-
-    @ViewBuilder
-    private var hoverChip: some View {
-        if let d = hovered {
-            HStack(spacing: 6) {
-                Text(dateLabel(d.day))
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.Neon.blue)
-                Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
-                Text("\(TokenTracker.format(d.tokens)) tokens")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textStrong)
-                if d.agentCount > 0 {
-                    Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
-                    Text("\(d.agentCount) agent\(d.agentCount == 1 ? "" : "s")")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.textDim)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Theme.hairline, lineWidth: 0.5)
-                    )
-            )
-        } else {
-            Color.clear.frame(height: 25)
-        }
-    }
-
-    // MARK: row labels (M W F)
-
-    private func rowLabels(cell: CGFloat) -> some View {
-        VStack(spacing: gap) {
-            ForEach(0 ..< rows, id: \.self) { r in
-                let labels: [Int: String] = [1: "M", 3: "W", 5: "F"]
-                Text(labels[r] ?? "")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Theme.textFaint)
-                    .frame(width: rowLabelWidth, height: cell, alignment: .trailing)
-            }
-        }
+        .frame(height: CGFloat(rows) * maxCell + CGFloat(rows - 1) * gap)
     }
 
     // MARK: grid
@@ -640,16 +589,10 @@ struct SquaresHistoryGrid: View {
             .onHover { inside in
                 if isFuture { return }
                 if inside {
-                    hovered = activity ?? DailyActivity(day: date, tokens: 0, agentCount: 0, projects: [])
-                } else if hovered?.day == date {
-                    hovered = nil
+                    hoveredDay = date
+                } else if hoveredDay == date {
+                    hoveredDay = nil
                 }
             }
-    }
-
-    private func dateLabel(_ d: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "EEE MMM d"
-        return f.string(from: d)
     }
 }
