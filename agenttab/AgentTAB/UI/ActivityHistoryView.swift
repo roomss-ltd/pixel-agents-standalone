@@ -426,29 +426,38 @@ struct ActivityHistoryView: View {
 }
 
 struct SquaresHistoryGrid: View {
-    let days: [DailyActivity]      // exactly 119, oldest first
+    let days: [DailyActivity]      // up to 364 entries, oldest first
 
     @State private var hovered: DailyActivity?
 
-    private let cols = 17
+    /// Hard upper bound — matches the .window range (52 weeks).
+    private let maxCols = 52
     private let rows = 7
-    private let gap: CGFloat = 5
+    private let gap: CGFloat = 3
     private let rowLabelWidth: CGFloat = 14
+    /// The widest a cell is allowed to draw — drives both the per-cell
+    /// clamp and the outer frame height so the slot lines up with the
+    /// bar chart's vertical footprint (~109pt).
+    private let maxCell: CGFloat = 13
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             hoverChip
             GeometryReader { geo in
-                // Clamp to the same 34pt height baked into the outer
-                // frame so the last row never clips when the panel is
-                // slightly wider than expected.
-                let cell = min(max(((geo.size.width - rowLabelWidth) / CGFloat(cols)) - gap, 12), 34)
+                // Cell sizing: divide the available width by the full
+                // 52-week budget, subtract the gap, and clamp into the
+                // GitHub range. At narrow widths the cell floors at 8pt
+                // so the grid stays legible.
+                let available = geo.size.width - rowLabelWidth
+                let cell = min(max((available / CGFloat(maxCols)) - gap, 8), maxCell)
+                // Then back-solve how many full columns actually fit.
+                let cols = min(maxCols, max(1, Int(floor(available / (cell + gap)))))
                 HStack(alignment: .top, spacing: gap) {
                     rowLabels(cell: cell)
-                    grid(cell: cell)
+                    grid(cell: cell, cols: cols)
                 }
             }
-            .frame(height: CGFloat(rows) * 34 + CGFloat(rows - 1) * gap)
+            .frame(height: CGFloat(rows) * maxCell + CGFloat(rows - 1) * gap)
         }
         .animation(.easeOut(duration: 0.12), value: hovered)
     }
@@ -506,7 +515,7 @@ struct SquaresHistoryGrid: View {
 
     // MARK: grid
 
-    private func grid(cell: CGFloat) -> some View {
+    private func grid(cell: CGFloat, cols: Int) -> some View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let todayRow = (cal.component(.weekday, from: today) - 1) % 7
