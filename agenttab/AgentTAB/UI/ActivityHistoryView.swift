@@ -26,7 +26,15 @@ struct ActivityHistoryView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             summaryStrip
-            barChart
+            switch range {
+            case .week:
+                barChart(tracker.days(for: .week), dense: false)
+            case .month:
+                barChart(tracker.days(for: .month), dense: true)
+            case .window:
+                // TODO Task 6: replace with SquaresHistoryGrid
+                barChart(tracker.days(for: .window), dense: true)
+            }
             projectsList
         }
         .animation(.easeOut(duration: 0.18), value: range)
@@ -143,36 +151,52 @@ struct ActivityHistoryView: View {
 
     // MARK: - Bar chart
 
-    private var barChart: some View {
+    private func barChart(_ days: [DailyActivity], dense: Bool) -> some View {
         let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
-        return HStack(alignment: .bottom, spacing: 6) {
+        let staticTopFont: CGFloat = dense ? 7 : 8
+        return HStack(alignment: .bottom, spacing: dense ? 3 : 6) {
             ForEach(days) { day in
                 let hovered = hoveredDay == day.day
+                let bottomText = dense ? bottomTick(for: day) : weekdayLabel(day.day)
+                let isWeekTick = dense && bottomText.trimmingCharacters(in: .whitespaces).isEmpty == false
                 VStack(spacing: 4) {
                     // Top readout — hovering a column swaps the day's
-                    // agent count for its exact token spend.
+                    // agent count for its exact token spend. Hover label
+                    // stays at 8pt so the active column reads slightly
+                    // larger than its dense-mode neighbours.
                     Text(topLabel(for: day, hovered: hovered))
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: hovered ? 8 : staticTopFont, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(hovered ? Theme.Neon.blue : Theme.textDim)
                         .lineLimit(1)
-                        .fixedSize()
+                        .modifier(DenseFixedSize(dense: dense))
 
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(
-                            day.tokens > 0
-                                ? Theme.Neon.blue.opacity(
-                                    hovered ? 1.0 : (isToday(day.day) ? 0.92 : 0.7)
-                                  )
-                                : Color.white.opacity(hovered ? 0.12 : 0.06)
-                        )
-                        .frame(height: barHeight(day.tokens, max: maxTokens))
+                    ZStack(alignment: .bottom) {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(
+                                day.tokens > 0
+                                    ? Theme.Neon.blue.opacity(
+                                        hovered ? 1.0 : (isToday(day.day) ? 0.92 : 0.7)
+                                      )
+                                    : Color.white.opacity(hovered ? 0.12 : 0.06)
+                            )
+                            .frame(height: barHeight(day.tokens, max: maxTokens))
 
-                    Text(weekdayLabel(day.day))
+                        if isWeekTick {
+                            Rectangle()
+                                .fill(Theme.hairline)
+                                .frame(height: 0.5)
+                                .offset(y: 1)
+                        }
+                    }
+
+                    Text(bottomText)
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(
                             hovered || isToday(day.day) ? Theme.Neon.blue : Theme.textFaint
                         )
+                        .lineLimit(1)
+                        .monospacedDigit()
                 }
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
@@ -184,6 +208,35 @@ struct ActivityHistoryView: View {
         .frame(height: 108)
         .padding(.vertical, 2)
         .animation(.easeOut(duration: 0.12), value: hoveredDay)
+    }
+
+    /// In 7d mode the top label is allowed to render at its natural
+    /// width via `.fixedSize()` (columns are wide). In 30d/dense mode
+    /// columns are too narrow to fit a full token string, so we let
+    /// SwiftUI truncate via the default flexible width.
+    private struct DenseFixedSize: ViewModifier {
+        let dense: Bool
+        func body(content: Content) -> some View {
+            if dense {
+                content
+            } else {
+                content.fixedSize()
+            }
+        }
+    }
+
+    /// Sparse bottom tick for the 30d/dense chart: day-of-month for
+    /// today and the start of each locale-defined week; a space for
+    /// other days so column heights stay aligned.
+    private func bottomTick(for day: DailyActivity) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day.day) {
+            return "\(cal.component(.day, from: day.day))"
+        }
+        if cal.component(.weekday, from: day.day) == cal.firstWeekday {
+            return "\(cal.component(.day, from: day.day))"
+        }
+        return " "
     }
 
     /// Top-of-column text: token spend while hovered, otherwise the
