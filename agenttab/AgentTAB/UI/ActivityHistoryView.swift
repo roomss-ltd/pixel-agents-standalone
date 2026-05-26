@@ -12,9 +12,8 @@ struct ActivityHistoryView: View {
     @ObservedObject var tracker: TokenTracker
     let onBack: () -> Void
 
-    /// Active range slice of the tracker's 119-day history. Defaults to
-    /// the same 7-day window the view used to be hardwired to; Tasks 4-7
-    /// add the UI to mutate it.
+    /// Active range slice of the tracker's 119-day history. The range
+    /// pills in the header mutate this; defaults to 7 days.
     @State private var range: TokenTracker.HistoryRange = .week
 
     /// Day whose bar the cursor is currently over — drives the
