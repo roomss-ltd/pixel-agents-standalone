@@ -8,6 +8,39 @@
 
 import SwiftUI
 
+/// Shared color ramp for the 52-week squares grid AND the legend strip
+/// underneath it. Keeping this in one place means the legend can't
+/// drift out of sync with the actual cell fills if the tier breakpoints
+/// or opacities are ever retuned.
+///
+/// Index 0 = empty / "Less" end of the ramp.
+/// Index 4 = peak / "More" end of the ramp.
+enum HistoryTiers {
+    /// Fill color for each of the 5 intensity tiers (empty → peak).
+    static let allFills: [Color] = [
+        Color.white.opacity(0.04),
+        Theme.Neon.blue.opacity(0.22),
+        Theme.Neon.blue.opacity(0.45),
+        Theme.Neon.blue.opacity(0.70),
+        Theme.Neon.blue.opacity(1.00),
+    ]
+
+    /// Pick the fill tier for a day given its token spend relative to
+    /// the busiest day in the active window. `tokens == 0` returns the
+    /// empty fill; otherwise the four blue tiers split the >0..100%
+    /// range into quartiles.
+    static func fill(tokens: Int, maxTokens: Int) -> Color {
+        guard tokens > 0 else { return allFills[0] }
+        let pct = Double(tokens) / Double(max(maxTokens, 1)) * 100
+        switch pct {
+        case ..<26:  return allFills[1]
+        case ..<51:  return allFills[2]
+        case ..<76:  return allFills[3]
+        default:     return allFills[4]
+        }
+    }
+}
+
 struct ActivityHistoryView: View {
     @ObservedObject var tracker: TokenTracker
     let onBack: () -> Void
@@ -50,6 +83,7 @@ struct ActivityHistoryView: View {
                         days: tracker.days(for: .window),
                         hoveredDay: $hoveredDay
                     )
+                    legend
                 }
             }
             projectsList
@@ -325,6 +359,35 @@ struct ActivityHistoryView: View {
         return minH + (maxH - minH) * CGFloat(tokens) / CGFloat(max)
     }
 
+    // MARK: - Squares legend
+    //
+    // GitHub-style "Less □ ▢ ▣ ▤ ▥ More" strip pinned to the right edge
+    // under the 52-week squares grid. The 5 swatches mirror exactly the
+    // tier fills used in `SquaresHistoryGrid.cellView` — empty plus the
+    // four q1..q4 blue tiers — so the legend stays correct if the tier
+    // ramp is ever retuned (single source of truth in `HistoryTiers`).
+
+    @ViewBuilder
+    private var legend: some View {
+        HStack(spacing: 5) {
+            Spacer()
+            Text("Less")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+            ForEach(HistoryTiers.allFills.indices, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(HistoryTiers.allFills[i])
+                    .frame(width: 10, height: 10)
+            }
+            Text("More")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Activity legend: less to more, five intensity steps")
+    }
+
     // MARK: - Projects list
 
     @ViewBuilder
@@ -563,17 +626,9 @@ struct SquaresHistoryGrid: View {
 
         let activity = byDate[date]
         let tokens = activity?.tokens ?? 0
-        let fill: Color = {
-            if isFuture { return .clear }
-            if tokens == 0 { return Color.white.opacity(0.04) }
-            let pct = Double(tokens) / Double(maxTokens) * 100
-            switch pct {
-            case ..<26:  return Theme.Neon.blue.opacity(0.22)
-            case ..<51:  return Theme.Neon.blue.opacity(0.45)
-            case ..<76:  return Theme.Neon.blue.opacity(0.70)
-            default:     return Theme.Neon.blue.opacity(1.00)
-            }
-        }()
+        let fill: Color = isFuture
+            ? .clear
+            : HistoryTiers.fill(tokens: tokens, maxTokens: maxTokens)
 
         RoundedRectangle(cornerRadius: 6, style: .continuous)
             .fill(fill)

@@ -264,52 +264,70 @@ struct ChangeLoader: View {
     }
 }
 
-// MARK: - Rotating loader — cycles variants every `intervalSeconds`
+// MARK: - Rotating loader — chaos pattern, rotating monotone palette
+//
+// Per the user's spec the notch's active-processing animation is the
+// `chaos-rotate` Pixel Loops variant: all 9 cells of the 3×3 grid
+// flicker independently with hash-based randomness so the pattern is
+// "forever different" — it never repeats. The variant is pinned; only
+// the palette cycles, stepping through the 6 monotone accents (blue,
+// pink, white, purple, cyan, dark blue) every `intervalSeconds`.
+//
+// The `color` parameter is retained for source compatibility with the
+// previous API but is ignored: Pixel Loops define their own palettes.
 
 struct RotatingLoader: View {
     var size: CGFloat = 18
+    /// Retained for API compat with the old ldrs-based loader. Pixel
+    /// Loops drive their own monotone palettes, so this is ignored.
     var color: Color = Theme.Neon.blue
     var intervalSeconds: Double = Theme.Animations.loaderRotationSeconds
 
-    @State private var index: Int = 0
+    @State private var paletteIndex: Int = 0
+
+    private var palette: PixelLoopPalette {
+        PixelLoopPalette.allCases[paletteIndex % PixelLoopPalette.allCases.count]
+    }
+
+    /// Crossfade duration when stepping from one palette to the next.
+    /// Long enough that the change reads as a slow tint shift, not a
+    /// hard cut, but short relative to `intervalSeconds` so most of the
+    /// time the loop sits firmly in one accent.
+    private static let crossfadeSeconds: Double = 1.6
 
     var body: some View {
-        Group {
-            switch LoaderVariant.allCases[index] {
-            case .dotSpinner:   DotSpinnerLoader(size: size, color: color)
-            case .quantum:      QuantumLoader(size: size, color: color)
-            case .cardio:       CardioLoader(color: color, size: size)
-            case .trio:         TrioLoader(size: size, color: color)
-            case .chaoticOrbit: ChaoticOrbitLoader(size: size, color: color)
-            case .grid:         GridLoader(size: size, color: color)
-            case .reuleaux:     ReuleauxLoader(size: size, color: color)
-            case .change:       ChangeLoader(size: size, color: color)
+        PixelLoopView(variant: .chaosRotate,
+                      palette: palette,
+                      coreOverride: palette.core,
+                      glowOverride: palette.glow,
+                      size: size)
+            .frame(width: size, height: size)
+            .onAppear {
+                // Stagger so multiple RotatingLoaders mounted simultaneously
+                // don't pick the same starting palette.
+                paletteIndex = Int.random(in: 0..<PixelLoopPalette.allCases.count)
             }
-        }
-        .frame(width: size, height: size)
-        .onAppear {
-            // Stagger initial pick so two RotatingLoaders mounted at the same
-            // time don't show the same variant.
-            index = Int.random(in: 0..<LoaderVariant.allCases.count)
-        }
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
-                index = (index + 1) % LoaderVariant.allCases.count
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
+                    // Wrap in `withAnimation` so SwiftUI interpolates the
+                    // `coreOverride` and `glowOverride` Color params on
+                    // PixelLoopView between the old and new palette —
+                    // this is what gives the smooth tint shift.
+                    withAnimation(.easeInOut(duration: Self.crossfadeSeconds)) {
+                        paletteIndex = (paletteIndex + 1) % PixelLoopPalette.allCases.count
+                    }
+                }
             }
-        }
     }
 }
 
 #Preview {
     HStack(spacing: 24) {
-        DotSpinnerLoader(size: 28)
-        QuantumLoader(size: 28)
-        CardioLoader(size: 28)
-        TrioLoader(size: 28)
-        RotatingLoader(size: 28, intervalSeconds: 2)
+        RotatingLoader(size: 28, intervalSeconds: 1.5)
+        RotatingLoader(size: 28, intervalSeconds: 1.5)
+        RotatingLoader(size: 28, intervalSeconds: 1.5)
     }
     .padding()
-    .foregroundStyle(Theme.Neon.blue)
     .background(Color.black)
 }
