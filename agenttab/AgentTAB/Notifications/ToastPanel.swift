@@ -30,7 +30,18 @@ struct Toast: Identifiable {
 final class ToastPanel: NSPanel {
     /// Fixed dimensions — match `ToastView`'s explicit frame.
     private static let toastSize = CGSize(width: 360, height: 62)
-    /// Distance from the screen edges.
+    /// Transparent margin around the card. The toast's drop shadow +
+    /// accent glow extend well past the 360×62 card; without room they
+    /// get hard-clipped by the window bounds into a square halo. Padding
+    /// the host by this margin lets the glow render as a soft round
+    /// bloom. The margin is transparent so it stays click-through.
+    private static let glowMargin: CGFloat = 48
+    /// Full panel size = card + glow margin on every side.
+    private static let panelSize = CGSize(
+        width: toastSize.width + glowMargin * 2,
+        height: toastSize.height + glowMargin * 2
+    )
+    /// Distance from the screen edges (to the card, not the glow margin).
     private static let edgeInset: CGFloat = 16
 
     private var autoDismissTask: DispatchWorkItem?
@@ -81,7 +92,7 @@ final class ToastPanel: NSPanel {
 
     init() {
         super.init(
-            contentRect: NSRect(origin: .zero, size: Self.toastSize),
+            contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -110,7 +121,7 @@ final class ToastPanel: NSPanel {
         self.currentOnTap = onTap
         self.isEngaged = false
         installContent()
-        self.setContentSize(Self.toastSize)
+        self.setContentSize(Self.panelSize)
         anchorTopRight()
         orderFront(nil)
 
@@ -147,8 +158,10 @@ final class ToastPanel: NSPanel {
                 self?.dismiss()
             }
         )
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(origin: .zero, size: Self.toastSize)
+        // Pad the card by the glow margin so the shadow/glow has room to
+        // bloom instead of being clipped square by the window bounds.
+        let host = NSHostingView(rootView: view.padding(Self.glowMargin))
+        host.frame = NSRect(origin: .zero, size: Self.panelSize)
         self.contentView = host
     }
 
@@ -250,9 +263,11 @@ final class ToastPanel: NSPanel {
     private func anchorTopRight() {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
+        // Offset by the glow margin too, so the *card* (not the padded
+        // panel) keeps its `edgeInset` distance from the screen corner.
         let origin = NSPoint(
-            x: visible.maxX - Self.toastSize.width - Self.edgeInset,
-            y: visible.maxY - Self.toastSize.height - Self.edgeInset
+            x: visible.maxX - Self.toastSize.width - Self.edgeInset - Self.glowMargin,
+            y: visible.maxY - Self.toastSize.height - Self.edgeInset - Self.glowMargin
         )
         setFrameOrigin(origin)
     }

@@ -51,7 +51,7 @@ struct HoverPreviewView: View {
                     } else if mode == .active {
                         RotatingLoader(size: 18, color: Theme.Neon.blue)
                     } else {
-                        CoffeeIdle(size: 18)
+                        IdleCreature(size: 18)
                     }
                 }
                 if inProgressCount > 0 {

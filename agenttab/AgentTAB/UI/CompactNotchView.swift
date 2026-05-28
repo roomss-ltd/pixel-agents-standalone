@@ -176,7 +176,9 @@ struct CompactNotchView: View {
         if hasActiveSession {
             RotatingLoader(size: 18, color: Theme.Neon.blue)
         } else {
-            CoffeeIdle(size: 18)
+            // Larger than the active loader so the idle character reads
+            // clearly in the compact notch slot.
+            IdleCreature(size: 30)
         }
     }
 

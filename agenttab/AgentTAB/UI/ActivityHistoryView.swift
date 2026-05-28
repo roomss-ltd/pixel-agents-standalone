@@ -16,27 +16,52 @@ import SwiftUI
 /// Index 0 = empty / "Less" end of the ramp.
 /// Index 4 = peak / "More" end of the ramp.
 enum HistoryTiers {
-    /// Fill color for each of the 5 intensity tiers (empty → peak).
-    static let allFills: [Color] = [
-        Color.white.opacity(0.04),
-        Theme.Neon.blue.opacity(0.22),
-        Theme.Neon.blue.opacity(0.45),
-        Theme.Neon.blue.opacity(0.70),
-        Theme.Neon.blue.opacity(1.00),
-    ]
+    /// 5-stop intensity ramp (empty → peak) built from a mode accent, so
+    /// the squares + legend recolor with the active bar mode. Index 0 is
+    /// the neutral empty fill (accent-independent).
+    static func ramp(_ accent: Color) -> [Color] {
+        [
+            Color.white.opacity(0.04),
+            accent.opacity(0.22),
+            accent.opacity(0.45),
+            accent.opacity(0.70),
+            accent.opacity(1.00),
+        ]
+    }
 
-    /// Pick the fill tier for a day given its token spend relative to
-    /// the busiest day in the active window. `tokens == 0` returns the
-    /// empty fill; otherwise the four blue tiers split the >0..100%
-    /// range into quartiles.
-    static func fill(tokens: Int, maxTokens: Int) -> Color {
-        guard tokens > 0 else { return allFills[0] }
-        let pct = Double(tokens) / Double(max(maxTokens, 1)) * 100
+    /// Pick the fill tier for a day given its value (tokens or active
+    /// seconds, per the active mode) relative to the busiest day in the
+    /// window. `value == 0` returns the empty fill; otherwise the four
+    /// accent tiers split the >0..100% range into quartiles.
+    static func fill(value: Int, maxValue: Int, accent: Color) -> Color {
+        let r = ramp(accent)
+        guard value > 0 else { return r[0] }
+        let pct = Double(value) / Double(max(maxValue, 1)) * 100
         switch pct {
-        case ..<26:  return allFills[1]
-        case ..<51:  return allFills[2]
-        case ..<76:  return allFills[3]
-        default:     return allFills[4]
+        case ..<26:  return r[1]
+        case ..<51:  return r[2]
+        case ..<76:  return r[3]
+        default:     return r[4]
+        }
+    }
+}
+
+/// What the bars and 52-week squares visualise. The hover chip always
+/// shows all three metrics regardless; this only drives bar height,
+/// heatmap intensity, and the summary headline.
+enum BarMode: CaseIterable {
+    case tokens   // daily token spend
+    case active   // wall-clock seconds ≥1 agent was active (≤24h)
+    case agent    // active seconds summed across all agents
+
+    /// Accent that recolors the bars, heatmap, selected pill, hover
+    /// highlight and summary headline for this mode — matching the
+    /// hover-chip colors (blue tokens, green active, amber agent-hours).
+    var accent: Color {
+        switch self {
+        case .tokens: return Theme.Neon.blue
+        case .active: return Theme.Neon.green
+        case .agent:  return Theme.Neon.amber
         }
     }
 }
@@ -49,6 +74,10 @@ struct ActivityHistoryView: View {
     /// pills in the header mutate this; defaults to 7 days.
     @State private var range: TokenTracker.HistoryRange = .week
 
+    /// Which metric the bars + heatmap size themselves by. The mode pills
+    /// in the header mutate this; the hover chip always shows all three.
+    @State private var barMode: BarMode = .tokens
+
     /// Day whose bar the cursor is currently over — drives the
     /// hover readout (token spend) above that column.
     @State private var hoveredDay: Date?
@@ -58,8 +87,46 @@ struct ActivityHistoryView: View {
     /// never expandable so their root name never lives here.
     @State private var expandedGroups: Set<String> = []
 
+    init(
+        tracker: TokenTracker,
+        onBack: @escaping () -> Void,
+        initialRange: TokenTracker.HistoryRange = .week,
+        initialMode: BarMode = .tokens,
+        initialHoveredDay: Date? = nil
+    ) {
+        self._tracker = ObservedObject(wrappedValue: tracker)
+        self.onBack = onBack
+        self._range = State(initialValue: initialRange)
+        self._barMode = State(initialValue: initialMode)
+        self._hoveredDay = State(initialValue: initialHoveredDay)
+    }
+
     private var days: [DailyActivity] { tracker.days(for: range) }
     private var projectGroups: [ProjectGroup] { tracker.projectGroups(for: range) }
+
+    /// Day the chip + bar highlight read from. Falls back to today when
+    /// nothing is hovered, so today is selected by default; hovering any
+    /// other day overrides it and releasing snaps focus back to today.
+    private var focusedDay: Date {
+        hoveredDay ?? Calendar.current.startOfDay(for: Date())
+    }
+
+    /// Raw value a bar / square sizes itself by, for the active mode.
+    private func metricValue(_ day: DailyActivity, _ mode: BarMode) -> Int {
+        switch mode {
+        case .tokens: return day.tokens
+        case .active: return day.unionActiveSeconds
+        case .agent:  return day.summedActiveSeconds
+        }
+    }
+
+    /// Human string for a day's value in `mode` — tokens vs duration.
+    private func metricLabel(_ day: DailyActivity, _ mode: BarMode) -> String {
+        switch mode {
+        case .tokens:         return TokenTracker.format(day.tokens)
+        case .active, .agent: return TokenTracker.formatDuration(metricValue(day, mode))
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -69,19 +136,20 @@ struct ActivityHistoryView: View {
             case .week:
                 VStack(alignment: .leading, spacing: 6) {
                     barHoverChip
-                    barChart(tracker.days(for: .week), dense: false)
+                    barChart(tracker.days(for: .week), dense: false, mode: barMode)
                 }
             case .month:
                 VStack(alignment: .leading, spacing: 6) {
                     barHoverChip
-                    barChart(tracker.days(for: .month), dense: true)
+                    barChart(tracker.days(for: .month), dense: true, mode: barMode)
                 }
             case .window:
                 VStack(alignment: .leading, spacing: 6) {
                     barHoverChip
                     SquaresHistoryGrid(
                         days: tracker.days(for: .window),
-                        hoveredDay: $hoveredDay
+                        hoveredDay: $hoveredDay,
+                        mode: barMode
                     )
                     legend
                 }
@@ -89,6 +157,7 @@ struct ActivityHistoryView: View {
             projectsList
         }
         .animation(.easeOut(duration: 0.18), value: range)
+        .animation(.easeOut(duration: 0.18), value: barMode)
     }
 
     /// Floating readout above the bar chart. The dense 30d columns are
@@ -98,28 +167,50 @@ struct ActivityHistoryView: View {
     /// reserves the same vertical slot when nothing is hovered.
     @ViewBuilder
     private var barHoverChip: some View {
-        if let date = hoveredDay,
-           let day = days.first(where: { $0.day == date }) {
-            HStack(spacing: 6) {
-                Text(chipDateLabel(day.day))
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.Neon.blue)
-                Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
-                Text("\(TokenTracker.format(day.tokens)) tokens")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textStrong)
-                if day.agentCount > 0 {
+        if let day = days.first(where: { $0.day == focusedDay }) {
+            VStack(alignment: .leading, spacing: 2) {
+                // Row 1 — date · token spend · agent count.
+                HStack(spacing: 6) {
+                    Text(chipDateLabel(day.day))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.Neon.blue)
                     Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
-                    Text("\(day.agentCount) agent\(day.agentCount == 1 ? "" : "s")")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.textDim)
+                    Text("\(TokenTracker.format(day.tokens)) tokens")
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textStrong)
+                    if day.agentCount > 0 {
+                        Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                        Text("\(day.agentCount) agent\(day.agentCount == 1 ? "" : "s")")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.textDim)
+                    }
+                    Spacer()
                 }
-                Spacer()
+                // Row 2 — wall-clock active span · summed agent-time.
+                HStack(spacing: 6) {
+                    Text(TokenTracker.formatDuration(day.unionActiveSeconds))
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Neon.green)
+                    Text("active")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                    Text("·").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                    Text(TokenTracker.formatDuration(day.summedActiveSeconds))
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Neon.amber)
+                    Text("agent-time")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                    Spacer()
+                }
+                .opacity(day.summedActiveSeconds > 0 ? 1 : 0.3)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .frame(height: 25, alignment: .leading)
+            .frame(height: 40, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color.white.opacity(0.05))
@@ -129,7 +220,7 @@ struct ActivityHistoryView: View {
                     )
             )
         } else {
-            Color.clear.frame(height: 25)
+            Color.clear.frame(height: 40)
         }
     }
 
@@ -162,7 +253,45 @@ struct ActivityHistoryView: View {
 
             rangeSwitcher
             Spacer()
+            modeSwitcher
         }
+    }
+
+    /// Tokens / Active / Agent-hours toggle, mirroring `rangeSwitcher`'s
+    /// styling. Drives what the bars and squares visualise.
+    private var modeSwitcher: some View {
+        HStack(spacing: 0) {
+            modePill(.tokens, icon: "number",         a11y: "Tokens")
+            modePill(.active, icon: "clock",          a11y: "Active hours — wall-clock, one or more agents")
+            modePill(.agent,  icon: "person.2.fill",  a11y: "Agent-hours — summed across all agents")
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                )
+        )
+    }
+
+    private func modePill(_ m: BarMode, icon: String, a11y: String) -> some View {
+        Button { barMode = m } label: {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(barMode == m ? m.accent : Theme.textDim)
+                .frame(minWidth: 24)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(barMode == m ? m.accent.opacity(0.18) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(a11y)
+        .accessibilityLabel(a11y)
     }
 
     private var rangeSwitcher: some View {
@@ -219,9 +348,19 @@ struct ActivityHistoryView: View {
     private var totalTokens: Int { days.reduce(0) { $0 + $1.tokens } }
     private var activeDays: Int { days.filter { $0.tokens > 0 }.count }
 
+    /// Leading summary stat tracks the active bar mode: total tokens,
+    /// total wall-clock active time, or total agent-hours over the range.
+    private var summaryHeadline: (value: String, label: String) {
+        switch barMode {
+        case .tokens: return (TokenTracker.format(totalTokens), "tokens")
+        case .active: return (TokenTracker.formatDuration(days.reduce(0) { $0 + $1.unionActiveSeconds }), "active")
+        case .agent:  return (TokenTracker.formatDuration(days.reduce(0) { $0 + $1.summedActiveSeconds }), "agent-time")
+        }
+    }
+
     private var summaryStrip: some View {
         HStack(spacing: 6) {
-            summaryStat(value: TokenTracker.format(totalTokens), label: "tokens", accent: Theme.Neon.blue)
+            summaryStat(value: summaryHeadline.value, label: summaryHeadline.label, accent: barMode.accent)
             dot
             summaryStat(value: "\(projectGroups.count)", label: projectGroups.count == 1 ? "project" : "projects", accent: Theme.Neon.green)
             dot
@@ -250,39 +389,42 @@ struct ActivityHistoryView: View {
 
     // MARK: - Bar chart
 
-    private func barChart(_ days: [DailyActivity], dense: Bool) -> some View {
-        let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
+    private func barChart(_ days: [DailyActivity], dense: Bool, mode: BarMode) -> some View {
+        let maxValue = max(days.map { metricValue($0, mode) }.max() ?? 1, 1)
         let staticTopFont: CGFloat = dense ? 7 : 8
         return HStack(alignment: .bottom, spacing: dense ? 3 : 6) {
             ForEach(days) { day in
-                let hovered = hoveredDay == day.day
+                let value = metricValue(day, mode)
+                // Focused column = hovered, or today when nothing is
+                // hovered — so today reads as selected by default.
+                let focused = focusedDay == day.day
                 let bottomText = dense ? bottomTick(for: day) : weekdayLabel(day.day)
                 // True only on Sunday columns — the hairline anchors
                 // the weekly rhythm, independent of whether today also
                 // happens to carry a label.
                 let isWeekStart = dense && Calendar.current.component(.weekday, from: day.day) == 1
                 VStack(spacing: 4) {
-                    // Top readout — hovering a column swaps the day's
-                    // agent count for its exact token spend. Hover label
-                    // stays at 8pt so the active column reads slightly
-                    // larger than its dense-mode neighbours.
-                    Text(topLabel(for: day, hovered: hovered))
-                        .font(.system(size: hovered ? 8 : staticTopFont, weight: .bold))
+                    // Top readout — the focused column shows its exact
+                    // value in the active mode; the rest show agent count.
+                    // Focus label stays at 8pt so the active column reads
+                    // slightly larger than its dense-mode neighbours.
+                    Text(topLabel(for: day, focused: focused, mode: mode))
+                        .font(.system(size: focused ? 8 : staticTopFont, weight: .bold))
                         .monospacedDigit()
-                        .foregroundStyle(hovered ? Theme.Neon.blue : Theme.textDim)
+                        .foregroundStyle(focused ? mode.accent : Theme.textDim)
                         .lineLimit(1)
                         .modifier(DenseFixedSize(dense: dense))
 
                     ZStack(alignment: .bottom) {
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
                             .fill(
-                                day.tokens > 0
-                                    ? Theme.Neon.blue.opacity(
-                                        hovered ? 1.0 : (isToday(day.day) ? 0.92 : 0.7)
+                                value > 0
+                                    ? mode.accent.opacity(
+                                        focused ? 1.0 : (isToday(day.day) ? 0.92 : 0.7)
                                       )
-                                    : Color.white.opacity(hovered ? 0.12 : 0.06)
+                                    : Color.white.opacity(focused ? 0.12 : 0.06)
                             )
-                            .frame(height: barHeight(day.tokens, max: maxTokens))
+                            .frame(height: barHeight(value, max: maxValue))
 
                         if isWeekStart {
                             Rectangle()
@@ -295,7 +437,7 @@ struct ActivityHistoryView: View {
                     Text(bottomText)
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(
-                            hovered || isToday(day.day) ? Theme.Neon.blue : Theme.textFaint
+                            focused || isToday(day.day) ? mode.accent : Theme.textFaint
                         )
                         .lineLimit(1)
                         .monospacedDigit()
@@ -343,20 +485,20 @@ struct ActivityHistoryView: View {
         return " "
     }
 
-    /// Top-of-column text: token spend while hovered, otherwise the
-    /// day's agent count (blank when nothing ran).
-    private func topLabel(for day: DailyActivity, hovered: Bool) -> String {
-        if hovered {
-            return TokenTracker.format(day.tokens)
+    /// Top-of-column text: the active mode's value for the focused
+    /// column, otherwise the day's agent count (blank when nothing ran).
+    private func topLabel(for day: DailyActivity, focused: Bool, mode: BarMode) -> String {
+        if focused {
+            return metricLabel(day, mode)
         }
         return day.agentCount > 0 ? "\(day.agentCount)" : " "
     }
 
-    private func barHeight(_ tokens: Int, max: Int) -> CGFloat {
+    private func barHeight(_ value: Int, max: Int) -> CGFloat {
         let minH: CGFloat = 3
         let maxH: CGFloat = 80
-        guard tokens > 0 else { return minH }
-        return minH + (maxH - minH) * CGFloat(tokens) / CGFloat(max)
+        guard value > 0 else { return minH }
+        return minH + (maxH - minH) * CGFloat(value) / CGFloat(max)
     }
 
     // MARK: - Squares legend
@@ -374,9 +516,9 @@ struct ActivityHistoryView: View {
             Text("Less")
                 .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(Theme.textFaint)
-            ForEach(HistoryTiers.allFills.indices, id: \.self) { i in
+            ForEach(Array(HistoryTiers.ramp(barMode.accent).enumerated()), id: \.offset) { _, fill in
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(HistoryTiers.allFills[i])
+                    .fill(fill)
                     .frame(width: 10, height: 10)
             }
             Text("More")
@@ -555,6 +697,18 @@ struct SquaresHistoryGrid: View {
     /// this same binding so squares share a chip with the bar charts.
     @Binding var hoveredDay: Date?
 
+    /// Which metric drives square intensity — mirrors the bar charts.
+    let mode: BarMode
+
+    /// Per-day value for the active mode (tokens or active seconds).
+    private func value(_ day: DailyActivity) -> Int {
+        switch mode {
+        case .tokens: return day.tokens
+        case .active: return day.unionActiveSeconds
+        case .agent:  return day.summedActiveSeconds
+        }
+    }
+
     /// Hard upper bound — matches the .window range (52 weeks).
     private let maxCols = 52
     private let rows = 7
@@ -588,7 +742,7 @@ struct SquaresHistoryGrid: View {
         var byDate: [Date: DailyActivity] = [:]
         for d in days { byDate[d.day] = d }
 
-        let maxTokens = max(days.map(\.tokens).max() ?? 1, 1)
+        let maxValue = max(days.map(value).max() ?? 1, 1)
         let firstColDay: Date = {
             let daysBack = (cols - 1) * 7 + todayRow
             return cal.date(byAdding: .day, value: -daysBack, to: today)!
@@ -604,7 +758,7 @@ struct SquaresHistoryGrid: View {
                             todayRow: todayRow,
                             today: today,
                             byDate: byDate,
-                            maxTokens: maxTokens
+                            maxValue: maxValue
                         )
                     }
                 }
@@ -616,7 +770,7 @@ struct SquaresHistoryGrid: View {
     private func cellView(
         col: Int, row: Int, cell: CGFloat,
         firstDay: Date, todayRow: Int, today: Date,
-        byDate: [Date: DailyActivity], maxTokens: Int
+        byDate: [Date: DailyActivity], maxValue: Int
     ) -> some View {
         let cal = Calendar.current
         let dayOffset = col * 7 + row
@@ -625,10 +779,10 @@ struct SquaresHistoryGrid: View {
         let isToday = cal.isDate(date, inSameDayAs: today)
 
         let activity = byDate[date]
-        let tokens = activity?.tokens ?? 0
+        let cellValue = activity.map(value) ?? 0
         let fill: Color = isFuture
             ? .clear
-            : HistoryTiers.fill(tokens: tokens, maxTokens: maxTokens)
+            : HistoryTiers.fill(value: cellValue, maxValue: maxValue, accent: mode.accent)
 
         RoundedRectangle(cornerRadius: 6, style: .continuous)
             .fill(fill)

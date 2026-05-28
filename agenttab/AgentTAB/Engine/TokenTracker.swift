@@ -20,6 +20,13 @@ struct DailyActivity: Identifiable, Equatable {
     let tokens: Int         // total tokens spent that day
     let agentCount: Int     // distinct agent sessions active that day
     let projects: [String]  // project names worked on that day
+    /// Wall-clock seconds in which *at least one* agent was active — the
+    /// union of every agent's active stretches, deduplicated for overlap
+    /// and capped at 24h. "How long the day's work actually spanned."
+    let unionActiveSeconds: Int
+    /// Sum of every agent's active seconds, NOT deduplicated for overlap —
+    /// 5 agents each active 10h ⇒ 180_000s (50h). "Total agent-hours."
+    let summedActiveSeconds: Int
 }
 
 /// A project's total token spend over the active history range —
@@ -110,6 +117,21 @@ final class TokenTracker: ObservableObject {
         if d >= 1_000_000         { return String(format: "%.1fM", d / 1_000_000) }
         if d >= 1_000             { return String(format: "%.1fK", d / 1_000) }
         return "\(n)"
+    }
+
+    /// Compact duration formatting for the history dashboard:
+    /// 0 → "0m", <60s → "<1m", 2_700 → "45m", 29_520 → "8h12m",
+    /// 113_040 → "31h24m". Rounds down to the minute — active time is a
+    /// timestamp-derived estimate, not a stopwatch.
+    static func formatDuration(_ seconds: Int) -> String {
+        guard seconds > 0 else { return "0m" }
+        if seconds < 60 { return "<1m" }
+        let minutes = seconds / 60
+        let h = minutes / 60
+        let m = minutes % 60
+        if h == 0 { return "\(m)m" }
+        if m == 0 { return "\(h)h" }
+        return "\(h)h\(m)m"
     }
 
     /// Per-file scan cursor — byte offset already summed.
@@ -235,6 +257,53 @@ final class TokenTracker: ObservableObject {
         return Calendar.current.isDate(date, inSameDayAs: currentDay)
     }
 
+    // MARK: - Active-time derivation
+    //
+    // Per-day active time is reconstructed offline from the JSONL line
+    // timestamps alone — no dependency on the live ActivityEngine, which
+    // only sees sessions running during the current app launch. For one
+    // agent, consecutive timestamped lines closer than `activeIdleGap`
+    // form a single continuous active stretch; a longer silence ends it
+    // (the agent was idle / the human stepped away). Each stretch is
+    // credited at least `activeMinInterval` so a lone message isn't free.
+    //
+    // `nonisolated` so the off-main `scanRanges` walk can call them.
+
+    /// A silence longer than this (seconds) splits one active stretch from
+    /// the next — 5 min spans tool runs + thinking pauses while excluding
+    /// genuine walk-away gaps.
+    nonisolated static let activeIdleGap: TimeInterval = 300
+
+    /// Floor credited to any single active stretch (seconds), so a stretch
+    /// built from one isolated message is worth something, not zero.
+    nonisolated static let activeMinInterval: TimeInterval = 30
+
+    /// Sum of stretch lengths WITHOUT merging — each floored at
+    /// `activeMinInterval`. Drives the per-agent summed (agent-hours)
+    /// metric when applied per session and totalled.
+    nonisolated private static func summedSeconds(_ stretches: [(start: Double, end: Double)]) -> Int {
+        let total = stretches.reduce(0.0) { $0 + max($1.end - $1.start, activeMinInterval) }
+        return Int(total.rounded())
+    }
+
+    /// Merge overlapping/touching stretches across all agents, then sum the
+    /// merged spans (each floored at `activeMinInterval`), capped at `cap`.
+    /// Drives the wall-clock union metric.
+    nonisolated private static func unionSeconds(_ stretches: [(start: Double, end: Double)], cap: TimeInterval) -> Int {
+        guard !stretches.isEmpty else { return 0 }
+        let sorted = stretches.sorted { $0.start < $1.start }
+        var merged: [(start: Double, end: Double)] = [sorted[0]]
+        for iv in sorted.dropFirst() {
+            if iv.start <= merged[merged.count - 1].end {
+                merged[merged.count - 1].end = max(merged[merged.count - 1].end, iv.end)
+            } else {
+                merged.append(iv)
+            }
+        }
+        let total = merged.reduce(0.0) { $0 + max($1.end - $1.start, activeMinInterval) }
+        return Int(min(total, cap).rounded())
+    }
+
     // MARK: - Ranged history
 
     /// Kick off a fresh ranged scan covering the widest window (364d).
@@ -287,6 +356,12 @@ final class TokenTracker: ObservableObject {
         // Per (day, project) tokens — used to build per-range ProjectSpend
         // without a second walk.
         var dayProjectTokens: [Date: [String: Int]] = [:]
+        // Per (day, session) active stretches, folded incrementally as the
+        // chronological lines of each session file stream past. The last
+        // stretch's `end` is the session's last-seen timestamp, so a fresh
+        // line either extends it (within the idle gap) or opens a new
+        // stretch. Bounded by stretch count, not line count.
+        var dayActiveStretches: [Date: [String: [(start: Double, end: Double)]]] = [:]
 
         let fm = FileManager.default
         guard let projects = try? fm.contentsOfDirectory(
@@ -314,7 +389,6 @@ final class TokenTracker: ObservableObject {
                 for line in text.split(separator: "\n") where !line.isEmpty {
                     guard let data = line.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          json["type"] as? String == "assistant",
                           let tsString = json["timestamp"] as? String,
                           let ts = isoFractional.date(from: tsString) ?? isoPlain.date(from: tsString)
                     else { continue }
@@ -322,6 +396,22 @@ final class TokenTracker: ObservableObject {
                     let day = cal.startOfDay(for: ts)
                     guard day >= windowStart, day <= todayStart else { continue }
 
+                    // Active time: fold EVERY timestamped line (user /
+                    // assistant / system alike — they all carry the agent's
+                    // real activity over time) into the session's stretches.
+                    let epoch = ts.timeIntervalSince1970
+                    var stretches = dayActiveStretches[day]?[sessionId] ?? []
+                    if let lastEnd = stretches.last?.end,
+                       epoch >= lastEnd,
+                       epoch - lastEnd <= Self.activeIdleGap {
+                        stretches[stretches.count - 1].end = epoch
+                    } else {
+                        stretches.append((start: epoch, end: epoch))
+                    }
+                    dayActiveStretches[day, default: [:]][sessionId] = stretches
+
+                    // Tokens: assistant lines only.
+                    guard json["type"] as? String == "assistant" else { continue }
                     let message = json["message"] as? [String: Any]
                     let usage = message?["usage"] as? [String: Any]
                     let tokens = (usage?["input_tokens"] as? Int ?? 0)
@@ -337,6 +427,23 @@ final class TokenTracker: ObservableObject {
             }
         }
 
+        // Collapse the folded stretches into the two per-day metrics:
+        // `summed` totals each session's stretches independently (overlap
+        // intended); `union` merges all sessions' stretches first (overlap
+        // removed), then caps at 24h.
+        var dayUnionSeconds:  [Date: Int] = [:]
+        var daySummedSeconds: [Date: Int] = [:]
+        for (day, sessions) in dayActiveStretches {
+            var allStretches: [(start: Double, end: Double)] = []
+            var summed = 0
+            for (_, stretches) in sessions {
+                summed += summedSeconds(stretches)
+                allStretches.append(contentsOf: stretches)
+            }
+            daySummedSeconds[day] = summed
+            dayUnionSeconds[day]  = unionSeconds(allStretches, cap: 86_400)
+        }
+
         func slice(daysBack: Int) -> (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]) {
             guard let start = cal.date(byAdding: .day, value: -(daysBack - 1), to: todayStart) else {
                 return ([], [], [])
@@ -347,7 +454,9 @@ final class TokenTracker: ObservableObject {
                     day: day,
                     tokens: dayTokens[day] ?? 0,
                     agentCount: daySessions[day]?.count ?? 0,
-                    projects: Array(dayProjects[day] ?? []).sorted()
+                    projects: Array(dayProjects[day] ?? []).sorted(),
+                    unionActiveSeconds: dayUnionSeconds[day] ?? 0,
+                    summedActiveSeconds: daySummedSeconds[day] ?? 0
                 )
             }
 

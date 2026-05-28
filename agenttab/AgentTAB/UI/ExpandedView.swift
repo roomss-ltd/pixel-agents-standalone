@@ -298,7 +298,7 @@ struct ExpandedView: View {
         switch mode {
         case .attention: AttnGlyph(size: size)
         case .active:    RotatingLoader(size: size, color: Theme.Neon.blue)
-        case .idle:      CoffeeIdle(size: size)
+        case .idle:      IdleCreature(size: size)
         }
     }
 
@@ -470,7 +470,7 @@ struct ExpandedView: View {
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            CoffeeIdle(size: 36)
+            IdleCreature(size: 36)
             Text("All agents resting")
                 .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(Theme.textDim)
@@ -534,7 +534,16 @@ struct ExpandedView: View {
                 appMenuButton
             }
             Spacer()
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
+                // Engraved credit — muted fill + a faint highlight just
+                // below the glyphs so it reads as carved into the panel
+                // rather than printed on top of it.
+                Text("Made with love by Adrian")
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(0.2)
+                    .foregroundStyle(Color.white.opacity(0.12))
+                    .shadow(color: Color.white.opacity(0.09), radius: 0, x: 0, y: 0.5)
+                    .fixedSize()
                 FootBtn(systemImage: isPinned ? "pin.fill" : "pin", isOn: isPinned) {
                     isPinned.toggle()
                 }
