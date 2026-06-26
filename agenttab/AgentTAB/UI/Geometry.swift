@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct NotchGeometry {
+struct NotchGeometry: Equatable {
     let hasNotch: Bool
     let notchHeight: CGFloat       // ~32pt on notched MacBooks, 0 elsewhere
     let notchWidth: CGFloat        // ~200pt centered on notched MacBooks; on

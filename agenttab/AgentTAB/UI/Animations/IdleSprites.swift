@@ -74,6 +74,10 @@ extension IdleSprite {
         if n >= current { n += 1 }   // skip `current`, keeping the draw uniform
         return n
     }
+
+    /// The bespoke pixel-art "coffee break" sprite — shown on the compact
+    /// bar's right slot when nothing is in progress.
+    static let coffee: IdleSprite = cast.first { $0.name == "coffee" } ?? cast[0]
 }
 
 // MARK: - Single-sprite renderer

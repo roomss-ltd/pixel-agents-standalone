@@ -51,6 +51,7 @@ struct ExpandedView: View {
     var onSizeChange: (CGSize) -> Void = { _ in }
 
     @State private var isOlderOpen: Bool = false   // closed by default — content-sized
+    @State private var activeShooter: ShooterWing? = nil   // wing fading behind the gun GIF
     @State private var showSettings: Bool = false
     @State private var showHistory: Bool = false   // activity dashboard (7d / 30d / squares)
     @State private var isEditMode: Bool = false
@@ -64,30 +65,16 @@ struct ExpandedView: View {
     @AppStorage("AgentTAB.sortMode") private var sortModeRaw: String = SortMode.recency.rawValue
     private var sortMode: SortMode { SortMode(rawValue: sortModeRaw) ?? .recency }
 
-    /// Bumped on every expand. Passed down to each AgentRow so its
-    /// staggered pop-in re-runs reliably even when LazyVGrid reuses the
-    /// row view (which keeps the row's `@State` alive).
-    @State private var expandGeneration: Int = 0
-
-    /// Same idea, scoped to the collapsible OLDER FINISHED section —
-    /// bumped when that section is opened so its rows stagger in on
-    /// open, exactly the way the always-visible sections stagger on
-    /// panel expand. Without a separate counter the OLDER rows would
-    /// either never stagger or re-stagger the whole panel.
-    @State private var olderGeneration: Int = 0
-
-    /// Compact-form bar width. ~42pt wings host a single SLIM icon
-    /// centred per side with explicit outer-edge padding so the icon
-    /// sits clearly inside its allocated square (not flush against
-    /// the bar's rounded corner). Middle 220pt covers the hardware
-    /// notch.
-    private static let compactBarWidth: CGFloat = 304
+    /// Compact-form bar width. Tight wings that hug the notch's inner
+    /// edges (DynamicLake-style). Middle ~200pt covers the hardware
+    /// notch; ~33pt wings host the number pill (left) / creature (right).
+    private static let compactBarWidth: CGFloat = 266
 
     var body: some View {
         let edgeInset: CGFloat = isExpanded ? 10 : 6
         let notchSpan: CGFloat = isExpanded
             ? max(geometry.notchWidth, 230)
-            : max(geometry.notchWidth, 220)
+            : max(geometry.notchWidth, 200)
         let panelWidth: CGFloat = isExpanded
             ? Theme.Layout.expandedWidth
             : Self.compactBarWidth
@@ -136,27 +123,32 @@ struct ExpandedView: View {
                 .fill(Color.black)
         )
         .clipShape(CompactBarShape(topRadius: 6, bottomRadius: 10))
+        .overlay {
+            // PROTOTYPE: status line tracing the notch outline (compact only).
+            if !isExpanded {
+                NotchStatusLine(idle: restingCount, working: inProgressCount,
+                                activeShooter: $activeShooter)
+            }
+        }
         .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
         .background(
             GeometryReader { g in
                 Color.clear.preference(key: ExpandedSizeKey.self, value: g.size)
             }
         )
-        .animation(Theme.Animations.notch, value: isExpanded)
+        // Hover-driven compact↔expanded morph snaps instantly (no spring
+        // bounce / up-and-down). The sub-panel transitions below keep the
+        // spring since they're button-driven, not hover.
+        .animation(nil, value: isExpanded)
         .animation(Theme.Animations.notch, value: isOlderOpen)
-        .animation(Theme.Animations.notch, value: showSettings)
-        .animation(Theme.Animations.notch, value: showHistory)
+        // Tab switches (Options / History) snap instantly — no spring.
+        .animation(nil, value: showSettings)
+        .animation(nil, value: showHistory)
         .onPreferenceChange(ExpandedSizeKey.self) { size in
             onSizeChange(size)
         }
         .onChange(of: isExpanded) { _, expanded in
-            if expanded {
-                expandGeneration &+= 1
-                tokenTracker.refresh()
-            }
-        }
-        .onChange(of: isOlderOpen) { _, open in
-            if open { olderGeneration &+= 1 }
+            if expanded { tokenTracker.refresh() }
         }
     }
 
@@ -204,14 +196,14 @@ struct ExpandedView: View {
                         .padding(.trailing, edgeInset)
                 }
             } else {
-                // Compact: outer-edge padding pushes the counter off
-                // the bar's rounded BL corner so it sits clearly inside
-                // its allocated square instead of hugging the curve.
+                // Compact: counter hugs the notch's inner edge so the
+                // bar wraps tightly around its content (DynamicLake-style)
+                // instead of floating mid-wing.
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    compactAlternatingCounter
-                        .padding(.leading, 8)
-                    Spacer(minLength: 0)
+                    compactLeftBadge(size: glyphSize)
+                        .padding(.trailing, 2)
+                        .offset(x: 2)   // a bit toward the notch
                 }
             }
 
@@ -224,61 +216,54 @@ struct ExpandedView: View {
                     Spacer(minLength: 0)
                 }
             } else {
-                // Compact: outer-edge padding mirrors the counter's
-                // — pushes the glyph off the bar's rounded BR corner.
+                // Compact: working-count badge hugs the notch's inner edge,
+                // mirroring the left badge. (Replaces the animated loader —
+                // the count + status-line pulse carry "something's alive".)
                 HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    glyphCluster(size: glyphSize)
-                        .padding(.trailing, 8)
+                    compactRightBadge(size: glyphSize)
+                        .padding(.leading, 2)
+                        .offset(x: -2)   // a bit toward the notch
                     Spacer(minLength: 0)
                 }
             }
         }
     }
 
-    /// Compact-mode-only counter.
-    ///   * Both running and finished agents present → alternate every 4s.
-    ///   * Nothing running (all agents finished) → green-only, no swap.
-    ///   * Only running, nothing done → blue-only, no swap.
-    private var compactAlternatingCounter: some View {
+    /// Compact LEFT badge — idle/queued agents (neutral gray). When any agent
+    /// is waiting on YOU it takes over the slot: the waiting count in amber,
+    /// pulsing, so the alert can't be missed.
+    private func compactLeftBadge(size: CGFloat) -> some View {
         Group {
-            if inProgressCount == 0 {
-                compactSlimBadge(color: Theme.Neon.green, count: doneCount)
-            } else if doneCount == 0 {
-                compactSlimBadge(color: Theme.Neon.blue, count: inProgressCount)
+            if attentionCount > 0 {
+                CompactStateBadge(color: Theme.Neon.amber, count: attentionCount,
+                                  size: size, pulsing: true)
             } else {
-                TimelineView(.periodic(from: .now, by: 4)) { context in
-                    let phase = Int(context.date.timeIntervalSince1970 / 4) % 2
-                    ZStack {
-                        if phase == 0 {
-                            compactSlimBadge(color: Theme.Neon.blue, count: inProgressCount)
-                                .transition(.opacity)
-                        } else {
-                            compactSlimBadge(color: Theme.Neon.green, count: doneCount)
-                                .transition(.opacity)
-                        }
-                    }
-                    .animation(.easeInOut(duration: 0.4), value: phase)
-                }
+                CrateBadge(count: restingCount,
+                           color: Color(red: 0.52, green: 0.74, blue: 0.66), size: size * 1.22)
             }
         }
+        // Fade out while a GIF poses over this wing (bullets on start, target on finish).
+        .opacity(activeShooter == .left || activeShooter == .both ? 0 : 1)
+        .animation(.easeInOut(duration: 0.25), value: activeShooter)
     }
 
-    private func compactSlimBadge(color: Color, count: Int) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 5, height: 5)
-                .shadow(color: color.opacity(0.7), radius: 1.2)
-            Text("\(count)")
-                .font(.system(size: 12.5, weight: .semibold))
-                .monospacedDigit()
+    /// Compact RIGHT badge — TEMP preview: laundry GIF while working, cat GIF
+    /// while idle (both white-keyed). Falls back to the prior badge/coffee if a
+    /// GIF can't be loaded.
+    private func compactRightBadge(size: CGFloat) -> some View {
+        Group {
+            if inProgressCount > 0 {
+                WashingMachineLoader()
+                    .frame(width: size * 0.94, height: size * 1.17)   // ~5% bigger
+                    .offset(x: 4.5)
+            } else {
+                BearLoader()
+                    .frame(width: size * 1.2, height: size * 1.38)
+            }
         }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 1)
-        .background(Capsule().fill(color.opacity(0.14)))
-        .overlay(Capsule().stroke(color.opacity(0.36), lineWidth: 0.5))
+        // Fade out while the gun GIF poses over this wing.
+        .opacity(activeShooter == .right || activeShooter == .both ? 0 : 1)
+        .animation(.easeInOut(duration: 0.25), value: activeShooter)
     }
 
     private func counterCluster(scale: CGFloat) -> some View {
@@ -334,12 +319,12 @@ struct ExpandedView: View {
             }
             if !activeSessions.isEmpty {
                 Section(label: "ACTIVE") {
-                    grid(of: activeSessions, variant: .active, generation: expandGeneration)
+                    grid(of: activeSessions, variant: .active)
                 }
             }
             if !attentionSessions.isEmpty {
                 Section(label: "NEEDS ATTENTION", tint: .amber) {
-                    grid(of: attentionSessions, variant: .attention, generation: expandGeneration)
+                    grid(of: attentionSessions, variant: .attention)
                 }
             }
             // Recently active — finished within the last hour. Mirrors
@@ -347,14 +332,11 @@ struct ExpandedView: View {
             // always visible (not collapsed).
             if !recentlyActiveSessions.isEmpty {
                 Section(label: "RECENTLY ACTIVE") {
-                    grid(of: recentlyActiveSessions, variant: .finished, generation: expandGeneration)
+                    grid(of: recentlyActiveSessions, variant: .finished)
                 }
             }
             // Older finished — beyond an hour, or idle/init. Collapsible
             // so the panel stays compact when there's a long history.
-            // Uses `olderGeneration` so its rows stagger in when the
-            // section is opened — the same effect the always-visible
-            // sections get on panel expand.
             if !olderFinishedSessions.isEmpty {
                 Section(
                     label: "OLDER FINISHED · \(olderFinishedSessions.count)",
@@ -364,7 +346,7 @@ struct ExpandedView: View {
                 ) {
                     if isOlderOpen {
                         ScrollView(showsIndicators: false) {
-                            grid(of: olderFinishedSessions, generation: olderGeneration) {
+                            grid(of: olderFinishedSessions) {
                                 variantForOlder($0)
                             }
                         }
@@ -390,7 +372,7 @@ struct ExpandedView: View {
         Button {
             showSettings = false
             tokenTracker.refreshHistory()
-            withAnimation(Theme.Animations.notch) { showHistory = true }
+            showHistory = true
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "circle.hexagongrid.fill")
@@ -480,15 +462,13 @@ struct ExpandedView: View {
 
     private func grid(
         of sessions: [Session],
-        variant: AgentRow.Variant,
-        generation: Int
+        variant: AgentRow.Variant
     ) -> some View {
-        grid(of: sessions, generation: generation) { _ in variant }
+        grid(of: sessions) { _ in variant }
     }
 
     private func grid(
         of sessions: [Session],
-        generation: Int,
         variant: @escaping (Session) -> AgentRow.Variant
     ) -> some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
@@ -502,8 +482,7 @@ struct ExpandedView: View {
                     onUnlink: { engine.hide(session) },
                     onOpenFolder: { engine.openFolder(session) },
                     onOpenEditor: { engine.openEditor(session) },
-                    onSetPriority: { engine.setPriority($0, for: session) },
-                    appearanceGeneration: generation
+                    onSetPriority: { engine.setPriority($0, for: session) }
                 )
             }
         }
@@ -621,6 +600,9 @@ struct ExpandedView: View {
 
     private var inProgressCount: Int { activeSessions.count }
     private var attentionCount: Int { attentionSessions.count }
+    /// Left-badge count — idle/queued/finished agents (everything not actively
+    /// working and not waiting on you): `.done`, `.idle`, `.initState`.
+    private var restingCount: Int { restingSessions.count }
     /// Green counter — uses the engine's single source of truth so
     /// compact and expanded views can never diverge.
     private var doneCount: Int { engine.recentlyActiveDoneSessions().count }

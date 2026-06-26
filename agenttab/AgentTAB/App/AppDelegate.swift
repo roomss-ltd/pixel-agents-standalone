@@ -15,6 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var trackerCancellable: AnyCancellable?
     private var autoHideCancellable: AnyCancellable?
 
+    /// Geometry of the most recently installed root view. macOS replaces
+    /// NSScreen instances on every Space / fullscreen swipe, which
+    /// republishes `activeScreen`; we use this to skip rebuilding the
+    /// SwiftUI root when the physical display + notch geometry are
+    /// unchanged (the swipe-flicker fix).
+    private var lastInstalledGeometry: NotchGeometry?
+
     /// The SwiftUI root needs `notchGeometry` in the environment, and
     /// the geometry depends on which screen the notch is on. We keep the
     /// hosting view referenced so the subscription can swap a fresh
@@ -34,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notchPanel = panel
         installRootView(for: screenTracker.activeScreen, into: panel)
         panel.reposition(to: screenTracker.activeScreen)
+        lastInstalledGeometry = NotchGeometry.detect(for: screenTracker.activeScreen)
         panel.orderFront(nil)
 
         // Follow the cursor across displays. ScreenTracker debounces the
@@ -42,8 +50,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         trackerCancellable = screenTracker.$activeScreen
             .sink { [weak self, weak panel] screen in
                 guard let self, let panel else { return }
-                self.installRootView(for: screen, into: panel)
-                panel.reposition(to: screen)
+                // macOS hands out fresh NSScreen instances on every Space /
+                // fullscreen swipe, so `activeScreen` republishes even when the
+                // display and notch geometry are identical. Rebuilding the
+                // SwiftUI root on those swaps is what makes the panel flicker
+                // mid-swipe — only rebuild when the geometry actually changes
+                // (different display, resolution change, notch dims change).
+                let geometry = NotchGeometry.detect(for: screen)
+                if geometry != self.lastInstalledGeometry {
+                    self.lastInstalledGeometry = geometry
+                    self.installRootView(for: screen, into: panel)
+                    panel.reposition(to: screen)
+                }
                 self.evaluateAutoHide(panel: panel)
             }
 
@@ -80,7 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let displayID = screen.directDisplayID
         let isFullscreen = displayID.map { fullscreenDetector.fullscreenDisplays.contains($0) } ?? false
 
-        if isExternal && isFullscreen {
+        // Auto-hide-on-external-fullscreen only makes sense when the external
+        // is a SECONDARY glance-screen — i.e. the built-in MacBook display is
+        // also active (lid open). In clamshell mode (lid closed) or on a
+        // desktop Mac, no built-in display is present, so the external IS the
+        // home screen and must keep the notch even in fullscreen apps.
+        let hasBuiltInActive = NSScreen.screens.contains { $0.isBuiltIn }
+
+        if isExternal && isFullscreen && hasBuiltInActive {
             panel.autoHide()
         } else {
             panel.autoShow()

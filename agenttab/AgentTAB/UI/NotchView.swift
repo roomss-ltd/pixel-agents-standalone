@@ -99,7 +99,10 @@ struct NotchView: View {
             // No top padding — the panel extends UP into the notch zone.
             Spacer()
         }
-        .animation(Theme.Animations.notch, value: phase)
+        // Hover expand/collapse snaps instantly — no spring morph. The
+        // bouncy `Theme.Animations.notch` overshoot read as an unwanted
+        // up-and-down motion on hover, so the phase change is unanimated.
+        .animation(nil, value: phase)
         .onChange(of: phase) { _, newValue in
             onSizeChange(currentSize(for: newValue))
         }

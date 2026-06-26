@@ -21,23 +21,12 @@ struct AgentRow: View {
     var onOpenFolder: () -> Void = {}
     var onOpenEditor: () -> Void = {}
     var onSetPriority: (Priority) -> Void = { _ in }
-    /// Bumped by ExpandedView on every expand. AgentRow watches it so
-    /// the staggered pop-in re-runs each time the notch opens — even
-    /// when LazyVGrid reuses the same row view instance (which keeps
-    /// `@State` alive and would otherwise make the effect fire once).
-    var appearanceGeneration: Int = 0
 
     enum Variant { case active, attention, finished, resting }
 
     @EnvironmentObject var engine: ActivityEngine
     @State private var isHovered = false
     @State private var showPriorityPicker = false
-    /// Drives the staggered "pop-in" when the panel expands. Each row
-    /// starts hidden and reveals itself after its own random delay, so
-    /// the grid fills in one tab at a time in a random order rather
-    /// than every tab fading in together. `@State` resets to false
-    /// each time the row re-enters the hierarchy (i.e. every expand).
-    @State private var hasAppeared = false
 
     /// Show the hover action cluster whenever the cursor is over the
     /// row and edit mode is off. Buttons are visually dimmed (and
@@ -111,15 +100,9 @@ struct AgentRow: View {
                 )
         )
         .contentShape(Rectangle())
-        // Staggered random pop-in: hidden until the row's own delay
-        // elapses, then springs to full size + opacity.
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.82)
-        // `.identity` so an ambient `.animation(_:value:)` scope (the
-        // panel's isExpanded / isOlderOpen scopes) never layers a
-        // default fade-in on top of `staggerIn()`. Every row in every
-        // section then has exactly one appearance animation: the
-        // spring stagger.
+        // Rows render instantly — no appearance animation. `.identity`
+        // guards against any ambient `.animation(_:value:)` scope layering
+        // a default fade-in when a row inserts.
         .transition(.identity)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
@@ -134,22 +117,6 @@ struct AgentRow: View {
                 onUnlink()
             } else {
                 onClick()
-            }
-        }
-        .onAppear { staggerIn() }
-        .onChange(of: appearanceGeneration) { _, _ in staggerIn() }
-    }
-
-    /// Hide instantly, then spring back in after a random 0–0.4s delay.
-    /// The hide is committed on this runloop tick and the animated
-    /// reveal is deferred to the next, so SwiftUI can't coalesce them
-    /// into a no-op (which would skip the effect on re-expand).
-    private func staggerIn() {
-        hasAppeared = false
-        DispatchQueue.main.async {
-            let delay = Double.random(in: 0 ... 0.4)
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.72).delay(delay)) {
-                hasAppeared = true
             }
         }
     }
