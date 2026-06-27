@@ -37,3 +37,6 @@ coverage/
 
 # DMG release artifacts
 out/
+
+# git worktrees
+.worktrees/

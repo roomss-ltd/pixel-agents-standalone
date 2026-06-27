@@ -296,11 +296,17 @@ struct NotchStatusLine: View {
             // Pre-stage the bullet's geometry — it launches FROM the shooter.
             // Work STARTS → shooter on LEFT, sweep top-LEFT ⇒ top-RIGHT;
             // FINISHES → shooter on RIGHT, sweep top-RIGHT ⇒ top-LEFT.
+            // Spark orange whenever the comet travels over an already-active
+            // (coloured) line — a blue comet on a blue line is invisible.
+            // Blue is used only when depositing colour onto an idle line.
+            let cometOrange = Color(red: 1.0, green: 0.74, blue: 0.28)
             if starting {
-                siphonStart = 1.0; siphonEnd = 0.0; siphonColor = blueVivid
+                siphonStart = 1.0; siphonEnd = 0.0
+                siphonColor = (old == 0) ? blueVivid : cometOrange
                 shootTint = blueVivid
             } else {
-                siphonStart = 0.0; siphonEnd = 1.0; siphonColor = Color(white: 0.85)
+                siphonStart = 0.0; siphonEnd = 1.0
+                siphonColor = cometOrange
                 shootTint = Color(white: 0.85)
             }
 
@@ -856,7 +862,13 @@ struct SiphonDroplet: View {
                             style: StrokeStyle(lineWidth: l.lw, lineCap: .round))
                     .blendMode(.plusLighter)
             }
+            // Bright white-hot core — a touch more flash so it's easy to spot.
+            comet(0.006)
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                .blendMode(.plusLighter)
         }
+        // Soft coloured halo around the comet for extra pop.
+        .shadow(color: color.opacity(visible ? 0.9 : 0), radius: 5)
         .opacity(visible ? 1 : 0)
         .onChange(of: trigger) { _, newValue in
             guard newValue > 0 else { return }
