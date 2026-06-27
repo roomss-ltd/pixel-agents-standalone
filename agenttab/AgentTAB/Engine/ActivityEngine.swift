@@ -423,24 +423,26 @@ final class ActivityEngine: ObservableObject {
     }
 
     private func fireUrgentReminder(for session: Session) {
-        let focusAction: () -> Void = { [weak self] in
-            guard let self else { return }
-            NotificationCenter.default.post(name: .agentTabRequestPeek, object: nil)
-            if let live = self.sessions.first(where: { $0.id == session.id }) {
-                self.focus(live)
-            } else {
-                self.focus(session)
-            }
-        }
-        let toast = Toast(
-            variant: .urgentReminder,
-            taskId: displayLabel(for: session),
-            projectName: displayName(for: session),
-            message: "Urgent · finished, still unattended"
-        )
-        toastPanel.show(toast, duration: 5, onTap: focusAction)
+        postDockEvent(for: session, variant: .urgent, message: "Urgent · finished, still unattended")
         if soundsEnabled { soundPlayer.playWaiting() }
         AgentLog.notify.info("urgent reminder session=\(session.claudeSessionId, privacy: .public)")
+    }
+
+    /// Replaces the old top-right `ToastPanel`: hand the notification to the
+    /// dock, which fires a cannon tracer from this session's square that
+    /// lands as a tap-to-jump card above the strip. Posted on the main
+    /// thread (the engine is `@MainActor`) as `.agentTabSessionEvent`.
+    private func postDockEvent(for session: Session, variant: DockToastVariant, message: String) {
+        NotificationCenter.default.post(
+            name: .agentTabSessionEvent,
+            object: DockEventPayload(
+                sessionId: session.id,
+                variant: variant,
+                taskId: displayLabel(for: session),
+                projectName: displayName(for: session),
+                message: message
+            )
+        )
     }
 
     private func discoverSession(jsonlURL: URL, projectHash: String, mtime: Date, isLive: Bool) {
@@ -608,85 +610,26 @@ final class ActivityEngine: ObservableObject {
             return
         }
 
-        // If the session has visibly left the state we previously notified
-        // on (waiting → tool after approval, or done → thinking after a
-        // fresh prompt), clear the cached dedupe entry. The next entry back
-        // into waiting/done is a genuinely new event and must not be
-        // collapsed against the stale (from, to) tuple from before.
-        if let last = lastNotifiedTransition[session.id],
-           oldActivity == last.to,
-           session.activity != last.to {
-            lastNotifiedTransition.removeValue(forKey: session.id)
-        }
-
-        // Only two transitions ever produce a toast: → .waiting and → .done.
-        let target: NotifyTarget
+        // Only two transitions ever produce a notification: → .waiting and
+        // → .done. `sourceAdvanced` above already guarantees we only get here
+        // on a genuine forward step of the source, so every such transition
+        // fires — the per-session dedupe/throttle windows were removed so a
+        // re-finish of the same agent always re-fires the cannon (and sound).
         switch session.activity {
-        case .waiting where oldActivity != .waiting: target = .waiting
-        case .done    where oldActivity != .done:    target = .done
+        case .waiting where oldActivity != .waiting: break
+        case .done    where oldActivity != .done:    break
         default: return
         }
 
-        // Phase 0.5 — dedupe identical (from, to) within 30s.
-        let now = Date()
-        if let last = lastNotifiedTransition[session.id],
-           last.from == oldActivity,
-           last.to == session.activity,
-           now.timeIntervalSince(last.firedAt) < Self.dedupeWindow {
-            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=dedupe \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
-            return
-        }
-
-        // Phase 0.6 — per-(session, target) throttle: 1/min per kind.
-        // Waiting and done budgets are independent so a just-fired
-        // "waiting" toast can't suppress the follow-up "done" toast.
-        if let last = lastNotifiedAt[session.id]?[target],
-           now.timeIntervalSince(last) < Self.throttleWindow {
-            let kind = String(describing: target)
-            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=throttle target=\(kind, privacy: .public)")
-            return
-        }
-
-        // Tapping the toast jumps to whichever terminal tab the agent
-        // is running in, and (Phase 2.7) requests the auto-hidden notch
-        // peek so the user sees that the bar is still there when the
-        // toast leads them somewhere.
-        let focusAction: () -> Void = { [weak self] in
-            guard let self else { return }
-            NotificationCenter.default.post(name: .agentTabRequestPeek, object: nil)
-            // Resolve the LATEST snapshot of this session — the cached
-            // copy in the closure can go stale before the user clicks.
-            if let live = self.sessions.first(where: { $0.id == session.id }) {
-                self.focus(live)
-            } else {
-                self.focus(session)
-            }
-        }
-
-        let toast: Toast
+        // The dock owns the notification now — it fires a cannon from this
+        // session's square that lands as a tap-to-jump toast above the strip.
         if session.activity == .waiting {
-            toast = Toast(
-                variant: .attention,
-                taskId: displayLabel(for: session),
-                projectName: displayName(for: session),
-                message: "Waiting for approval"
-            )
+            postDockEvent(for: session, variant: .attention, message: "Waiting for approval")
             if soundsEnabled { soundPlayer.playWaiting() }
         } else {
-            toast = Toast(
-                variant: .success,
-                taskId: displayLabel(for: session),
-                projectName: displayName(for: session),
-                message: "Finished successfully"
-            )
+            postDockEvent(for: session, variant: .success, message: "Finished successfully")
             if soundsEnabled { soundPlayer.playDone() }
         }
-        toastPanel.show(toast, duration: 5, onTap: focusAction)
-
-        lastNotifiedTransition[session.id] = (oldActivity, session.activity, now)
-        var perTarget = lastNotifiedAt[session.id] ?? [:]
-        perTarget[target] = now
-        lastNotifiedAt[session.id] = perTarget
         AgentLog.notify.info("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
     }
 

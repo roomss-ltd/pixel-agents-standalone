@@ -22,6 +22,31 @@ import SwiftUI
 extension Notification.Name {
     /// Posted from the Carbon hot-key callback when ⌃⌥D is pressed.
     static let agentTabToggleDock = Notification.Name("AgentTAB.ToggleDock")
+    /// Posted by `ActivityEngine` when a session crosses a notify-worthy
+    /// threshold (needs input / finished / urgent-still-waiting). The dock
+    /// listens and fires its cannon: the firing square launches a tracer
+    /// upward that lands as a toast card above the strip. Replaces the
+    /// teammate's top-right `ToastPanel`. `object` is a `DockEventPayload`.
+    static let agentTabSessionEvent = Notification.Name("AgentTAB.SessionEvent")
+}
+
+/// The three notify-worthy situations the dock surfaces, carried over 1:1
+/// from the old `Toast.Variant` so the engine's trigger points map cleanly.
+enum DockToastVariant {
+    case attention   // amber — agent needs input
+    case success     // green — task complete
+    case urgent      // pink  — urgent agent finished, still unattended
+}
+
+/// Payload posted on `.agentTabSessionEvent`. Plain values (the session's
+/// stable `id` plus pre-rendered display strings) so the dock never has to
+/// reach back into the engine to render the card.
+struct DockEventPayload {
+    let sessionId: UUID
+    let variant: DockToastVariant
+    let taskId: String
+    let projectName: String
+    let message: String
 }
 
 private var dockHotKeyRef: EventHotKeyRef?
@@ -233,17 +258,95 @@ struct SessionDockView: View {
     /// Squares per row before wrapping up into a new row.
     private static let perRow: Int = 8
 
+    // MARK: Cannon / toast state
+    //
+    // When a session crosses a notify threshold the engine posts
+    // `.agentTabSessionEvent`. `fire(_:)` reserves headroom above the strip
+    // (so the panel grows upward), launches a tracer from the firing
+    // square, and pops the toast card on impact.
+
+    /// The card currently parked above the strip (nil = none).
+    @State private var toast: DockToast?
+    /// Card visibility gate. Set true on tracer impact so the card "lands"
+    /// rather than appearing instantly; the layout slot exists the whole
+    /// time `toast != nil` so the tracer has somewhere to fly into.
+    @State private var cardShown = false
+    /// One-shot white wash on the card the moment the tracer lands.
+    @State private var cardFlash = false
+    /// In-flight tracers (usually one). Removed once they reach the card.
+    @State private var shots: [CannonShot] = []
+    /// Pending auto-dismiss, cancelled if a fresh event arrives first.
+    @State private var dismissWork: DispatchWorkItem?
+    /// Bumped on every event so a delayed launch can tell it's been
+    /// superseded by a newer one during the pre-shot delay.
+    @State private var fireGen = 0
+
+    /// Matches the notch shooter's `shootDelay`: the gun "poses" this long
+    /// before the gunshot sound + bullet fire, so the dock shell launches on
+    /// the same beat and the two stay in sync.
+    private static let shootDelay: TimeInterval = 0.5
+
     private var sessions: [Session] {
-        // Default ordering: urgency first (higher priority wins), then
-        // recency (most-recently-updated) as the tiebreak.
-        engine.displaySessions.sorted { a, b in
-            if a.priority != b.priority { return a.priority.rawValue > b.priority.rawValue }
-            return a.lastUpdate > b.lastUpdate
-        }
+        // Order by urgency only (higher priority wins). Equal priorities keep
+        // the engine's existing order — Swift's sort is stable — so squares
+        // don't reshuffle on every activity tick the way a recency tiebreak
+        // made them.
+        engine.displaySessions.sorted { $0.priority.rawValue > $1.priority.rawValue }
     }
 
     var body: some View {
         let sessions = self.sessions
+        // The toast slot sits ABOVE the strip; both hug the trailing (screen)
+        // edge. The panel is anchored bottom-right, so when the slot gains
+        // height the window grows UPWARD — exactly where we want the toast.
+        VStack(alignment: .trailing, spacing: 0) {
+            toastLayer
+            strip(sessions)
+        }
+        // Tracers are drawn over everything, flying from each square's centre
+        // (resolved from its anchor preference) up into the toast slot. The
+        // overlay never affects layout, so it can't grow the panel itself.
+        .overlayPreferenceValue(SquareCenterKey.self) { centers in
+            GeometryReader { geo in
+                ZStack {
+                    // Muzzle smoke — lingers at the firing square for the
+                    // whole notification (the shell itself is gone in a
+                    // blink), then dissipates. Driven off `toast` so it
+                    // lives exactly as long as the notification.
+                    if let toast, let anchor = centers[toast.sessionId] {
+                        SmokePuff(origin: geo[anchor], restartKey: toast.id)
+                            .id(toast.id)
+                    }
+                    ForEach(shots) { shot in
+                        if let anchor = centers[shot.sessionId] {
+                            CannonProjectile(
+                                start: geo[anchor],
+                                target: toastTarget(in: geo.size),
+                                accent: shot.accent
+                            )
+                        }
+                    }
+                }
+            }
+            .allowsHitTesting(false)
+        }
+        .fixedSize()
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(key: DockSizeKey.self, value: g.size)
+            }
+        )
+        .onPreferenceChange(DockSizeKey.self) { onSizeChange($0) }
+        .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
+            if let payload = note.object as? DockEventPayload { fire(payload) }
+        }
+        .animation(.easeOut(duration: 0.18), value: sessions.map(\.id))
+        .animation(.easeOut(duration: 0.20), value: dock.collapsed)
+    }
+
+    /// The strip itself — the always-present horizontal handle + squares,
+    /// inside the rounded black container with its three-sided border.
+    private func strip(_ sessions: [Session]) -> some View {
         HStack(spacing: Self.gap) {
             chevron
             if !dock.collapsed {
@@ -266,15 +369,128 @@ struct SessionDockView: View {
                         .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
                 )
         )
-        .fixedSize()
-        .background(
-            GeometryReader { g in
-                Color.clear.preference(key: DockSizeKey.self, value: g.size)
+    }
+
+    /// TEMP: hide the card so the cannon tracer is visible on its own. The
+    /// slot height is still reserved (clear placeholder) so the shell has
+    /// somewhere to fly. Flip back to `true` to restore the popup.
+    private static let showToastCard = false
+
+    /// The notification card slot. While a toast exists the slot keeps its
+    /// full height (so the tracer has room to fly into) even before the card
+    /// is revealed — `cardShown` only drives the pop-in, not the layout.
+    @ViewBuilder
+    private var toastLayer: some View {
+        if let toast {
+            if Self.showToastCard {
+                DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
+                    .opacity(cardShown ? 1 : 0)
+                    .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottomTrailing)
+                    .padding(.bottom, Self.gap)
+            } else {
+                // Reserve headroom for the smoke plume to rise into (the card
+                // is hidden, so we don't need its footprint — just height).
+                Color.clear
+                    .frame(width: DockToastCard.width, height: 80)
             }
+        }
+    }
+
+    /// Where a tracer should land: the centre of the (trailing-aligned) card.
+    private func toastTarget(in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width - DockToastCard.width / 2, y: DockToastCard.height / 2)
+    }
+
+    // MARK: Cannon firing
+
+    /// Handle one notify event. Holds for `shootDelay` so the shell launches
+    /// on the same beat as the notch gunshot, then fires the cannon — unless a
+    /// newer event has superseded this one in the meantime.
+    private func fire(_ payload: DockEventPayload) {
+        dismissWork?.cancel()
+        fireGen += 1
+        let gen = fireGen
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shootDelay) {
+            guard gen == fireGen else { return }
+            launchCannon(payload)
+        }
+    }
+
+    /// Reserve the card slot, launch a tracer from the firing square, land the
+    /// card on impact, then auto-dismiss.
+    private func launchCannon(_ payload: DockEventPayload) {
+        let accent = Self.accent(for: payload.variant)
+
+        let next = DockToast(
+            sessionId: payload.sessionId,
+            taskId: payload.taskId,
+            project: payload.projectName,
+            message: payload.message,
+            headline: Self.headline(for: payload.variant),
+            accent: accent
         )
-        .onPreferenceChange(DockSizeKey.self) { onSizeChange($0) }
-        .animation(.easeOut(duration: 0.18), value: sessions.map(\.id))
-        .animation(.easeOut(duration: 0.20), value: dock.collapsed)
+        cardShown = false
+        cardFlash = false
+        toast = next
+
+        if !dock.collapsed {
+            // Expanded: fire the cannon. The square's own state-change bounce
+            // already supplies the recoil "kick"; this adds the projectile.
+            let shot = CannonShot(sessionId: payload.sessionId, accent: accent)
+            shots = [shot]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+                guard toast?.id == next.id else { return }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.52)) { cardShown = true }
+                cardFlash = true
+                withAnimation(.easeOut(duration: 0.5)) { cardFlash = false }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                shots.removeAll { $0.id == shot.id }
+            }
+        } else {
+            // Collapsed: no squares to fire from — just present the card.
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { cardShown = true }
+        }
+
+        let work = DispatchWorkItem {
+            guard toast?.id == next.id else { return }
+            withAnimation(.easeOut(duration: 0.25)) { cardShown = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                if toast?.id == next.id { toast = nil }
+            }
+        }
+        dismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2, execute: work)
+    }
+
+    /// Card tap — jump to the originating terminal tab and dismiss, mirroring
+    /// the old toast's tap-through behaviour (plus the notch peek request).
+    private func tapToast(_ t: DockToast) {
+        NotificationCenter.default.post(name: .agentTabRequestPeek, object: nil)
+        if let s = engine.displaySessions.first(where: { $0.id == t.sessionId }) {
+            engine.focus(s)
+        }
+        dismissWork?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) { cardShown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            if toast?.id == t.id { toast = nil }
+        }
+    }
+
+    static func accent(for v: DockToastVariant) -> Color {
+        switch v {
+        case .attention: return Theme.Neon.amber
+        case .success:   return Theme.Neon.green
+        case .urgent:    return Theme.Neon.pink
+        }
+    }
+
+    static func headline(for v: DockToastVariant) -> String {
+        switch v {
+        case .attention: return "Needs input"
+        case .success:   return "Task complete"
+        case .urgent:    return "Still waiting"
+        }
     }
 
     /// Container outline. The dock is glued to the right screen edge in
@@ -328,10 +544,16 @@ struct SessionDockView: View {
                                 stateColor: Self.bodyColor(for: session),
                                 identityColor: Self.identityColor(for: engine.displayName(for: session)),
                                 name: engine.displayName(for: session),
+                                activity: session.activity,
                                 pulsing: session.activity == .waiting,
                                 subdued: Self.isDormant(session) && !Self.isElevated(session),
                                 onTap: { engine.focus(session) }
                             )
+                            // Publish this square's centre so the cannon can
+                            // launch a tracer from it on a notify event.
+                            .anchorPreference(key: SquareCenterKey.self, value: .center) {
+                                [session.id: $0]
+                            }
                         }
                     }
                 }
@@ -448,11 +670,17 @@ private struct SessionSquare: View {
     let stateColor: Color     // activity state — the part that changes
     let identityColor: Color  // stable "who" color — the part that doesn't
     let name: String          // full name, surfaced as a tooltip
+    let activity: Activity    // current state — decides if the hop is delayed
     let pulsing: Bool
     /// Dormant (older-finished) squares stay quiet; everything else gets a
     /// stronger fill + border so the live greens/blues/ambers pop.
     let subdued: Bool
     let onTap: () -> Void
+
+    /// Matches the notch gun + dock shell delay so the square's reaction
+    /// (flash + hop) lands on the same beat as the shot it "fires", instead
+    /// of jumping the instant the colour flips.
+    private static let fireDelay: TimeInterval = 0.5
 
     @State private var hover = false
     /// Brief bright wash fired whenever the activity state changes.
@@ -514,13 +742,20 @@ private struct SessionSquare: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         // When the activity (its color) flips, pop a flash and let it fade.
         .onChange(of: stateColor) { _, _ in
-            flash = true
-            withAnimation(.easeOut(duration: 0.6)) { flash = false }
-            // Vertical hop: snap UP, then a bouncy settle back to the floor
-            // (the low-damping spring overshoots so it visibly bounces).
-            withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { bounceY = -7 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { bounceY = 0 }
+            // Sync the hop with the shot only when there IS one: finishing
+            // (.done) and needing input (.waiting) fire the gun/shell/smoke
+            // after `fireDelay`, so the reaction waits to match. Starting work
+            // (sending input) fires no shell, so it hops instantly.
+            let delay: TimeInterval = (activity == .done || activity == .waiting) ? Self.fireDelay : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                flash = true
+                withAnimation(.easeOut(duration: 0.6)) { flash = false }
+                // Vertical hop: snap UP, then a bouncy settle back to the floor
+                // (the low-damping spring overshoots so it visibly bounces).
+                withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { bounceY = -7 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { bounceY = 0 }
+                }
             }
         }
     }
@@ -549,6 +784,202 @@ private struct DockEdgeBorder: Shape {
                  tangent2End: CGPoint(x: right, y: bottom), radius: r)
         p.addLine(to: CGPoint(x: right, y: bottom))                // …along bottom to the edge
         return p
+    }
+}
+
+// MARK: - Cannon notification model + views
+
+/// The toast card parked above the strip after a tracer lands.
+private struct DockToast: Identifiable {
+    let id = UUID()
+    let sessionId: UUID
+    let taskId: String
+    let project: String
+    let message: String
+    let headline: String
+    let accent: Color
+}
+
+/// A single in-flight tracer (square → card).
+private struct CannonShot: Identifiable {
+    let id = UUID()
+    let sessionId: UUID
+    let accent: Color
+}
+
+/// Collects every visible square's centre point, keyed by session id, so the
+/// cannon layer can resolve where to launch a tracer from.
+private struct SquareCenterKey: PreferenceKey {
+    static var defaultValue: [UUID: Anchor<CGPoint>] = [:]
+    static func reduce(value: inout [UUID: Anchor<CGPoint>],
+                       nextValue: () -> [UUID: Anchor<CGPoint>]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// The notification card. Compact pill — task chip + headline + subline —
+/// styled to match the dock (near-black fill, accent edge + glow). Tapping it
+/// jumps to the originating terminal tab.
+private struct DockToastCard: View {
+    static let width: CGFloat = 250
+    static let height: CGFloat = 46
+
+    let toast: DockToast
+    let flash: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 9) {
+                Text(toast.taskId)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(toast.accent.opacity(0.28))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(toast.accent.opacity(0.85), lineWidth: 1)
+                    )
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(toast.headline)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text("\(toast.project) · \(toast.message)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: Self.width, height: Self.height)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(toast.accent.opacity(0.75), lineWidth: 1)
+            )
+            .overlay(
+                // Impact wash fired the moment the tracer lands.
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.white)
+                    .opacity(flash ? 0.4 : 0)
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
+            )
+            .shadow(color: toast.accent.opacity(0.35), radius: 10)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Muzzle smoke for the dock cannon — plays `smoke.gif` (already transparent)
+/// rising from the firing square. Its bottom is pinned to the square so the
+/// plume billows up into the reserved headroom; a short fade-in / end-fade
+/// envelope ties its visibility to the notification's dwell.
+private struct SmokePuff: View {
+    let origin: CGPoint
+    /// Changes per notification so the GIF player remounts and replays from
+    /// frame 0 every time — without it the inner clock would stick on the
+    /// last (dissipated) frame after the first finish.
+    var restartKey: AnyHashable = 0
+    /// On-screen footprint of the plume. Tall so the smoke has room to rise;
+    /// the toast slot reserves matching headroom above the strip.
+    var width: CGFloat = 72
+    var height: CGFloat = 104
+    /// Roughly the toast's dwell, so the last wisp fades as the card leaves.
+    var lifetime: Double = 4.0
+
+    @State private var startDate = Date()
+
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let age = ctx.date.timeIntervalSince(startDate)
+            let appear = min(1, age / 0.18)
+            let fade = max(0, min(1, (lifetime - age) / 1.2))
+            // The GIF's baked-in delays are 5fps (choppy); play its 106 frames
+            // at a real rate, once through, so it flows and dissipates.
+            KeyedGIFView(frames: ShootAsset.smoke, fps: 26, loop: false)
+                .id(restartKey)   // remount → restart from frame 0 each finish
+                .frame(width: width, height: height)
+                .opacity(appear * fade)
+                // Pin the plume's BASE to the muzzle; it extends upward.
+                .position(x: origin.x, y: origin.y - height / 2 + 8)
+        }
+        .onAppear { startDate = Date() }
+        .allowsHitTesting(false)
+    }
+}
+
+/// A glowing tracer that arcs from a square up to the toast card on a quad
+/// bezier, leaving a short comet tail. Self-timed via `TimelineView` so the
+/// path is sampled every frame (a plain `.position` tween would cut the
+/// corner of the arc). The parent removes it once it lands.
+private struct CannonProjectile: View {
+    let start: CGPoint
+    let target: CGPoint
+    let accent: Color
+
+    @State private var startDate = Date()
+    private let duration: Double = 0.36
+
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let raw = ctx.date.timeIntervalSince(startDate) / duration
+            let t = CGFloat(min(1, max(0, raw)))
+            let head = point(at: t)
+            let tail = point(at: max(0, t - 0.24))
+            ZStack {
+                // Comet tail — fades from nothing up to the bright head.
+                Path { p in
+                    p.move(to: tail)
+                    p.addLine(to: head)
+                }
+                .stroke(
+                    LinearGradient(
+                        colors: [accent.opacity(0), accent],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .blendMode(.plusLighter)
+                // Bright head with a white-hot core + colored glow.
+                Circle()
+                    .fill(accent)
+                    .frame(width: 9, height: 9)
+                    .overlay(
+                        Circle().fill(.white).frame(width: 3.5, height: 3.5)
+                            .blendMode(.plusLighter)
+                    )
+                    .shadow(color: accent, radius: 7)
+                    .position(head)
+            }
+            .opacity(t >= 1 ? 0 : 1)
+        }
+        .onAppear { startDate = Date() }
+    }
+
+    /// Quadratic bezier from `start` to `target`, bowed upward so the tracer
+    /// launches up and over rather than sliding in a straight line.
+    private func point(at t: CGFloat) -> CGPoint {
+        let control = CGPoint(
+            x: (start.x + target.x) / 2,
+            y: min(start.y, target.y) - 26
+        )
+        let mt = 1 - t
+        return CGPoint(
+            x: mt * mt * start.x + 2 * mt * t * control.x + t * t * target.x,
+            y: mt * mt * start.y + 2 * mt * t * control.y + t * t * target.y
+        )
     }
 }
 

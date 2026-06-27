@@ -412,22 +412,38 @@ struct NotchStatusLine: View {
 /// Each frame is a CGImage with near-white pixels already made transparent.
 struct KeyedGIFView: View {
     let frames: [ShootAsset.Frame]
+    /// When set, ignore the GIF's embedded per-frame delays and play every
+    /// frame for an equal `1/fps` slice. Some GIFs bake in slow delays (e.g.
+    /// `smoke.gif` is 106 frames stamped at 200ms = 5fps) that step choppily
+    /// even though there are plenty of frames — overriding the rate makes the
+    /// motion flow the way it was authored.
+    var fps: Double? = nil
+    /// Loop forever (default) or play through once and hold the last frame.
+    var loop: Bool = true
     /// Captured when this instance is created. Because the caller gives the
     /// view a fresh `.id` per shot, every appearance starts at frame 0.
     @State private var start = Date()
 
     var body: some View {
-        let total = max(0.0001, frames.reduce(0) { $0 + $1.duration })
+        let spf = fps.map { 1.0 / max(0.0001, $0) }
+        let total = spf.map { $0 * Double(frames.count) }
+            ?? max(0.0001, frames.reduce(0) { $0 + $1.duration })
         TimelineView(.animation) { context in
             let elapsed = max(0, context.date.timeIntervalSince(start))
-            let t = elapsed.truncatingRemainder(dividingBy: total)
-            Image(decorative: frame(at: t), scale: 1.0)
+            let t = loop ? elapsed.truncatingRemainder(dividingBy: total)
+                         : min(elapsed, total - 0.0001)
+            Image(decorative: frame(at: t, spf: spf), scale: 1.0)
                 .resizable()
                 .interpolation(.high)
         }
+        .onAppear { start = Date() }
     }
 
-    private func frame(at t: Double) -> CGImage {
+    private func frame(at t: Double, spf: Double?) -> CGImage {
+        if let spf, spf > 0 {
+            let idx = min(frames.count - 1, max(0, Int(t / spf)))
+            return frames[idx].image
+        }
         var acc = 0.0
         for f in frames {
             acc += f.duration
@@ -458,6 +474,8 @@ enum ShootAsset {
     static let target: [Frame] = loadNamed("target.gif")
     /// Right-wing projectiles while work STARTS (funnel pours on the left).
     static let bullets: [Frame] = loadNamed("bullets (1).gif")
+    /// Muzzle smoke for the dock cannon. Already transparent, so no keying.
+    static let smoke: [Frame] = loadNamed("smoke.gif", keyed: false)
 
     private static func load() -> [Frame] {
         guard let url = sourceURL else { return [] }
