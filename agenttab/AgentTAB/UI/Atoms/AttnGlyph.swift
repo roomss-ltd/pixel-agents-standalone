@@ -8,7 +8,8 @@ struct AttnGlyph: View {
     var size: CGFloat = 18
 
     var body: some View {
-        TimelineView(.animation) { context in
+        // Decorative pulse — low fps + freezes when the app is quiet.
+        DecorativeTimeline(fps: 15) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let phase = (t.truncatingRemainder(dividingBy: 1.4)) / 1.4
             let glow = abs(sin(phase * .pi))   // 0 → 1 → 0 across the cycle

@@ -19,7 +19,7 @@ struct CoffeeIdle: View {
     var size: CGFloat = 14
 
     var body: some View {
-        TimelineView(.animation) { context in
+        DecorativeTimeline(fps: 15) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period = Theme.Animations.coffeeSteamPeriod
             let strokeScale = max(size / 24, 0.4)

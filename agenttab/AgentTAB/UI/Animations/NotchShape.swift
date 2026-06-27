@@ -232,6 +232,15 @@ struct NotchStatusLine: View {
     @State private var flowToActive = false
     /// Far past → the rail starts settled (no flow) until a transition.
     @State private var flowStart = Date(timeIntervalSinceReferenceDate: -1000)
+    /// True ONLY during a flow transition (~`flowDuration`). The rail's
+    /// `TimelineView(.animation)` is mounted only while this is true; at rest
+    /// the rail is a static stroke so it stops forcing display-rate redraws
+    /// (energy culprit #1). A generation token guards against a stale timer
+    /// from an earlier flow clearing a newer one.
+    @State private var railAnimating = false
+    @State private var railFlowGen = 0
+    /// Length of the river-flow animation; also how long `railAnimating` holds.
+    private static let flowDuration: Double = 0.9
 
     var body: some View {
         let total = idle + working
@@ -359,6 +368,14 @@ struct NotchStatusLine: View {
         guard toActive != flowToActive else { return }
         flowToActive = toActive
         flowStart = Date()
+        // Run the clock just for the flow, then settle to a static stroke.
+        railAnimating = true
+        railFlowGen += 1
+        let gen = railFlowGen
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.flowDuration + 0.05))
+            if gen == railFlowGen { railAnimating = false }
+        }
     }
 
     /// The rail: a base colour (wallpaper-average when idle) with the active
@@ -369,20 +386,32 @@ struct NotchStatusLine: View {
         let active = Color(red: 0.45, green: 0.93, blue: 0.88)   // white+blue+green merge
         let idle = WallpaperColor.average.opacity(0.70)
         let rs = StrokeStyle(lineWidth: 2.0, lineCap: .round)
-        let duration = 0.9
-        TimelineView(.animation) { ctx in
-            let p = min(1.0, max(0.0, ctx.date.timeIntervalSince(flowStart) / duration))
-            let half = CGFloat(p) * 0.5
-            let leftTo = flowToActive ? half : (0.5 - half)
-            let rightFrom = flowToActive ? (1 - half) : (0.5 + half)
+        let duration = Self.flowDuration
+        if railAnimating {
+            // Flowing — drive the moving fronts at display rate for ~0.9s.
+            TimelineView(.animation) { ctx in
+                let p = min(1.0, max(0.0, ctx.date.timeIntervalSince(flowStart) / duration))
+                let half = CGFloat(p) * 0.5
+                let leftTo = flowToActive ? half : (0.5 - half)
+                let rightFrom = flowToActive ? (1 - half) : (0.5 + half)
+                ZStack {
+                    shape.stroke(idle, style: rs)
+                    shape.trim(from: 0, to: leftTo).stroke(active, style: rs)
+                    shape.trim(from: rightFrom, to: 1).stroke(active, style: rs)
+                    if p < 1 {
+                        let flick = 0.55 + 0.45 * sin(ctx.date.timeIntervalSinceReferenceDate * 34)
+                        railFront(shape, at: leftTo, flick: flick)
+                        railFront(shape, at: rightFrom, flick: flick)
+                    }
+                }
+            }
+        } else {
+            // Settled — NO clock. Pixel-identical to the p==1 frame: idle base,
+            // plus the full active stroke when the rail has flowed to active.
             ZStack {
                 shape.stroke(idle, style: rs)
-                shape.trim(from: 0, to: leftTo).stroke(active, style: rs)
-                shape.trim(from: rightFrom, to: 1).stroke(active, style: rs)
-                if p < 1 {
-                    let flick = 0.55 + 0.45 * sin(ctx.date.timeIntervalSinceReferenceDate * 34)
-                    railFront(shape, at: leftTo, flick: flick)
-                    railFront(shape, at: rightFrom, flick: flick)
+                if flowToActive {
+                    shape.stroke(active, style: rs)
                 }
             }
         }
@@ -1003,7 +1032,7 @@ struct CoffeeIdleIcon: View {
     var color = Color(red: 190/255.0, green: 198/255.0, blue: 214/255.0).opacity(0.62)
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        DecorativeTimeline(fps: 15) { ctx in
             Canvas { gc, size in
                 let s = size.width / 24.0
                 gc.scaleBy(x: s, y: s)
@@ -1309,7 +1338,7 @@ struct BearLoader: View {
     private let blue = Color(red: 0xCF/255.0, green: 0xEC/255.0, blue: 0xF9/255.0)
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        DecorativeTimeline(fps: 15) { ctx in
             Canvas { gc, size in
                 let s = min(size.width / 160, size.height / 185)
                 gc.translateBy(x: (size.width - 160 * s) / 2, y: (size.height - 185 * s) / 2)

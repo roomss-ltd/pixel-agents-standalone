@@ -988,7 +988,7 @@ private struct AttentionPulse: View {
     let color: Color
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        DecorativeTimeline(fps: 15) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
             let phase = 0.5 + 0.5 * sin(t * 4)
             Circle()

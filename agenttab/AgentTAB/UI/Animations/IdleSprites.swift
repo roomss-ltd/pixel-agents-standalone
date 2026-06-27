@@ -97,7 +97,9 @@ struct IdleSpriteView: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { context in
+        // Pixel sprites advance at their own (low) fps — tick exactly there
+        // instead of the display rate, and freeze when the app is quiet.
+        DecorativeTimeline(fps: sprite.fps) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             if images.isEmpty {
                 Color.clear.frame(width: size, height: size)
