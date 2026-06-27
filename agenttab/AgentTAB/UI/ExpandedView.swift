@@ -53,13 +53,6 @@ struct ExpandedView: View {
     @State private var isOlderOpen: Bool = false   // closed by default — content-sized
     @State private var activeShooter: ShooterWing? = nil   // wing fading behind the gun GIF
 
-    /// Transient "task finished" banner. When a work item completes the
-    /// compact bar briefly grows downward to surface a one-line notice,
-    /// then shrinks back. Nil = bar at its normal notch height.
-    @State private var finishNotice: FinishNotice? = nil
-    /// Monotonic token so a stale auto-dismiss can't close a newer notice.
-    @State private var finishNoticeGen: Int = 0
-
     @State private var showSettings: Bool = false
     @State private var showHistory: Bool = false   // activity dashboard (7d / 30d / squares)
     @State private var isEditMode: Bool = false
@@ -91,13 +84,6 @@ struct ExpandedView: View {
             // Header — always present, lives in the notch zone.
             notchLevelHeader(edgeInset: edgeInset, notchSpan: notchSpan)
                 .frame(height: geometry.hasNotch ? geometry.notchHeight : Theme.Layout.compactHeight)
-
-            // Transient finish banner — grows the compact bar downward
-            // for a few seconds when a task completes. Never shown while
-            // expanded (the full panel already lists everything).
-            if !isExpanded, let notice = finishNotice {
-                finishNoticeStrip(notice)
-            }
 
             // Below the notch — only when expanded. Has its own
             // .transition so the inner content fades / slides as the
@@ -155,8 +141,6 @@ struct ExpandedView: View {
         // bounce / up-and-down). The sub-panel transitions below keep the
         // spring since they're button-driven, not hover.
         .animation(nil, value: isExpanded)
-        // The finish banner grows / shrinks the bar with a soft spring.
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: finishNotice)
         .animation(Theme.Animations.notch, value: isOlderOpen)
         // Tab switches (Options / History) snap instantly — no spring.
         .animation(nil, value: showSettings)
@@ -165,81 +149,12 @@ struct ExpandedView: View {
             onSizeChange(size)
         }
         .onChange(of: isExpanded) { _, expanded in
-            if expanded {
-                tokenTracker.refresh()
-                // Expanding supersedes the transient banner — the full
-                // panel already shows the finished session.
-                dismissFinishNotice()
-            }
-        }
-        // A task just completed (the green "done" tally ticked up).
-        // Surface it by briefly growing the compact bar.
-        .onChange(of: doneCount) { old, new in
-            if new > old { showFinishNotice() }
+            if expanded { tokenTracker.refresh() }
         }
         // A session just started waiting on the user — fire the AWP shot.
         .onChange(of: attentionCount) { old, new in
             if new > old { SoundFX.play(SoundFX.waiting) }
         }
-    }
-
-    // MARK: - Finish banner
-
-    struct FinishNotice: Equatable {
-        let id: UUID
-        let chip: String   // task label, e.g. "6.2"
-        let name: String   // project / tab name
-    }
-
-    /// One-line strip revealed below the header when a task finishes.
-    private func finishNoticeStrip(_ notice: FinishNotice) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.Neon.green)
-            Text(notice.chip)
-                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(Theme.textStrong)
-            Text(notice.name)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textDim)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-            Text("finished")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Theme.Neon.green.opacity(0.85))
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 2)
-        .padding(.bottom, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
-
-    /// Capture the freshly-finished session and show the banner, with a
-    /// self-cancelling auto-dismiss guarded by a generation token.
-    private func showFinishNotice() {
-        guard !isExpanded, let session = recentlyActiveSessions.first else { return }
-        finishNoticeGen += 1
-        let gen = finishNoticeGen
-        finishNotice = FinishNotice(
-            id: session.id,
-            chip: engine.displayLabel(for: session),
-            name: engine.displayName(for: session)
-        )
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3.5))
-            // A newer finish (or an expand) already replaced/cleared us.
-            guard finishNoticeGen == gen else { return }
-            dismissFinishNotice()
-        }
-    }
-
-    private func dismissFinishNotice() {
-        guard finishNotice != nil else { return }
-        finishNoticeGen += 1   // invalidate any pending auto-dismiss
-        finishNotice = nil
     }
 
     // MARK: - Status hairline
