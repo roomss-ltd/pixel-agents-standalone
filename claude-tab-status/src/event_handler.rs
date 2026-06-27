@@ -1,7 +1,17 @@
 use crate::state::{unix_now, Activity, HookPayload, PluginState, SessionInfo};
 use crate::status_writer;
 use crate::tab_manager;
-use zellij_tile::prelude::focus_terminal_pane;
+use zellij_tile::prelude::{focus_terminal_pane, run_command};
+
+/// TEMP debug trace — appends every hook event + delegation state to a log so
+/// we can see the exact backgrounded-agent flow (event order, depth bracketing).
+fn dbg_trace(line: &str) {
+    let script = format!(
+        "printf '[%s] %s\\n' \"$(date +%H:%M:%S)\" '{}' >> /tmp/claude-tab-status-debug.log",
+        line.replace('\'', "'\"'\"'")
+    );
+    run_command(&["bash", "-c", &script], std::collections::BTreeMap::new());
+}
 
 fn next_run_id(
     state: &mut PluginState,
@@ -21,6 +31,12 @@ fn next_run_id(
 
 pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     let event = payload.hook_event.as_str();
+    dbg_trace(&format!(
+        "IN  event={} pane={} tool={}",
+        event,
+        payload.pane_id,
+        payload.tool_name.as_deref().unwrap_or("-")
+    ));
 
     // Focus → switch the current client to the tracked terminal pane. This is
     // driven by clicking a row in the Hammerspoon widget and must not mutate
@@ -91,14 +107,43 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         return;
     }
 
-    let activity = match event {
+    // SubagentStop → a SUB-agent (spawned via the Agent/Task tool) finished,
+    // NOT the main agent. Do NOT mark Done (that's the main agent's own `Stop`,
+    // the real finish — mapping this to Done fired a spurious second "finished"
+    // on the dock). Instead bump a per-session counter so the dock can play a
+    // distinct "spent casing" animation per sub-agent completion, then write the
+    // status WITHOUT changing the activity (it stays working).
+    if event == "SubagentStop" {
+        let mut write = false;
+        if let Some(session) = state.sessions.get_mut(&payload.pane_id) {
+            session.subagent_done_seq = session.subagent_done_seq.saturating_add(1);
+            session.delegating_depth = session.delegating_depth.saturating_sub(1);
+            session.last_event_ts = unix_now();
+            // Do NOT fire Done here, even if the main already Stopped. A
+            // backgrounded agent's result is injected back as a NEW prompt, so
+            // the main always WAKES to process it and emits its own final Stop —
+            // THAT is the single completion. Firing here is the premature first
+            // finish. Just clear the deferral and stay working.
+            if session.delegating_depth == 0 {
+                session.stop_pending = false;
+            }
+            write = true;
+        }
+        let depth = state.sessions.get(&payload.pane_id).map(|s| s.delegating_depth).unwrap_or(0);
+        dbg_trace(&format!("  SubagentStop pane={} depth_after={} (no-fire)", payload.pane_id, depth));
+        if write {
+            status_writer::write_status_file(state);
+        }
+        return;
+    }
+
+    let mut activity = match event {
         "SessionStart" => Activity::Init,
         "UserPromptSubmit" => Activity::Thinking,
         "PreToolUse" => Activity::Tool(payload.tool_name.clone().unwrap_or_default()),
         "PostToolUse" | "PostToolUseFailure" => Activity::Thinking,
         "PermissionRequest" => Activity::Waiting,
         "Stop" => Activity::Done,
-        "SubagentStop" => Activity::Done,
         _ => Activity::Idle,
     };
 
@@ -126,6 +171,9 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
             last_event_ts: 0,
             last_tool_name: None,
             cwd: payload.cwd.clone(),
+            subagent_done_seq: 0,
+            delegating_depth: 0,
+            stop_pending: false,
         });
     if let Some(run_id) = assigned_run_id {
         session.run_id = run_id;
@@ -137,6 +185,30 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
             session.cwd = Some(cwd.clone());
         }
     }
+
+    // ── Delegation tracking ──────────────────────────────────────────────
+    // `PreToolUse(Agent|Task)` opens a sub-agent; `SubagentStop` (handled
+    // above) closes one. A `Stop` that arrives while sub-agents are still
+    // outstanding must NOT finish the session — the orchestrated work isn't
+    // done. Hold the working state and let the last `SubagentStop` fire the
+    // single Done. A new prompt resets the bracket.
+    if event == "UserPromptSubmit" {
+        session.delegating_depth = 0;
+        session.stop_pending = false;
+    }
+    if event == "PreToolUse"
+        && matches!(payload.tool_name.as_deref(), Some("Agent") | Some("Task"))
+    {
+        session.delegating_depth = session.delegating_depth.saturating_add(1);
+    }
+    if event == "Stop" && session.delegating_depth > 0 {
+        session.stop_pending = true;
+        activity = session.activity.clone(); // stay working; defer the finish
+    }
+    dbg_trace(&format!(
+        "  MAIN event={} pane={} depth={} stop_pending={} -> act={:?}",
+        event, payload.pane_id, session.delegating_depth, session.stop_pending, activity
+    ));
 
     // Track last tool name across transitions.
     match &activity {

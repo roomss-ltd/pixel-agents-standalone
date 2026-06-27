@@ -339,6 +339,34 @@ final class ActivityEngine: ObservableObject {
     private let jsonlWatcher: JSONLWatcher
     private var hookSocket: HookSocketListener?
     private var lastHookEvent: [String: Date] = [:]   // claudeSessionId -> when
+    /// Last time we fired a "finished" notification for a session — used to
+    /// coalesce a spurious double-finish (the Zellij plugin reports Done on BOTH
+    /// a sub-agent's `SubagentStop` AND the main's `Stop`, so one completion can
+    /// arrive as two). Keyed by `session.id`.
+    private var lastDoneNotify: [UUID: Date] = [:]
+    /// Window within which a second "finished" for the same session is treated
+    /// as the duplicate and suppressed. Real re-runs finish far more than this
+    /// apart, so a genuine re-finish still re-fires the cannon.
+    private static let doneCoalesceWindow: TimeInterval = 6
+    /// Debounced finishes for delegating sessions, keyed by `session.id`. A
+    /// backgrounded agent's result re-prompts the main, so the main finishes,
+    /// WAKES (→working) to process it, and finishes again. Holding the done
+    /// briefly lets that wake cancel the premature one — collapsing to a single
+    /// finish at the true end.
+    /// Last time a sub-agent finished for a session. A `.done` within
+    /// `delegationRecencyWindow` of this is "still orchestrating" → settled.
+    private var lastSubagentSeqAdvance: [UUID: Date] = [:]
+    private static let delegationRecencyWindow: TimeInterval = 45
+    /// In-flight "done settle" timers, keyed by `session.id`. A delegating
+    /// session's `.done` is RACE-prone (it finishes, wakes on the injected
+    /// sub-agent result, finishes again). So we hold it HERE — at the single
+    /// choke point every consumer reads, the activity state — keeping the
+    /// session at its current working state until `.done` has been stable for
+    /// `doneSettleWindow`. Only then is `.done` committed, so the notch, dock,
+    /// squares and counts all see ONE finish. Any non-done update (the wake)
+    /// cancels it; a fresh sub-agent completion extends it.
+    private var doneSettle: [UUID: DispatchWorkItem] = [:]
+    private static let doneSettleWindow: TimeInterval = 4
     private var zellijReader: ZellijStatusReader?
     private let toastPanel = ToastPanel()
     private let soundPlayer = SoundPlayer()
@@ -486,6 +514,9 @@ final class ActivityEngine: ObservableObject {
     /// lands as a tap-to-jump card above the strip. Posted on the main
     /// thread (the engine is `@MainActor`) as `.agentTabSessionEvent`.
     private func postDockEvent(for session: Session, variant: DockToastVariant, message: String) {
+        // TEMP (verification): every shell that fires, with the session it came
+        // from — so we can tell two-sessions-each-firing from one-session-twice.
+        AgentLog.notify.notice("DOCK-EVENT session=\(session.claudeSessionId, privacy: .public) label=\(self.displayLabel(for: session), privacy: .public) variant=\(String(describing: variant), privacy: .public) jsonl=\(self.sessionsByJsonlURL.first(where: { $0.value == session.id })?.key.lastPathComponent ?? "-", privacy: .public)")
         NotificationCenter.default.post(
             name: .agentTabSessionEvent,
             object: DockEventPayload(
@@ -537,7 +568,7 @@ final class ActivityEngine: ObservableObject {
         sessionsByJsonlURL[jsonlURL] = session.id
         sessionsByClaudeId[claudeSessionId] = session.id
 
-        AgentLog.engine.info("discovered session=\(claudeSessionId, privacy: .public) project=\(projectName, privacy: .public) live=\(isLive)")
+        AgentLog.engine.notice("discovered session=\(claudeSessionId, privacy: .public) project=\(projectName, privacy: .public) live=\(isLive)")
     }
 
     private func applyLine(_ line: String, jsonlURL: URL) {
@@ -546,15 +577,26 @@ final class ActivityEngine: ObservableObject {
 
         let claudeId = sessions[index].claudeSessionId
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
+        // A Zellij session is driven by the plugin's status file (which already
+        // computes activity from the full hook stream). The JSONL is then a
+        // REDUNDANT second source for the same session — and since this user
+        // gets no socket hooks (`hookActive` never true), it would otherwise
+        // fire its own `done` from the transcript's turn-end on TOP of the
+        // plugin's `done`, i.e. the double-finish. Let Zellij own activity.
+        let zellijOwned: Bool = {
+            if case .zellij = sessions[index].terminalKind { return true }
+            return false
+        }()
 
         let oldActivity = sessions[index].activity
 
         var session = sessions[index]
         let events = parser.parseLine(line, session: &session)
 
-        if hookActive {
-            // Drop activity changes from JSONL — hook is authoritative.
-            // Tool ID tracking and currentTool from JSONL still useful, but activity sticks.
+        if hookActive || zellijOwned {
+            // Drop activity changes from JSONL — the authoritative source (hook
+            // socket or the Zellij plugin) owns it. Tool ID / currentTool
+            // tracking from JSONL still useful, but the activity STATE sticks.
             session.activity = oldActivity
         }
         sessions[index] = session
@@ -594,6 +636,10 @@ final class ActivityEngine: ObservableObject {
     }
 
     private func applyHook(_ payload: HookPayload) {
+        // TEMP (verification): log EVERY incoming hook — including ones for
+        // session_ids we haven't discovered (a sub-agent firing under its own
+        // id would otherwise be invisible, dropped by the guard below).
+        AgentLog.engine.notice("rawhook-in session=\(payload.sessionId, privacy: .public) pane=\(payload.paneId.map(String.init) ?? "-", privacy: .public) event=\(payload.hookEvent, privacy: .public) tool=\(payload.toolName ?? "-", privacy: .public) known=\(self.sessionsByClaudeId[payload.sessionId] != nil)")
         guard let id = sessionsByClaudeId[payload.sessionId],
               let index = sessions.firstIndex(where: { $0.id == id }) else {
             // Hook fired before JSONL discovered this session — buffer or wait.
@@ -607,7 +653,7 @@ final class ActivityEngine: ObservableObject {
         // real orchestrator run reveals the true ordering of PreToolUse(Agent) /
         // SubagentStop / Stop and confirms SubagentStop is 1:1 with Agent calls.
         // View: log show --debug --predicate 'subsystem == "com.roomss.agenttab"'
-        AgentLog.engine.debug("rawhook session=\(payload.sessionId, privacy: .public) event=\(payload.hookEvent, privacy: .public) tool=\(payload.toolName ?? "-", privacy: .public) depth=\(session.delegatingDepth) awaiting=\(session.awaitingSubagentsAfterStop)")
+        AgentLog.engine.notice("rawhook session=\(payload.sessionId, privacy: .public) event=\(payload.hookEvent, privacy: .public) tool=\(payload.toolName ?? "-", privacy: .public) depth=\(session.delegatingDepth) awaiting=\(session.awaitingSubagentsAfterStop)")
         // Heartbeat stamped up-front so even IGNORED sub-agent tool hooks keep
         // the session "alive" for the delegation watchdog (and keep the JSONL
         // suppression active so the transcript can't mark the main done while
@@ -735,36 +781,58 @@ final class ActivityEngine: ObservableObject {
         oldActivity: Activity,
         source: NotificationSource
     ) {
-        // Phase 0.4 — source-of-truth gate. Only proceed when the
-        // underlying source advanced compared to what we last saw for
-        // this session. Re-running over an unchanged source produces
-        // zero toasts.
+        // Phase 0.4 — source-of-truth gate.
         if !sourceAdvanced(for: session.id, source: source) {
             AgentLog.notify.debug("drop session=\(session.claudeSessionId, privacy: .public) reason=source-not-advanced")
             return
         }
 
-        // Only two transitions ever produce a notification: → .waiting and
-        // → .done. `sourceAdvanced` above already guarantees we only get here
-        // on a genuine forward step of the source, so every such transition
-        // fires — the per-session dedupe/throttle windows were removed so a
-        // re-finish of the same agent always re-fires the cannon (and sound).
+        // Only → .waiting and → .done notify. The `.done` here is already the
+        // SETTLED one (the engine's done-settle held it until stable), so this
+        // fires once per finish for every consumer.
         switch session.activity {
         case .waiting where oldActivity != .waiting: break
         case .done    where oldActivity != .done:    break
         default: return
         }
 
-        // The dock owns the notification now — it fires a cannon from this
-        // session's square that lands as a tap-to-jump toast above the strip.
         if session.activity == .waiting {
             postDockEvent(for: session, variant: .attention, message: "Waiting for approval")
             if soundsEnabled { soundPlayer.playWaiting() }
         } else {
+            // Coalesce backstop only — the settle already guarantees one done.
+            if let last = lastDoneNotify[session.id],
+               Date().timeIntervalSince(last) < Self.doneCoalesceWindow {
+                AgentLog.notify.notice("coalesced duplicate done session=\(session.claudeSessionId, privacy: .public)")
+                return
+            }
+            lastDoneNotify[session.id] = Date()
             postDockEvent(for: session, variant: .success, message: "Finished successfully")
             if soundsEnabled { soundPlayer.playDone() }
         }
-        AgentLog.notify.info("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
+        AgentLog.notify.notice("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
+    }
+
+    /// Hold a delegating session's `.done`: keep its current (working) activity
+    /// and commit `.done` only after `doneSettleWindow` of stability. Cancelled
+    /// by any non-done update (the wake); rescheduled by a fresh sub-agent
+    /// completion. THIS is the single choke point — committing `.done` here is
+    /// what every consumer (notch, dock, squares) reacts to, so one settle = one
+    /// finish everywhere.
+    private func scheduleDoneSettle(id: UUID) {
+        doneSettle[id]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let idx = self.sessions.firstIndex(where: { $0.id == id }) else { return }
+            self.doneSettle[id] = nil
+            let old = self.sessions[idx].activity
+            guard old != .done else { return }
+            self.sessions[idx].activity = .done
+            self.sessions[idx].lastUpdate = Date()
+            AgentLog.engine.notice("done-settled session=\(self.sessions[idx].claudeSessionId, privacy: .public)")
+            self.notifySessionStateChange(self.sessions[idx], oldActivity: old, source: .hook)
+        }
+        doneSettle[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.doneSettleWindow, execute: work)
     }
 
     /// Returns true when the source's own timestamp has moved forward
@@ -837,6 +905,16 @@ final class ActivityEngine: ObservableObject {
         )
         let zellijActivity = mapZellijActivity(z)
 
+        // The Zellij plugin reports `run_id` as a COMPOSITE
+        // (`<uuid>:<pane>:<epoch>:<counter>`) whose tail changes on every status
+        // update. Collapse it to the bare uuid — the canonical id the JSONL
+        // filename and the hooks both use — so a Zellij row MERGES into the same
+        // Session instead of spawning a duplicate that fires its own "finished"
+        // (the doubled-completion bug), and a fresh one on each update.
+        let bareRunId: String? = z.runId
+            .map { String($0.prefix(while: { $0 != ":" })) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+
         // Phase 0.3 — for finished states, the plugin sends the elapsed
         // time as `5s ago` / `44m ago` / `169h ago` in `detail`. When
         // parsing succeeds we reconstruct `lastUpdate = now - elapsed`.
@@ -855,10 +933,14 @@ final class ActivityEngine: ObservableObject {
         // 1) Already linked to this pane.
         if let id = sessionsByZellijPaneId[z.paneId],
            let index = sessions.firstIndex(where: { $0.id == id }) {
+            // Record sub-agent activity BEFORE applying the update — the update
+            // may fire the session's `done`, which must see "delegating" to know
+            // whether to debounce (a finish coinciding with a SubagentStop).
+            flickSubagentCasingIfAdvanced(sessionId: id, seq: z.subagentDoneSeq ?? 0)
             applyZellijUpdate(at: index, info: info,
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
-                              runId: z.runId,
+                              runId: bareRunId,
                               cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
             return
@@ -870,7 +952,7 @@ final class ActivityEngine: ObservableObject {
         // JSONL row (lastUpdate=mtime, often "now-ish") would race the
         // Zellij row (lastUpdate=now-elapsed) and finish state would
         // bucket wrong.
-        if let runId = z.runId,
+        if let runId = bareRunId,
            let id = sessionsByClaudeId[runId],
            let index = sessions.firstIndex(where: { $0.id == id }) {
             sessionsByZellijPaneId[z.paneId] = id
@@ -880,11 +962,16 @@ final class ActivityEngine: ObservableObject {
                               runId: runId,
                               cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
+            // First Zellij sighting — baseline the counter so we don't flick for
+            // sub-agents that finished before this row was being watched.
+            if let idx = sessions.firstIndex(where: { $0.id == id }) {
+                sessions[idx].lastSubagentDoneSeq = z.subagentDoneSeq ?? 0
+            }
             return
         }
 
         // 3) Truly new — create from Zellij data alone.
-        let claudeId = z.runId ?? "zellij-pane-\(z.paneId)"
+        let claudeId = bareRunId ?? "zellij-pane-\(z.paneId)"
         let projectName = z.tabName.isEmpty ? "Tab \(z.tabNum)" : z.tabName
         var session = Session(
             claudeSessionId: claudeId,
@@ -900,12 +987,30 @@ final class ActivityEngine: ObservableObject {
         // New session has no prior `lastUpdate` to preserve — fall back
         // to `now` when elapsed parsing failed.
         session.lastUpdate = zellijLastUpdate ?? Date()
+        session.lastSubagentDoneSeq = z.subagentDoneSeq ?? 0   // baseline, no flick on discovery
         sessions.append(session)
         sessionsByZellijPaneId[z.paneId] = session.id
-        if let runId = z.runId {
+        if let runId = bareRunId {
             sessionsByClaudeId[runId] = session.id
         }
         AgentLog.zellij.info("discovered pane=\(z.paneId) tab=\(z.tabNum) name=\(z.tabName, privacy: .public) activity=\(z.activity, privacy: .public) elapsed=\(z.detail ?? "?", privacy: .public) session=\(sessionName, privacy: .public)")
+    }
+
+    /// Post the "sub-agent finished" pulse if the plugin's counter advanced past
+    /// what we last saw — the dock flicks a spent casing on this session's
+    /// square. NOT a completion: no activity change, no toast, no sound.
+    private func flickSubagentCasingIfAdvanced(sessionId: UUID, seq: Int) {
+        guard let idx = sessions.firstIndex(where: { $0.id == sessionId }),
+              seq > sessions[idx].lastSubagentDoneSeq else { return }
+        sessions[idx].lastSubagentDoneSeq = seq
+        lastSubagentSeqAdvance[sessionId] = Date()   // mark "actively delegating"
+        // A sub-agent finished while a done was settling → more processing is
+        // coming; push the commit back so it can't fire mid-orchestration.
+        if doneSettle[sessionId] != nil {
+            scheduleDoneSettle(id: sessionId)
+        }
+        AgentLog.notify.notice("subagent-done session=\(self.sessions[idx].claudeSessionId, privacy: .public) seq=\(seq)")
+        NotificationCenter.default.post(name: .agentTabSubagentDone, object: sessionId)
     }
 
     private func applyZellijUpdate(
@@ -958,10 +1063,31 @@ final class ActivityEngine: ObservableObject {
         let claudeId = sessions[index].claudeSessionId
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
         if !hookActive {
-            sessions[index].activity = activity
-            // Phase 0.3 — nil means "preserve existing lastUpdate".
-            if let lastUpdate {
-                sessions[index].lastUpdate = lastUpdate
+            // Done-settle: hold a delegating session's `.done` rather than
+            // committing it straight to the activity (which the notch, dock and
+            // squares all react to). The wake / next sub-agent cancels-or-extends
+            // it; only a stable `.done` commits, once.
+            let delegating = lastSubagentSeqAdvance[targetId].map {
+                Date().timeIntervalSince($0) < Self.delegationRecencyWindow
+            } ?? false
+            if activity == .done && delegating {
+                if doneSettle[targetId] == nil {
+                    scheduleDoneSettle(id: targetId)   // keep current activity; commit later
+                }
+                // else: already settling — ignore the plugin's repeated Done.
+                if let lastUpdate { sessions[index].lastUpdate = lastUpdate }
+            } else {
+                // Any non-done update (incl. the injected-result wake) cancels a
+                // pending settle so the session can't finish behind our back.
+                if activity != .done {
+                    doneSettle[targetId]?.cancel()
+                    doneSettle[targetId] = nil
+                }
+                sessions[index].activity = activity
+                // Phase 0.3 — nil means "preserve existing lastUpdate".
+                if let lastUpdate {
+                    sessions[index].lastUpdate = lastUpdate
+                }
             }
         }
         if oldActivity != sessions[index].activity {

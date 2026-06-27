@@ -28,6 +28,11 @@ extension Notification.Name {
     /// upward that lands as a toast card above the strip. Replaces the
     /// teammate's top-right `ToastPanel`. `object` is a `DockEventPayload`.
     static let agentTabSessionEvent = Notification.Name("AgentTAB.SessionEvent")
+    /// Posted by `ActivityEngine` when a sub-agent (Agent/Task tool) finishes
+    /// for a session — distinct from a real completion. The dock flicks a spent
+    /// brass casing off that session's square (no toast, no sound). `object` is
+    /// the session's `UUID`.
+    static let agentTabSubagentDone = Notification.Name("AgentTAB.SubagentDone")
 }
 
 /// The three notify-worthy situations the dock surfaces, carried over 1:1
@@ -294,6 +299,9 @@ struct SessionDockView: View {
     /// + muzzle flash). The gun is now the single muzzle every toast comes out
     /// of, so this — not the in-flight count — is the authoritative "fire".
     @State private var revolverFire = 0
+    /// In-flight "spent casing" flicks — one per sub-agent completion. Each
+    /// tosses a brass casing off its square, then is removed.
+    @State private var casings: [Casing] = []
 
     /// Matches the notch shooter's `shootDelay`: the gun "poses" this long
     /// before the gunshot sound + bullet fire, so the dock shell launches on
@@ -368,6 +376,14 @@ struct SessionDockView: View {
                             )
                         }
                     }
+                    // Sub-agent finished → a spent brass casing flicks sideways
+                    // off that session's square (no toast, no sound).
+                    ForEach(casings) { casing in
+                        if let anchor = centers[casing.sessionId] {
+                            CasingFlick(origin: geo[anchor])
+                                .id(casing.id)
+                        }
+                    }
                 }
             }
             .allowsHitTesting(false)
@@ -396,6 +412,9 @@ struct SessionDockView: View {
         .onPreferenceChange(DockSizeKey.self) { onSizeChange($0) }
         .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
             if let payload = note.object as? DockEventPayload { fire(payload) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentTabSubagentDone)) { note in
+            if let sid = note.object as? UUID { flickCasing(for: sid) }
         }
         .animation(.easeOut(duration: 0.18), value: layoutToken(sessions))
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
@@ -491,6 +510,16 @@ struct SessionDockView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.shootDelay) {
             guard gen == fireGen else { return }
             launchCannon(payload)
+        }
+    }
+
+    /// A sub-agent finished for `sessionId` — toss a spent casing off its square
+    /// and clear it once the short flick is done. No card, no sound.
+    private func flickCasing(for sessionId: UUID) {
+        let casing = Casing(sessionId: sessionId)
+        casings.append(casing)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            casings.removeAll { $0.id == casing.id }
         }
     }
 
@@ -957,6 +986,12 @@ private struct CannonShot: Identifiable {
     let accent: Color
 }
 
+/// One in-flight "spent casing" flick — a sub-agent finished for `sessionId`.
+private struct Casing: Identifiable {
+    let id = UUID()
+    let sessionId: UUID
+}
+
 /// Collects every visible square's centre point, keyed by session id, so the
 /// cannon layer can resolve where to launch a tracer from.
 private struct SquareCenterKey: PreferenceKey {
@@ -1047,6 +1082,50 @@ private struct DockToastCard: View {
         } else {
             Color.clear.frame(width: 34, height: 34)
         }
+    }
+}
+
+/// A spent brass casing tossed off a square when one of its sub-agents finishes.
+/// Ejects up-and-right, tumbles, then gravity pulls it down as it fades — quick
+/// (~0.55s) and self-timed. Deliberately small + sideways so it never reads like
+/// the upward bullet of a real completion.
+private struct CasingFlick: View {
+    let origin: CGPoint
+    @State private var start = Date()
+    private let dur: Double = 0.55
+
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = min(1.0, ctx.date.timeIntervalSince(start) / dur)
+            let dx = 34.0 * t                                  // travels right
+            let dy = -16.0 * sin(t * .pi) + 26.0 * t * t       // arc up, then fall
+            let rot = 320.0 * t                                // tumble
+            let fade = t < 0.7 ? 1.0 : max(0, 1 - (t - 0.7) / 0.3)
+            casing
+                .rotationEffect(.degrees(rot))
+                .opacity(fade)
+                .position(x: origin.x + 14 + CGFloat(dx),
+                          y: origin.y - 2 + CGFloat(dy))
+        }
+        .onAppear { start = Date() }
+        .allowsHitTesting(false)
+    }
+
+    /// A tiny brass casing on its side — body + a darker rim (the case head).
+    private var casing: some View {
+        Capsule()
+            .fill(LinearGradient(
+                colors: [Color(red: 1.0, green: 0.86, blue: 0.52),
+                         Color(red: 0.78, green: 0.55, blue: 0.22)],
+                startPoint: .top, endPoint: .bottom))
+            .frame(width: 11, height: 4.5)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color(red: 0.55, green: 0.38, blue: 0.14))
+                    .frame(width: 3, height: 4.5)          // case-head rim
+            }
+            .overlay(Capsule().stroke(Color.black.opacity(0.25), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.4), radius: 1, y: 0.5)
     }
 }
 

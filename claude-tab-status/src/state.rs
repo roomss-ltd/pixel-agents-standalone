@@ -87,6 +87,20 @@ pub struct SessionInfo {
     /// `cwd` field. Surfaced in the status file so the AgentTAB overlay
     /// can open the worktree in Finder / an editor.
     pub cwd: Option<String>,
+    /// Monotonic count of sub-agents (Agent/Task tool) that have finished for
+    /// this session, bumped on each `SubagentStop`. Surfaced in the status file
+    /// so the dock can play a distinct "spent casing" animation per sub-agent
+    /// completion — WITHOUT marking the session done (that's the main `Stop`).
+    pub subagent_done_seq: u64,
+    /// Outstanding sub-agents: `PreToolUse(Agent|Task)` opens one, `SubagentStop`
+    /// closes one. While > 0 the orchestrator is delegating, so a `Stop` (its
+    /// own turn ending) must NOT report Done — the work isn't finished until the
+    /// sub-agents drain. Prevents the premature/extra "finished".
+    pub delegating_depth: u32,
+    /// The main agent's `Stop` arrived while sub-agents were still outstanding,
+    /// so Done was deferred. The LAST `SubagentStop` (depth → 0) fires the
+    /// single real completion.
+    pub stop_pending: bool,
 }
 
 #[derive(Debug, Deserialize)]

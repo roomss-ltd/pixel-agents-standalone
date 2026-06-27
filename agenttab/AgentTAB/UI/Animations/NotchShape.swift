@@ -15,6 +15,7 @@ import SwiftUI
 import AppKit
 import ImageIO
 import AVFoundation
+import WebKit
 
 /// Flat top, rounded bottom corners.
 struct DropPanelShape: Shape {
@@ -257,6 +258,10 @@ struct NotchStatusLine: View {
 
                 // Industrial freight rides the bottom rail while work is active.
                 RailFreight(working: working, shape: shape)
+
+                // Every so often a small airplane rides the same rail as the
+                // freight — a rarer, lighter flourish, tucked in the crate strip.
+                RailAircraft(working: working, shape: shape)
 
                 // The siphon droplet — the "bullet", fired after the shooter.
                 SiphonDroplet(trigger: siphonID,
@@ -505,6 +510,20 @@ enum ShootAsset {
     static let bullets: [Frame] = loadNamed("bullets (1).gif")
     /// Muzzle smoke for the dock cannon. Already transparent, so no keying.
     static let smoke: [Frame] = loadNamed("smoke.gif", keyed: false)
+    /// Occasional flyover props that cross the status line while work is active.
+    /// Both GIFs ship with native alpha (no white to key) and face LEFT, so the
+    /// crossing view flips them when travelling left→right. The square jet reads
+    /// cleanly; the slim one drags a contrail.
+    static let airplane: [Frame] = loadNamed("Airplane flying.gif", keyed: false)
+    /// Static SVG jet (dark teal body + orange exhaust). Rasterised once.
+    static let contrailPlane: [Frame] = loadStatic("Airplane.svg")
+    /// Wooden crate box (SVG) — replaces the drawn crate, still hung by OUR
+    /// trolley+cable crane. Recolour variants come later.
+    static let crateImage: CGImage? = loadStatic("crate.svg", pixelHeight: 128).first?.image
+    /// Shipping containers that ship WITH their own crane rig baked in (hook +
+    /// cables + posts); they ride solo, no extra crane from us.
+    static let containerImages: [CGImage] = ["container1.png", "container2.png"]
+        .compactMap { loadNamed($0, keyed: false).first?.image }
 
     private static func load() -> [Frame] {
         guard let url = sourceURL else { return [] }
@@ -517,6 +536,33 @@ enum ShootAsset {
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads").appendingPathComponent(filename)
         return frames(at: url, keyed: keyed)
+    }
+
+    /// Rasterise a single static image (e.g. an SVG) from ~/Downloads into one
+    /// frame, `pixelHeight` tall at the source aspect — crisp enough to display
+    /// well above its on-screen size. macOS draws SVG natively via NSImage. The
+    /// offscreen bitmap starts transparent, so the art's own alpha is preserved
+    /// (no keying). Returns [] if the file is missing or can't be drawn.
+    static func loadStatic(_ filename: String, pixelHeight: Int = 480) -> [Frame] {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads").appendingPathComponent(filename)
+        guard let img = NSImage(contentsOf: url),
+              img.size.width > 0, img.size.height > 0 else { return [] }
+        let aspect = img.size.width / img.size.height
+        let pxH = max(1, pixelHeight)
+        let pxW = max(1, Int((Double(pxH) * aspect).rounded()))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pxW, pixelsHigh: pxH,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return [] }
+        rep.size = NSSize(width: pxW, height: pxH)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        img.draw(in: NSRect(x: 0, y: 0, width: pxW, height: pxH),
+                 from: .zero, operation: .sourceOver, fraction: 1.0)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let cg = rep.cgImage else { return [] }
+        return [Frame(image: cg, duration: 0.1)]
     }
 
     private static func frames(at url: URL, keyed: Bool = true) -> [Frame] {
@@ -604,6 +650,9 @@ struct RailFreight: View {
         let duration: Double
         let boxes: Int          // >1 = a chained load that moves as one unit
         let style: CrateStyle
+        /// Non-nil → a solo shipping container (its own crane); the value indexes
+        /// `ShootAsset.containerImages`. Nil → a crate chain on our crane.
+        var containerIndex: Int? = nil
     }
 
     /// Visual crate variants.
@@ -656,7 +705,9 @@ struct RailFreight: View {
         .onChange(of: working > 0) { _, active in
             if active { startSpawning() } else { stopSpawning() }
         }
-        .onAppear { if working > 0 { startSpawning() } }
+        // PREVIEW: spawn even at rest so the new freight art is verifiable
+        // without an active agent. Revert to `if working > 0 { startSpawning() }`.
+        .onAppear { startSpawning() }
         .onDisappear { stopSpawning() }
     }
 
@@ -664,8 +715,9 @@ struct RailFreight: View {
         guard spawner == nil else { return }
         spawner = Task { @MainActor in
             while !Task.isCancelled {
-                // Sparse + calm — long gaps between loads.
-                try? await Task.sleep(for: .seconds(Double.random(in: 7.0 ... 15.0)))
+                // PREVIEW cadence — frequent so the new freight art is easy to
+                // verify. Revert to `Double.random(in: 7.0 ... 15.0)`.
+                try? await Task.sleep(for: .seconds(Double.random(in: 2.0 ... 4.0)))
                 if Task.isCancelled { return }
                 let dir = Bool.random()
                 let dur = Double.random(in: 3.6 ... 5.4)        // slower, smoother glide
@@ -696,9 +748,12 @@ struct RailFreight: View {
                     crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
                                         boxes: Int.random(in: 4 ... 6), style: Self.randomStyle()))
                 default:
-                    // A single WIDE container (~3 crates wide), travelling solo.
+                    // A single shipping container, travelling solo on its OWN
+                    // built-in crane (one of the container PNGs at random).
+                    let idx = ShootAsset.containerImages.isEmpty
+                        ? nil : Int.random(in: 0 ..< ShootAsset.containerImages.count)
                     crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: 1, style: .wide))
+                                        boxes: 1, style: .wide, containerIndex: idx))
                 }
             }
         }
@@ -723,17 +778,20 @@ private struct CrateView: View {
 
     private let hookD: CGFloat = 2.5
     private let cableLen: CGFloat = 3
-    private var crateW: CGFloat { crate.style.width }   // varies by variant
-    private let crateH: CGFloat = 8
-    private let linkGap: CGFloat = 2.5
+    private let crateW: CGFloat = 9          // crate.svg is square
+    private let crateH: CGFloat = 9
+    private let containerSize: CGFloat = 24  // solo container, own crane baked in
+    private let linkGap: CGFloat = 1.0       // tight chains
 
     var body: some View {
         // Bottom rail runs ~0.30 (right end) … 0.70 (left end) in path-param.
         let tStart: CGFloat = crate.leftToRight ? 0.70 : 0.30
         let tEnd: CGFloat = crate.leftToRight ? 0.30 : 0.70
+        let isContainer = crate.containerIndex != nil && !ShootAsset.containerImages.isEmpty
         let unitH = hookD + cableLen + crateH
         let n = max(1, crate.boxes)
-        let unitW = CGFloat(n) * crateW + CGFloat(n - 1) * linkGap
+        let unitW = isContainer ? containerSize
+                                : CGFloat(n) * crateW + CGFloat(n - 1) * linkGap
 
         // A real clock drives progress so the body re-evaluates each frame —
         // letting the triangular fade (0 → 1 → 0) actually peak in the middle.
@@ -748,31 +806,45 @@ private struct CrateView: View {
             let dδ: CGFloat = 0.004
             let pa = railPoint(t - dδ), pb = railPoint(t + dδ)
             let pxPerParam = max(1, hypot(pb.x - pa.x, pb.y - pa.y) / (2 * dδ))
-            let glowHalf = min(0.30, (unitW / 2 + crateW * 0.6) / pxPerParam)
+            let edge = isContainer ? containerSize : crateW
+            let glowHalf = min(0.30, (unitW / 2 + edge * 0.6) / pxPerParam)
 
             ZStack {
-                // The STATUS LINE glow above the crate: the yellowish river-end
-                // colour painted onto the rail at the crate's current position,
+                // The STATUS LINE glow above the load: the yellowish river-end
+                // colour painted onto the rail at the load's current position,
                 // travelling with it from corner to corner.
                 railGlow(at: t, halfWidth: glowHalf)
                     .opacity(Double(fade))
 
-                // The crate unit, hanging below the rail.
-                ZStack(alignment: .top) {
-                    // Beam linking the trolleys of a chained load.
-                    if n > 1 {
-                        Rectangle().fill(Color(white: 0.5))
-                            .frame(width: unitW - crateW, height: 0.8)
-                            .offset(y: hookD / 2 - 0.4)
+                if isContainer {
+                    // Shipping container with its OWN crane baked in: the image's
+                    // built-in hook sits on the rail, the box hangs below. No
+                    // trolley/cable from us.
+                    Image(decorative: ShootAsset.containerImages[crate.containerIndex!], scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: containerSize, height: containerSize)
+                        .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
+                        .opacity(Double(fade))
+                        .position(x: pt.x, y: pt.y + containerSize / 2)
+                } else {
+                    // Crate chain hung from OUR crane (trolley + cable per box).
+                    ZStack(alignment: .top) {
+                        // Beam linking the trolleys of a chained load.
+                        if n > 1 {
+                            Rectangle().fill(Color(white: 0.5))
+                                .frame(width: unitW - crateW, height: 0.8)
+                                .offset(y: hookD / 2 - 0.4)
+                        }
+                        HStack(spacing: linkGap) {
+                            ForEach(0 ..< n, id: \.self) { _ in container }
+                        }
                     }
-                    HStack(spacing: linkGap) {
-                        ForEach(0 ..< n, id: \.self) { _ in container }
-                    }
+                    .frame(width: unitW, height: unitH)
+                    .opacity(Double(fade))
+                    // Hook centred on the rail; everything else hangs below it.
+                    .position(x: pt.x, y: pt.y + unitH / 2 - hookD / 2)
                 }
-                .frame(width: unitW, height: unitH)
-                .opacity(Double(fade))
-                // Hook centred on the rail; everything else hangs below it.
-                .position(x: pt.x, y: pt.y + unitH / 2 - hookD / 2)
             }
             .frame(width: size.width, height: size.height)
         }
@@ -829,54 +901,159 @@ private struct CrateView: View {
         }
     }
 
-    /// The crate box itself, drawn with variant-specific detailing.
+    /// The crate box — the wooden crate SVG (recolour variants come later),
+    /// falling back to a tinted rounded rect if the asset didn't load.
     private var crateBox: some View {
-        Canvas { gc, sz in
-            let W = sz.width, H = sz.height
-            let body = Path(roundedRect: CGRect(x: 0, y: 0, width: W, height: H), cornerRadius: 1.4)
-            gc.fill(body, with: .color(crate.tint))
-
-            func hline(_ y: CGFloat) -> Path {
-                var p = Path()
-                p.move(to: CGPoint(x: W * 0.16, y: y)); p.addLine(to: CGPoint(x: W * 0.84, y: y))
-                return p
+        Group {
+            if let img = ShootAsset.crateImage {
+                Image(decorative: img, scale: 1)
+                    .resizable()
+                    .interpolation(.high)
+            } else {
+                RoundedRectangle(cornerRadius: 1.4).fill(crate.tint)
             }
-            func vline(_ x: CGFloat) -> Path {
-                var p = Path()
-                p.move(to: CGPoint(x: x, y: H * 0.16)); p.addLine(to: CGPoint(x: x, y: H * 0.84))
-                return p
-            }
-
-            // Light lid seam near the top (all variants).
-            gc.stroke(hline(H * 0.20), with: .color(.white.opacity(0.16)),
-                      style: StrokeStyle(lineWidth: 0.6))
-
-            let dark = Color.black.opacity(0.32)
-            let ds = StrokeStyle(lineWidth: 0.65)
-            switch crate.style {
-            case .plain:
-                gc.stroke(hline(H * 0.32), with: .color(dark), style: ds)
-            case .vSplit:
-                gc.stroke(hline(H * 0.32), with: .color(dark), style: ds)
-                gc.stroke(vline(W * 0.50), with: .color(dark), style: ds)
-            case .slats:
-                gc.stroke(hline(H * 0.36), with: .color(dark), style: ds)
-                gc.stroke(hline(H * 0.64), with: .color(dark), style: ds)
-            case .wide:
-                gc.stroke(hline(H * 0.30), with: .color(dark), style: ds)
-                gc.stroke(vline(W * 0.34), with: .color(dark), style: ds)
-                gc.stroke(vline(W * 0.66), with: .color(dark), style: ds)
-            case .xbrace:
-                var x = Path()
-                x.move(to: CGPoint(x: W * 0.16, y: H * 0.24)); x.addLine(to: CGPoint(x: W * 0.84, y: H * 0.76))
-                x.move(to: CGPoint(x: W * 0.84, y: H * 0.24)); x.addLine(to: CGPoint(x: W * 0.16, y: H * 0.76))
-                gc.stroke(x, with: .color(dark), style: ds)
-            }
-            // Edge.
-            gc.stroke(body, with: .color(.black.opacity(0.38)), style: StrokeStyle(lineWidth: 0.6))
         }
         .frame(width: crateW, height: crateH)
         .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
+    }
+
+    private func railPoint(_ t: CGFloat) -> CGPoint {
+        let path = shape.path(in: CGRect(origin: .zero, size: size))
+        let eps: CGFloat = 0.0015
+        let seg = path.trimmedPath(from: max(0, t - eps), to: min(1, t + eps))
+        let r = seg.boundingRect
+        return CGPoint(x: r.midX, y: r.midY)
+    }
+}
+
+/// While work is active, an airplane occasionally drifts across the upper band
+/// of the status line — a rarer, lighter counterpart to the freight crates.
+/// Spawns are sparse + random; only one plane is ever in the air at a time-ish,
+/// and the GIFs are picked at random (the square jet, or the slim contrail one).
+struct RailAircraft: View {
+    let working: Int
+    let shape: NotchOutlineShape
+
+    @State private var planes: [Plane] = []
+    @State private var spawner: Task<Void, Never>?
+
+    struct Plane: Identifiable {
+        let id = UUID()
+        let leftToRight: Bool
+        let frames: [ShootAsset.Frame]
+        let height: CGFloat
+        /// Which way the source art's nose points — so it can be mirrored to
+        /// lead in the travel direction. The two GIFs face opposite ways.
+        let facesLeft: Bool
+        let duration: Double
+    }
+
+    /// One GIF/SVG + the on-screen height that reads in the crate strip + a
+    /// mirror flag. `facesLeft` is empirical: both source arts face the same way,
+    /// so both share a value — flip a plane's flag if it ever flies tail-first.
+    private static var catalog: [(frames: [ShootAsset.Frame], height: CGFloat, facesLeft: Bool)] {
+        [
+            (ShootAsset.airplane, 31.5, false),     // square jet
+            (ShootAsset.contrailPlane, 32, false),  // SVG jet + exhaust
+        ].filter { !$0.frames.isEmpty }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(planes) { plane in
+                    AircraftView(plane: plane, shape: shape, size: geo.size) {
+                        planes.removeAll { $0.id == plane.id }
+                    }
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+        .onChange(of: working > 0) { _, active in
+            if active { startSpawning() } else { stopSpawning() }
+        }
+        // PREVIEW: spawn even at rest so the look can be verified without an
+        // active agent. Revert to `if working > 0 { startSpawning() }`.
+        .onAppear { startSpawning() }
+        .onDisappear { stopSpawning() }
+    }
+
+    private func startSpawning() {
+        guard spawner == nil else { return }
+        let catalog = Self.catalog
+        guard !catalog.isEmpty else { return }
+        spawner = Task { @MainActor in
+            while !Task.isCancelled {
+                // PREVIEW cadence — frequent so the look is easy to verify.
+                // Revert to `Double.random(in: 12.0 ... 26.0)`.
+                try? await Task.sleep(for: .seconds(Double.random(in: 1.6 ... 3.2)))
+                if Task.isCancelled { return }
+                let pick = catalog.randomElement()!
+                planes.append(Plane(
+                    leftToRight: Bool.random(),
+                    frames: pick.frames,
+                    height: pick.height,
+                    facesLeft: pick.facesLeft,
+                    duration: Double.random(in: 3.6 ... 5.4)   // matches the crates
+                ))
+            }
+        }
+    }
+
+    private func stopSpawning() {
+        spawner?.cancel()
+        spawner = nil
+    }
+}
+
+/// One airplane gliding the same bottom-rail path the crates ride — tucked just
+/// below the status line (clear of the physical camera notch), wing-to-wing, at
+/// crate speed and with the crates' fade. Each GIF declares its native nose
+/// direction (`facesLeft`) and is mirrored as needed to fly nose-first.
+private struct AircraftView: View {
+    let plane: RailAircraft.Plane
+    let shape: NotchOutlineShape
+    let size: CGSize
+    let onDone: () -> Void
+
+    @State private var start = Date()
+
+    var body: some View {
+        // Same rail span the crates use: 0.70 (left end) … 0.30 (right end).
+        let tStart: CGFloat = plane.leftToRight ? 0.70 : 0.30
+        let tEnd: CGFloat = plane.leftToRight ? 0.30 : 0.70
+        let h = plane.height
+        let img = plane.frames.first?.image
+        let aspect = img.map { CGFloat($0.width) / CGFloat(max(1, $0.height)) } ?? 1
+        let w = h * aspect
+
+        return TimelineView(.animation) { ctx in
+            let p = min(1, max(0, ctx.date.timeIntervalSince(start) / plane.duration))
+            let t = tStart + (tEnd - tStart) * CGFloat(p)
+            let pt = railPoint(t)
+            // Same trapezoidal fade as the crates (in over 12%, out over 12%).
+            let fade = max(0, min(1, min(CGFloat(p) / 0.12, (1 - CGFloat(p)) / 0.12)))
+
+            ZStack {
+                KeyedGIFView(frames: plane.frames)
+                    .frame(width: w, height: h)
+                    // Mirror only when the travel direction fights the native
+                    // nose, so the plane always flies nose-first.
+                    .scaleEffect(x: (plane.leftToRight == plane.facesLeft) ? -1 : 1, y: 1)
+                    .opacity(Double(fade))
+                    // Tuck just below the rail, in the same strip as the crates.
+                    .position(x: pt.x, y: pt.y + h / 2 + 1.5)
+            }
+            .frame(width: size.width, height: size.height)
+        }
+        .onAppear {
+            start = Date()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(plane.duration + 0.1))
+                onDone()
+            }
+        }
     }
 
     private func railPoint(_ t: CGFloat) -> CGPoint {
@@ -1381,6 +1558,260 @@ struct RingLoader: View {
             .trim(from: 0, to: 0.25)
             .stroke(color, style: StrokeStyle(lineWidth: lw, lineCap: .round))
     }
+}
+
+/// The Uiverse "wheel and hamster" loader (by Nawsome), run as its ORIGINAL
+/// CSS inside a transparent WKWebView so it's pixel-faithful — the elliptical
+/// radii, inset-shadow shading, clip-path paws and 8 synced keyframes are hard
+/// to reproduce natively. Shown while work is in progress. (A live webview is
+/// heavier than the hand-built loaders; bake to a GIF/native port if it stays.)
+struct HamsterWheelLoader: View {
+    /// Render the CSS at its native 168px (font-size 14) for full detail, then
+    /// scale the whole webview DOWN to the badge. That supersamples it (a big
+    /// crisp render sampled into few pixels) rather than rasterising the CSS at
+    /// the tiny point size — which is what made it look pixelated.
+    private static let render: CGFloat = 168
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            HamsterWebView(px: Self.render)
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Transparent WKWebView host that renders the hamster-wheel CSS at `px` points
+/// (font-size scales the whole rig: 12em = px). Retina backing keeps it crisp.
+private struct HamsterWebView: NSViewRepresentable {
+    let px: CGFloat
+
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: px, height: px))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent background
+        wv.loadHTMLString(Self.document(px: px), baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static func document(px: CGFloat) -> String {
+        let fs = px / 12.0   // .wheel-and-hamster is 12em wide → 12em = px
+        return """
+        <!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:\(px)px;height:\(px)px}
+        body{display:flex;align-items:center;justify-content:center}
+        \(css)
+        .wheel-and-hamster{font-size:\(fs)px}
+        </style></head><body>
+        <div class="wheel-and-hamster" role="img">
+          <div class="wheel"></div>
+          <div class="hamster"><div class="hamster__body">
+            <div class="hamster__head"><div class="hamster__ear"></div><div class="hamster__eye"></div><div class="hamster__nose"></div></div>
+            <div class="hamster__limb--fr"></div><div class="hamster__limb--fl"></div>
+            <div class="hamster__limb--br"></div><div class="hamster__limb--bl"></div>
+            <div class="hamster__tail"></div>
+          </div></div>
+          <div class="spoke"></div>
+        </div>
+        </body></html>
+        """
+    }
+
+    /// The CSS exactly as authored (Uiverse.io / Nawsome).
+    private static let css = #"""
+    .wheel-and-hamster {
+      --dur: 1s;
+      position: relative;
+      width: 12em;
+      height: 12em;
+      font-size: 14px;
+    }
+    .wheel,
+    .hamster,
+    .hamster div,
+    .spoke {
+      position: absolute;
+    }
+    .wheel,
+    .spoke {
+      border-radius: 50%;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .wheel {
+      background: radial-gradient(100% 100% at center,hsla(0,0%,60%,0) 45.8%,hsl(0,0%,60%) 46%);
+      z-index: 2;
+    }
+    .hamster {
+      animation: hamster var(--dur) ease-in-out infinite;
+      top: 50%;
+      left: calc(50% - 3.5em);
+      width: 7em;
+      height: 3.75em;
+      transform: rotate(4deg) translate(-0.8em,1.85em);
+      transform-origin: 50% 0;
+      z-index: 1;
+    }
+    .hamster__head {
+      animation: hamsterHead var(--dur) ease-in-out infinite;
+      background: hsl(30,90%,55%);
+      border-radius: 70% 30% 0 100% / 40% 25% 25% 60%;
+      box-shadow: 0 -0.25em 0 hsl(30,90%,80%) inset,
+            0.75em -1.55em 0 hsl(30,90%,90%) inset;
+      top: 0;
+      left: -2em;
+      width: 2.75em;
+      height: 2.5em;
+      transform-origin: 100% 50%;
+    }
+    .hamster__ear {
+      animation: hamsterEar var(--dur) ease-in-out infinite;
+      background: hsl(0,90%,85%);
+      border-radius: 50%;
+      box-shadow: -0.25em 0 hsl(30,90%,55%) inset;
+      top: -0.25em;
+      right: -0.25em;
+      width: 0.75em;
+      height: 0.75em;
+      transform-origin: 50% 75%;
+    }
+    .hamster__eye {
+      animation: hamsterEye var(--dur) linear infinite;
+      background-color: hsl(0,0%,0%);
+      border-radius: 50%;
+      top: 0.375em;
+      left: 1.25em;
+      width: 0.5em;
+      height: 0.5em;
+    }
+    .hamster__nose {
+      background: hsl(0,90%,75%);
+      border-radius: 35% 65% 85% 15% / 70% 50% 50% 30%;
+      top: 0.75em;
+      left: 0;
+      width: 0.2em;
+      height: 0.25em;
+    }
+    .hamster__body {
+      animation: hamsterBody var(--dur) ease-in-out infinite;
+      background: hsl(30,90%,90%);
+      border-radius: 50% 30% 50% 30% / 15% 60% 40% 40%;
+      box-shadow: 0.1em 0.75em 0 hsl(30,90%,55%) inset,
+            0.15em -0.5em 0 hsl(30,90%,80%) inset;
+      top: 0.25em;
+      left: 2em;
+      width: 4.5em;
+      height: 3em;
+      transform-origin: 17% 50%;
+      transform-style: preserve-3d;
+    }
+    .hamster__limb--fr,
+    .hamster__limb--fl {
+      clip-path: polygon(0 0,100% 0,70% 80%,60% 100%,0% 100%,40% 80%);
+      top: 2em;
+      left: 0.5em;
+      width: 1em;
+      height: 1.5em;
+      transform-origin: 50% 0;
+    }
+    .hamster__limb--fr {
+      animation: hamsterFRLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,80%) 80%,hsl(0,90%,75%) 80%);
+      transform: rotate(15deg) translateZ(-1px);
+    }
+    .hamster__limb--fl {
+      animation: hamsterFLLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,90%) 80%,hsl(0,90%,85%) 80%);
+      transform: rotate(15deg);
+    }
+    .hamster__limb--br,
+    .hamster__limb--bl {
+      border-radius: 0.75em 0.75em 0 0;
+      clip-path: polygon(0 0,100% 0,100% 30%,70% 90%,70% 100%,30% 100%,40% 90%,0% 30%);
+      top: 1em;
+      left: 2.8em;
+      width: 1.5em;
+      height: 2.5em;
+      transform-origin: 50% 30%;
+    }
+    .hamster__limb--br {
+      animation: hamsterBRLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,80%) 90%,hsl(0,90%,75%) 90%);
+      transform: rotate(-25deg) translateZ(-1px);
+    }
+    .hamster__limb--bl {
+      animation: hamsterBLLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,90%) 90%,hsl(0,90%,85%) 90%);
+      transform: rotate(-25deg);
+    }
+    .hamster__tail {
+      animation: hamsterTail var(--dur) linear infinite;
+      background: hsl(0,90%,85%);
+      border-radius: 0.25em 50% 50% 0.25em;
+      box-shadow: 0 -0.2em 0 hsl(0,90%,75%) inset;
+      top: 1.5em;
+      right: -0.5em;
+      width: 1em;
+      height: 0.5em;
+      transform: rotate(30deg) translateZ(-1px);
+      transform-origin: 0.25em 0.25em;
+    }
+    .spoke {
+      animation: spoke calc(var(--dur) * 3) linear infinite;
+      background: radial-gradient(100% 100% at center,hsl(0,0%,60%) 4.8%,hsla(0,0%,60%,0) 5%),
+            linear-gradient(hsla(0,0%,55%,0) 46.9%,hsl(0,0%,65%) 47% 52.9%,hsla(0,0%,65%,0) 53%) 50% 50% / 99% 99% no-repeat;
+    }
+    @keyframes hamster {
+      from, to { transform: rotate(4deg) translate(-0.8em,1.85em); }
+      50% { transform: rotate(0) translate(-0.8em,1.85em); }
+    }
+    @keyframes hamsterHead {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(8deg); }
+    }
+    @keyframes hamsterEye {
+      from, 90%, to { transform: scaleY(1); }
+      95% { transform: scaleY(0); }
+    }
+    @keyframes hamsterEar {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(12deg); }
+    }
+    @keyframes hamsterBody {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-2deg); }
+    }
+    @keyframes hamsterFRLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(50deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-30deg) translateZ(-1px); }
+    }
+    @keyframes hamsterFLLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(-30deg); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(50deg); }
+    }
+    @keyframes hamsterBRLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(-60deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(20deg) translateZ(-1px); }
+    }
+    @keyframes hamsterBLLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(20deg); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-60deg); }
+    }
+    @keyframes hamsterTail {
+      from, 25%, 50%, 75%, to { transform: rotate(30deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(10deg) translateZ(-1px); }
+    }
+    @keyframes spoke {
+      from { transform: rotate(0); }
+      to { transform: rotate(-1turn); }
+    }
+    """#
 }
 
 /// SwiftUI port of the CSS "sleeping bear" loader: a white arch head with two

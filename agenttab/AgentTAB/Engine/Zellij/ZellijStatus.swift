@@ -23,6 +23,10 @@ struct ZellijSession: Codable {
     /// Agent working directory, forwarded from the Claude/Codex hook's
     /// `cwd`. Nil for older plugin builds that didn't write it.
     let cwd: String?
+    /// Monotonic count of sub-agents that have finished for this session. Nil
+    /// for older plugin builds; an increase signals a sub-agent completion the
+    /// dock flicks a spent casing for (no state change — not a finish).
+    let subagentDoneSeq: Int?
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id"
@@ -30,6 +34,7 @@ struct ZellijSession: Codable {
         case tabNum = "tab_num"
         case tabName = "tab_name"
         case icon, detail, activity, cwd
+        case subagentDoneSeq = "subagent_done_seq"
     }
 }
 

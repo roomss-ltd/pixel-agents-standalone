@@ -102,7 +102,7 @@ fn build_status_json(state: &PluginState) -> String {
         };
 
         sessions_json.push(format!(
-            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\",\"cwd\":{}}}",
+            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\",\"cwd\":{},\"subagent_done_seq\":{}}}",
             session.pane_id,
             escape_json_string(&session.run_id),
             tab_num,
@@ -111,6 +111,7 @@ fn build_status_json(state: &PluginState) -> String {
             detail_json,
             activity_str,
             cwd_json,
+            session.subagent_done_seq,
         ));
     }
 

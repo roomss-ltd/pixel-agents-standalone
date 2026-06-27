@@ -31,6 +31,11 @@ struct Session: Identifiable, Equatable {
     /// single completion. This is what keeps the orchestrator's square lit while
     /// its background sub-agents finish the work.
     var awaitingSubagentsAfterStop: Bool
+    /// Last `subagent_done_seq` we've seen for this session from the Zellij
+    /// status file. When the plugin's counter advances past this, a sub-agent
+    /// just finished — the dock plays a "spent casing" flick (no toast, no
+    /// sound). Baseline-set on discovery so we don't flick for history.
+    var lastSubagentDoneSeq: Int
     var lastUpdate: Date
     var terminalKind: TerminalKind
     /// True when this session was surfaced from a stale jsonl file at
@@ -56,6 +61,7 @@ struct Session: Identifiable, Equatable {
         self.subagentTools = [:]
         self.delegatingDepth = 0
         self.awaitingSubagentsAfterStop = false
+        self.lastSubagentDoneSeq = 0
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)
         self.isHistorical = false
