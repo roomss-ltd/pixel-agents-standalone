@@ -73,6 +73,11 @@ final class JSONLWatcher {
 
         let candidates: [(URL, Date, TimeInterval)] = files
             .filter { $0.pathExtension == "jsonl" }
+            // Skip sub-agent transcripts (`agent-<id>.jsonl`): they're the
+            // execution detail of a delegated Agent/Task, not a user-facing
+            // session. Tracking them would spawn phantom squares whose turn-end
+            // fires its own spurious finish shell.
+            .filter { !$0.lastPathComponent.hasPrefix("agent-") }
             .compactMap { url in
                 let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                     .contentModificationDate ?? .distantPast

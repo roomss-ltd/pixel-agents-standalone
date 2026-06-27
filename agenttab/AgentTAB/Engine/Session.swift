@@ -17,12 +17,20 @@ struct Session: Identifiable, Equatable {
     var activeToolIds: Set<String>
     var activeToolNames: [String: String]    // toolId -> toolName
     var subagentTools: [String: Set<String>]
-    /// Number of outstanding `Task`/`Agent` (sub-agent) tool calls seen on the
-    /// hook stream. While > 0 the main agent is delegating, so its sub-agents'
-    /// own tool hooks — which arrive with the SAME `session_id` and no
-    /// sidechain flag — are coalesced instead of churning this session's
-    /// activity. Reset to 0 on a new prompt / Stop.
+    /// Number of outstanding sub-agents (spawned via the `Agent`/`Task` tool).
+    /// Opened by `PreToolUse(Agent)` and closed by `SubagentStop` — NOT by the
+    /// Agent tool's `PostToolUse`, which can resolve before the sub-agent's work
+    /// actually ends. While > 0 the main agent is delegating, so its sub-agents'
+    /// own tool hooks — which arrive with the SAME `session_id`/pane and no
+    /// distinguishing flag — are coalesced instead of churning this session's
+    /// activity. Reset to 0 on a new prompt / hard interrupt.
     var delegatingDepth: Int
+    /// True when the main agent's turn ended (`Stop`) while sub-agents were
+    /// still outstanding. The session is NOT marked done yet — it holds
+    /// "delegating" until the last `SubagentStop` (or the watchdog) fires the
+    /// single completion. This is what keeps the orchestrator's square lit while
+    /// its background sub-agents finish the work.
+    var awaitingSubagentsAfterStop: Bool
     var lastUpdate: Date
     var terminalKind: TerminalKind
     /// True when this session was surfaced from a stale jsonl file at
@@ -47,6 +55,7 @@ struct Session: Identifiable, Equatable {
         self.activeToolNames = [:]
         self.subagentTools = [:]
         self.delegatingDepth = 0
+        self.awaitingSubagentsAfterStop = false
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)
         self.isHistorical = false

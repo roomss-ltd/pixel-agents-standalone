@@ -401,7 +401,40 @@ final class ActivityEngine: ObservableObject {
         // spread across each rolling 2-minute window.
         urgentReminderTimer = Timer.publish(every: 30, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.checkUrgentReminders() }
+            .sink { [weak self] _ in
+                self?.checkUrgentReminders()
+                self?.settleStaleDelegations()
+            }
+    }
+
+    /// How long a Stopped-but-still-delegating session may stay silent before
+    /// the watchdog assumes a `SubagentStop` was dropped and settles it. Kept
+    /// deliberately long: a legitimately long-running sub-agent tool emits NO
+    /// hooks while it runs, so a short window would settle it early. Tunable
+    /// once the raw-hook log tells us the real drop rate.
+    static let delegationWatchdog: TimeInterval = 300   // 5 min
+
+    /// Backstop for a dropped `SubagentStop`. Only touches sessions where the
+    /// main already `Stop`ped (so they're purely waiting on sub-agents) and
+    /// which have gone fully silent past `delegationWatchdog`. Fires the single
+    /// completion once; the later (real) SubagentStop finds depth 0 and no-ops,
+    /// so this can never double-fire the shell.
+    private func settleStaleDelegations() {
+        let now = Date()
+        for index in sessions.indices {
+            var session = sessions[index]
+            guard session.delegatingDepth > 0, session.awaitingSubagentsAfterStop else { continue }
+            let last = lastHookEvent[session.claudeSessionId] ?? session.lastUpdate
+            guard now.timeIntervalSince(last) > Self.delegationWatchdog else { continue }
+            let old = session.activity
+            session.delegatingDepth = 0
+            session.awaitingSubagentsAfterStop = false
+            session.activity = .done
+            session.lastUpdate = now
+            sessions[index] = session
+            AgentLog.engine.info("delegation-watchdog settled session=\(session.claudeSessionId, privacy: .public) — assumed dropped SubagentStop")
+            notifySessionStateChange(session, oldActivity: old, source: .hook)
+        }
     }
 
     /// Fire a pink reminder for `.urgent` sessions that have finished —
@@ -570,6 +603,17 @@ final class ActivityEngine: ObservableObject {
         let oldActivity = sessions[index].activity
         var session = sessions[index]
 
+        // TEMP (verification): log every raw hook BEFORE any early-return, so a
+        // real orchestrator run reveals the true ordering of PreToolUse(Agent) /
+        // SubagentStop / Stop and confirms SubagentStop is 1:1 with Agent calls.
+        // View: log show --debug --predicate 'subsystem == "com.roomss.agenttab"'
+        AgentLog.engine.debug("rawhook session=\(payload.sessionId, privacy: .public) event=\(payload.hookEvent, privacy: .public) tool=\(payload.toolName ?? "-", privacy: .public) depth=\(session.delegatingDepth) awaiting=\(session.awaitingSubagentsAfterStop)")
+        // Heartbeat stamped up-front so even IGNORED sub-agent tool hooks keep
+        // the session "alive" for the delegation watchdog (and keep the JSONL
+        // suppression active so the transcript can't mark the main done while
+        // sub-agents are mid-flight).
+        lastHookEvent[payload.sessionId] = Date()
+
         switch payload.hookEvent {
         case "SessionStart":
             session.activity = .initState
@@ -577,6 +621,7 @@ final class ActivityEngine: ObservableObject {
             session.activity = .thinking
             session.currentTool = nil
             session.delegatingDepth = 0   // new turn — no sub-agents outstanding
+            session.awaitingSubagentsAfterStop = false
         case "PreToolUse":
             guard let name = payload.toolName else { break }
             if name == "Task" || name == "Agent" {
@@ -605,17 +650,16 @@ final class ActivityEngine: ObservableObject {
         case "PostToolUse", "PostToolUseFailure":
             let name = payload.toolName
             if let name, name == "Task" || name == "Agent" {
-                // A sub-agent run returned to the main agent.
-                session.delegatingDepth = max(0, session.delegatingDepth - 1)
+                // The Agent TOOL returned to the main agent. We deliberately do
+                // NOT decrement the delegation counter here — `SubagentStop`
+                // owns that. The tool can resolve BEFORE the sub-agent's work
+                // actually ends (early/async resolve); decrementing here would
+                // un-bracket the sub-agent's still-incoming tool hooks and
+                // re-create the reload/shoot churn. Just clear the tool chip and
+                // stay "delegating" until SubagentStop.
                 let syntheticId = "hook:\(name)"
                 session.activeToolNames.removeValue(forKey: syntheticId)
                 session.activeToolIds.remove(syntheticId)
-                // Only resume "thinking" once the LAST sub-agent has returned;
-                // otherwise stay on the Task tool (parallel delegation).
-                if session.delegatingDepth == 0 {
-                    session.activity = .thinking
-                    session.currentTool = nil
-                }
             } else if session.delegatingDepth > 0 {
                 return   // sub-agent tool completion — ignore for main activity
             } else {
@@ -629,16 +673,45 @@ final class ActivityEngine: ObservableObject {
             }
         case "PermissionRequest":
             session.activity = .waiting
-        case "Stop", "ManualInterrupt":
+        case "Stop":
+            // The MAIN agent's turn ended. If sub-agents are still outstanding,
+            // do NOT mark done or fire the shell — the orchestrated unit of work
+            // isn't finished. Hold "delegating" and let the final SubagentStop
+            // (or the watchdog) fire the single completion.
+            if session.delegatingDepth > 0 {
+                session.awaitingSubagentsAfterStop = true
+                session.lastUpdate = Date()
+                sessions[index] = session
+                return
+            }
             session.activity = .done
             session.delegatingDepth = 0
+            session.awaitingSubagentsAfterStop = false
             // Lingers as .done; the .idle decay timer is M5's responsibility.
+        case "ManualInterrupt":
+            // Hard stop — the user interrupted, which cancels the in-flight
+            // Agent tool and its sub-agents too. Settle immediately.
+            session.activity = .done
+            session.delegatingDepth = 0
+            session.awaitingSubagentsAfterStop = false
         case "SubagentStop":
-            // A SUB-agent finished — NOT the main agent. The old code merged
-            // this with Stop, marking the whole session done on every
-            // sub-agent exit (false completions). Leave the main agent's
-            // activity to its own Stop / PostToolUse(Task).
-            return
+            // A sub-agent finished. This — not PostToolUse(Agent) — is the
+            // reliable close bracket for one delegated unit, so it owns the
+            // decrement. When the LAST one closes we either resume the main
+            // (it's still going) or, if the main already Stopped, fire the
+            // single true completion.
+            guard session.delegatingDepth > 0 else { return }   // spurious / already settled
+            session.delegatingDepth -= 1
+            if session.delegatingDepth == 0 {
+                if session.awaitingSubagentsAfterStop {
+                    session.activity = .done                    // ← the one finish shell
+                    session.awaitingSubagentsAfterStop = false
+                } else {
+                    session.activity = .thinking                // control returns to the main
+                    session.currentTool = nil
+                }
+            }
+            // depth still > 0 → other sub-agents running; stay delegating.
         case "SessionEnd":
             sessions.remove(at: index)
             sessionsByJsonlURL = sessionsByJsonlURL.filter { $0.value != id }
