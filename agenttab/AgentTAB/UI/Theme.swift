@@ -92,6 +92,13 @@ enum Theme {
         static let restingHover  = Color.white.opacity(0.030)
         static let restingBorder = Color.clear
 
+        // Dormant card — "older finished" sessions you haven't touched in a
+        // long while. A neutral, desaturated GRAY (no green) so they recede
+        // and read as "done with, ignore me" at a glance.
+        static let dormantBg     = Color.white.opacity(0.045)
+        static let dormantHover  = Color.white.opacity(0.075)
+        static let dormantBorder = Color.white.opacity(0.10)
+
         // Older row backwards-compat (legacy rows still reference these names).
         static let waitingBg     = attentionBg
         static let waitingBorder = attentionBorder

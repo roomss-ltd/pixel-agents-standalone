@@ -39,26 +39,28 @@ enum Priority: Int, CaseIterable, Codable {
         }
     }
 
-    /// Neon palette: Sidequest is white, Low is neon yellow, Medium +
-    /// High are neon blue (Medium slightly dimmed so the pair still
-    /// reads as a hierarchy), Urgent is neon red. All three accent
-    /// hues are deliberately light, bright tones so they glow against
-    /// the pitch-black panel.
+    /// Neon palette, deliberately kept OUT of the busy state-color hues
+    /// (blue = in-progress, amber = waiting, green = done) so a card's
+    /// priority never collides with what it's doing: Sidequest is electric
+    /// CYAN ("for fun, because I want to" — playful, far from the done
+    /// green), Low is neon yellow, Medium + High are VIOLET (Medium dimmed
+    /// so the pair still reads as a hierarchy), Urgent is a true red. All
+    /// are vivid so they glow against the pitch-black panel.
     var color: Color {
         switch self {
-        case .sidequest: return .white
+        case .sidequest: return Priority.neonCyan
         case .low:       return Priority.neonYellow
-        case .medium:    return Priority.neonBlue.opacity(0.72)
-        case .high:      return Priority.neonBlue
+        case .medium:    return Priority.neonViolet.opacity(0.62)
+        case .high:      return Priority.neonViolet
         case .urgent:    return Priority.neonRed
         }
     }
 
-    /// Saturated neon accents owned by Priority — the Theme palette
-    /// only has amber and a darker blue. These are deliberately vivid
-    /// (not pale): the glow halo in `AgentRow.priorityMenu` only reads
-    /// as "neon" when the base colour itself is saturated.
+    /// Saturated neon accents owned by Priority. Cyan/violet/red are chosen
+    /// to sit far from the state hues (blue/amber/green) so priority and
+    /// activity are always distinguishable at a glance.
+    static let neonCyan   = Color(red: 0x18 / 255.0, green: 0xDC / 255.0, blue: 0xE8 / 255.0)
     static let neonYellow = Color(red: 0xFF / 255.0, green: 0xF5 / 255.0, blue: 0x70 / 255.0)
-    static let neonBlue   = Color(red: 0x84 / 255.0, green: 0xC5 / 255.0, blue: 0xFF / 255.0)
-    static let neonRed    = Color(red: 0xFF / 255.0, green: 0x8C / 255.0, blue: 0x8C / 255.0)
+    static let neonViolet = Color(red: 0xA6 / 255.0, green: 0x6C / 255.0, blue: 0xFF / 255.0)
+    static let neonRed    = Color(red: 0xFF / 255.0, green: 0x4D / 255.0, blue: 0x4D / 255.0)
 }

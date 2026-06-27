@@ -6,6 +6,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var notchPanel: NotchPanel?
+    var dockPanel: SessionDockPanel?
     var engine = ActivityEngine()
     let updater = UpdaterCoordinator()
     let screenTracker = ScreenTracker()
@@ -44,6 +45,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastInstalledGeometry = NotchGeometry.detect(for: screenTracker.activeScreen)
         panel.orderFront(nil)
 
+        // Always-on session dock at the bottom-right of the active screen.
+        let dock = SessionDockPanel()
+        dockPanel = dock
+        dock.install(engine: engine)
+        dock.reposition(to: screenTracker.activeScreen)
+        dock.orderFront(nil)
+
         // Follow the cursor across displays. ScreenTracker debounces the
         // mouseMoved firehose to 150ms and only publishes when the
         // resolved screen actually changes.
@@ -62,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.installRootView(for: screen, into: panel)
                     panel.reposition(to: screen)
                 }
+                // The dock follows the cursor across displays too.
+                self.dockPanel?.reposition(to: screen)
                 self.evaluateAutoHide(panel: panel)
             }
 

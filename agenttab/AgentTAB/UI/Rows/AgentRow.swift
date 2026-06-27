@@ -15,6 +15,10 @@ import SwiftUI
 struct AgentRow: View {
     let session: Session
     var variant: Variant = .resting
+    /// "Older finished" rows: long-untouched sessions that should recede
+    /// to a neutral gray so they stop competing for attention — unless
+    /// they carry an above-default priority, which keeps its color.
+    var dormant: Bool = false
     var isEdit: Bool = false
     var onClick: () -> Void = {}
     var onUnlink: () -> Void = {}
@@ -49,7 +53,7 @@ struct AgentRow: View {
                 id: chipId,
                 accent: chipAccent,
                 size: .xs,
-                muted: variant == .resting
+                muted: variant == .resting || (dormant && !elevatedDormant)
             )
 
             VStack(alignment: .leading, spacing: 1) {
@@ -286,7 +290,19 @@ struct AgentRow: View {
 
     // MARK: - Tinting + colors
 
+    /// A dormant row whose priority is above the default — the priority
+    /// color overrides the gray so important-but-old work still stands out.
+    private var elevatedDormant: Bool {
+        dormant && session.priority.rawValue > Priority.default.rawValue
+    }
+
     private var backgroundColor: Color {
+        if dormant {
+            if elevatedDormant {
+                return session.priority.color.opacity(isHovered ? 0.16 : 0.11)
+            }
+            return isHovered ? Theme.RowTint.dormantHover : Theme.RowTint.dormantBg
+        }
         switch variant {
         case .active:    return Theme.RowTint.activeBg
         case .attention: return Theme.RowTint.attentionBg
@@ -296,6 +312,10 @@ struct AgentRow: View {
     }
 
     private var borderColor: Color {
+        if dormant {
+            if elevatedDormant { return session.priority.color.opacity(0.34) }
+            return Theme.RowTint.dormantBorder
+        }
         switch variant {
         case .active:    return Theme.RowTint.activeBorder
         case .attention: return Theme.RowTint.attentionBorder
@@ -305,6 +325,8 @@ struct AgentRow: View {
     }
 
     private var textColor: Color {
+        // Dormant, low-priority rows read dimmest of all.
+        if dormant && !elevatedDormant { return Theme.textStrong.opacity(0.5) }
         switch variant {
         case .resting:  return Theme.textStrong.opacity(0.65)
         case .finished: return Theme.textStrong.opacity(0.85)

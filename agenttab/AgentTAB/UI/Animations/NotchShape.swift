@@ -327,10 +327,13 @@ struct NotchStatusLine: View {
             withAnimation(.easeInOut(duration: 0.25)) {
                 activeShooter = shooterOnLeft ? .right : .both
             }
+            // Start sound (reload) fires immediately on prompt send — no delay.
+            // Finish sound (shot) stays synced to the comet firing below.
+            if starting { SoundFX.play(sound) }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(Self.shootDelay))
                 siphonID += 1        // FIRE — comet sweeps the rail...
-                SoundFX.play(sound)  // ...in sync with the SFX.
+                if !starting { SoundFX.play(sound) }  // ...in sync with the SFX.
                 try? await Task.sleep(for: .milliseconds(200))
                 withAnimation(.easeOut(duration: 0.3)) {
                     showShoot = false
@@ -937,6 +940,32 @@ struct CrateBadge: View {
     }
 }
 
+/// Attention badge: the exact same squircle box as `CrateBadge`, but with
+/// a pause glyph in the middle instead of a count — shown when a session
+/// is waiting on the user (paused, needs input).
+struct CratePauseBadge: View {
+    let color: Color
+    let size: CGFloat
+
+    var body: some View {
+        // Hand-drawn pause (two capsules) so the glyph sits dead-center in
+        // the square and we control the gap between the bars precisely.
+        HStack(spacing: size * 0.13) {
+            Capsule().fill(color).frame(width: size * 0.13, height: size * 0.40)
+            Capsule().fill(color).frame(width: size * 0.13, height: size * 0.40)
+        }
+        .frame(width: size, height: size)
+        .background(
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(color.opacity(0.20))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .stroke(color.opacity(0.50), lineWidth: 0.7)
+        )
+    }
+}
+
 /// Port of the claude-tab-status coffee idle icon (Lucide "coffee"): a stroked
 /// cup with three steam wisps that rise, fade, and draw in via a dash sweep on
 /// a 4.8s loop. Used as the right-wing icon when nothing is in progress.
@@ -1442,6 +1471,8 @@ enum SVGAsset {
 enum SoundFX {
     static let reload = make("gun-reload-3.mp3", volume: 0.5)
     static let shot = make("gun-shot.mp3", volume: 1.0)
+    /// Played when a session starts waiting on the user (needs input).
+    static let waiting = make("awp-shot.mp3", volume: 1.0)
 
     /// `volume` is 0.0–1.0 (fraction of the file's full level).
     private static func make(_ filename: String, volume: Float = 1.0) -> AVAudioPlayer? {
