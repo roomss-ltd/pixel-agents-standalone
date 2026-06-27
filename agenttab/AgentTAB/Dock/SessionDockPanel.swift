@@ -247,6 +247,11 @@ private struct DockSizeKey: PreferenceKey {
     }
 }
 
+/// Sentinel key under which the revolver publishes its muzzle point into the
+/// shared `SquareCenterKey` anchor dictionary — so the cannon layer can aim
+/// the feed tracer, park the smoke, and float the toast all off one anchor.
+private let dockMuzzleAnchorID = UUID()
+
 struct SessionDockView: View {
     @EnvironmentObject var engine: ActivityEngine
     @EnvironmentObject var dock: DockState
@@ -256,7 +261,12 @@ struct SessionDockView: View {
     private static let gap: CGFloat = 6
     private static let pad: CGFloat = 7
     /// Squares per row before wrapping up into a new row.
-    private static let perRow: Int = 8
+    private static let perRow: Int = 7
+    /// Headroom reserved above the strip while a toast is live, so the muzzle
+    /// smoke + card have room to erupt upward (the panel grows up).
+    private static let deckHeadroom: CGFloat = 120
+    /// How far above the muzzle the toast card parks (centre offset).
+    private static let cardRise: CGFloat = 88
 
     // MARK: Cannon / toast state
     //
@@ -280,6 +290,10 @@ struct SessionDockView: View {
     /// Bumped on every event so a delayed launch can tell it's been
     /// superseded by a newer one during the pre-shot delay.
     @State private var fireGen = 0
+    /// Bumped on every notification to make the revolver FIRE (cylinder click
+    /// + muzzle flash). The gun is now the single muzzle every toast comes out
+    /// of, so this — not the in-flight count — is the authoritative "fire".
+    @State private var revolverFire = 0
 
     /// Matches the notch shooter's `shootDelay`: the gun "poses" this long
     /// before the gunshot sound + bullet fire, so the dock shell launches on
@@ -287,11 +301,23 @@ struct SessionDockView: View {
     private static let shootDelay: TimeInterval = 0.5
 
     private var sessions: [Session] {
-        // Order by urgency only (higher priority wins). Equal priorities keep
-        // the engine's existing order — Swift's sort is stable — so squares
-        // don't reshuffle on every activity tick the way a recency tiebreak
-        // made them.
-        engine.displaySessions.sorted { $0.priority.rawValue > $1.priority.rawValue }
+        // Positional order — by Zellij tab number — so a square's position is
+        // stable and mirrors the terminal tab bar's muscle memory. Urgency is
+        // surfaced by colour/glow, NOT by moving things around (which broke
+        // "I just know where it is").
+        return engine.displaySessions
+            .map { (session: $0, key: tabOrder($0)) }
+            .sorted { $0.key < $1.key }
+            .map(\.session)
+    }
+
+    /// (major, minor) sort key from the Zellij tab label: "6.1" → (6, 1),
+    /// "4" → (4, 0). Sessions without a numeric label sort to the end.
+    private func tabOrder(_ session: Session) -> (Int, Int) {
+        let parts = engine.displayLabel(for: session).split(separator: ".")
+        let major = parts.first.flatMap { Int($0) } ?? Int.max
+        let minor = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+        return (major, minor)
     }
 
     /// Cheap identity/order token for the layout animation. Hashes the session
@@ -305,32 +331,39 @@ struct SessionDockView: View {
 
     var body: some View {
         let sessions = self.sessions
-        // The toast slot sits ABOVE the strip; both hug the trailing (screen)
-        // edge. The panel is anchored bottom-right, so when the slot gains
-        // height the window grows UPWARD — exactly where we want the toast.
+        // The muzzle deck. Below: the strip (chevron · revolver · squares),
+        // right-glued. Above: headroom the smoke + card erupt into. The panel
+        // is bottom-anchored, so reserving headroom grows the window UPWARD.
         VStack(alignment: .trailing, spacing: 0) {
-            toastLayer
+            if dock.collapsed {
+                // Collapsed: no revolver on screen to fire from — fall back to
+                // a plain card riding the trailing edge.
+                if toast != nil { collapsedToastCard }
+            } else if toast != nil {
+                Color.clear.frame(width: DockToastCard.width, height: Self.deckHeadroom)
+            }
             strip(sessions)
         }
-        // Tracers are drawn over everything, flying from each square's centre
-        // (resolved from its anchor preference) up into the toast slot. The
-        // overlay never affects layout, so it can't grow the panel itself.
+        // FX layer (non-interactive): the muzzle smoke + the tracer that feeds
+        // the gun from the finishing square. Both aim at the revolver muzzle,
+        // published into the same anchor dict under `dockMuzzleAnchorID`.
         .overlayPreferenceValue(SquareCenterKey.self) { centers in
             GeometryReader { geo in
+                let muzzle = dock.collapsed ? nil : centers[dockMuzzleAnchorID].map { geo[$0] }
                 ZStack {
-                    // Muzzle smoke — lingers at the firing square for the
-                    // whole notification (the shell itself is gone in a
-                    // blink), then dissipates. Driven off `toast` so it
-                    // lives exactly as long as the notification.
-                    if let toast, let anchor = centers[toast.sessionId] {
-                        SmokePuff(origin: geo[anchor], restartKey: toast.id)
+                    // Smoke rises from the GUN — the spent round's exhaust
+                    // collects at the muzzle for the whole notification.
+                    if let toast, let m = muzzle {
+                        SmokePuff(origin: m, restartKey: toast.id)
                             .id(toast.id)
                     }
+                    // The gun fires the round UP toward the notification — the
+                    // bullet leaves the muzzle and the card pops where it lands.
                     ForEach(shots) { shot in
-                        if let anchor = centers[shot.sessionId] {
+                        if let m = muzzle {
                             CannonProjectile(
-                                start: geo[anchor],
-                                target: toastTarget(in: geo.size),
+                                start: m,
+                                target: cardLanding(muzzle: m, panelWidth: geo.size.width),
                                 accent: shot.accent
                             )
                         }
@@ -338,6 +371,21 @@ struct SessionDockView: View {
                 }
             }
             .allowsHitTesting(false)
+        }
+        // Card layer (interactive): the toast floats up out of the muzzle
+        // smoke. Kept in its own overlay so it stays tappable while the FX
+        // layer above ignores hits.
+        .overlayPreferenceValue(SquareCenterKey.self) { centers in
+            GeometryReader { geo in
+                if !dock.collapsed, let toast, let anchor = centers[dockMuzzleAnchorID] {
+                    let m = geo[anchor]
+                    DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
+                        .opacity(cardShown ? 1 : 0)
+                        .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottom)
+                        .position(x: cardCenterX(muzzleX: m.x, panelWidth: geo.size.width),
+                                  y: m.y - Self.cardRise)
+                }
+            }
         }
         .fixedSize()
         .background(
@@ -353,11 +401,47 @@ struct SessionDockView: View {
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
     }
 
+    /// Card centre X when floating above the muzzle: rise off the muzzle and
+    /// lean right (the card is far wider than the gun), clamped inside the
+    /// panel so it never spills past either edge.
+    private func cardCenterX(muzzleX: CGFloat, panelWidth: CGFloat) -> CGFloat {
+        let w = DockToastCard.width
+        let ideal = muzzleX + w / 2 - 24
+        return min(max(ideal, w / 2), panelWidth - w / 2)
+    }
+
+    /// Where the bullet from the muzzle should land: the card's bottom-centre,
+    /// so the round "delivers" the card and it unfolds upward from there (the
+    /// card's scale anchor is its bottom edge).
+    private func cardLanding(muzzle m: CGPoint, panelWidth: CGFloat) -> CGPoint {
+        CGPoint(x: cardCenterX(muzzleX: m.x, panelWidth: panelWidth),
+                y: m.y - Self.cardRise + DockToastCard.height / 2)
+    }
+
     /// The strip itself — the always-present horizontal handle + squares,
     /// inside the rounded black container with its three-sided border.
     private func strip(_ sessions: [Session]) -> some View {
-        HStack(spacing: Self.gap) {
-            chevron
+        // Loaded rounds = agents in flight (working, or waiting on you).
+        let inFlight = sessions.reduce(into: 0) { n, s in
+            switch s.activity {
+            case .thinking, .tool, .initState, .waiting: n += 1
+            default: break
+            }
+        }
+        let needsYou = sessions.contains { $0.activity == .waiting }
+        // The revolver scales with the number of square rows so it never looks
+        // dwarfed by a tall two-row magazine: its frame tracks the grid height.
+        let rows = dock.collapsed
+            ? 1
+            : max(1, Int(ceil(Double(sessions.count) / Double(Self.perRow))))
+        let gridH = CGFloat(rows) * Self.square + CGFloat(rows - 1) * Self.gap
+        let revSize = (gridH * 0.95 + 22) * 0.85   // 15% smaller than the grid-tracked size
+        let revolver = RevolverCylinder(inFlight: inFlight, needsYou: needsYou,
+                                        firePulse: revolverFire, size: revSize)
+        // No chevron in either state (⌃⌥⌘V toggles). Collapsed shows just the
+        // revolver; expanded adds the squares.
+        return HStack(spacing: Self.gap) {
+            revolver
             if !dock.collapsed {
                 grid(sessions)
             }
@@ -378,36 +462,21 @@ struct SessionDockView: View {
                         .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
                 )
         )
+        // Room for the flare "horns" to extend beyond the box without the
+        // content-sized panel clipping them.
+        .padding(.vertical, 7)
     }
 
-    /// TEMP: hide the card so the cannon tracer is visible on its own. The
-    /// slot height is still reserved (clear placeholder) so the shell has
-    /// somewhere to fly. Flip back to `true` to restore the popup.
-    private static let showToastCard = false
-
-    /// The notification card slot. While a toast exists the slot keeps its
-    /// full height (so the tracer has room to fly into) even before the card
-    /// is revealed — `cardShown` only drives the pop-in, not the layout.
+    /// Collapsed fallback card. With the revolver hidden there's no muzzle to
+    /// erupt from, so the card just rides the trailing edge above the handle.
     @ViewBuilder
-    private var toastLayer: some View {
+    private var collapsedToastCard: some View {
         if let toast {
-            if Self.showToastCard {
-                DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
-                    .opacity(cardShown ? 1 : 0)
-                    .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottomTrailing)
-                    .padding(.bottom, Self.gap)
-            } else {
-                // Reserve headroom for the smoke plume to rise into (the card
-                // is hidden, so we don't need its footprint — just height).
-                Color.clear
-                    .frame(width: DockToastCard.width, height: 80)
-            }
+            DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
+                .opacity(cardShown ? 1 : 0)
+                .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottomTrailing)
+                .padding(.bottom, Self.gap)
         }
-    }
-
-    /// Where a tracer should land: the centre of the (trailing-aligned) card.
-    private func toastTarget(in size: CGSize) -> CGPoint {
-        CGPoint(x: size.width - DockToastCard.width / 2, y: DockToastCard.height / 2)
     }
 
     // MARK: Cannon firing
@@ -441,15 +510,19 @@ struct SessionDockView: View {
         cardShown = false
         cardFlash = false
         toast = next
+        // Fire the gun — cylinder click + muzzle flash. Every notification,
+        // whatever its variant, comes out of this one muzzle.
+        revolverFire += 1
 
         if !dock.collapsed {
-            // Expanded: fire the cannon. The square's own state-change bounce
-            // already supplies the recoil "kick"; this adds the projectile.
+            // The finishing square fires a tracer UP into the muzzle (the
+            // square's own state-change bounce already supplies the recoil);
+            // the smoke billows from the gun and the card lifts out of it.
             let shot = CannonShot(sessionId: payload.sessionId, accent: accent)
             shots = [shot]
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
                 guard toast?.id == next.id else { return }
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.52)) { cardShown = true }
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.58)) { cardShown = true }
                 cardFlash = true
                 withAnimation(.easeOut(duration: 0.5)) { cardFlash = false }
             }
@@ -494,11 +567,13 @@ struct SessionDockView: View {
         }
     }
 
+    /// Themed status line for the shell card — short, naturally-capitalised
+    /// phrasing (not all-caps, not all-lowercase).
     static func headline(for v: DockToastVariant) -> String {
         switch v {
-        case .attention: return "Needs input"
-        case .success:   return "Task complete"
-        case .urgent:    return "Still waiting"
+        case .attention: return "Needs You"
+        case .success:   return "Finished · Clear"
+        case .urgent:    return "Still Hot"
         }
     }
 
@@ -515,25 +590,10 @@ struct SessionDockView: View {
         )
     }
 
-    /// Far-left handle: collapses the dock to just itself (so you can reach
-    /// whatever it was covering) or expands it back. Mirrors the ⌃⌥⌘V
-    /// global shortcut.
-    private var chevron: some View {
-        Button {
-            dock.toggle()
-        } label: {
-            Image(systemName: dock.collapsed ? "chevron.left" : "chevron.right")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(width: dock.collapsed ? 16 : Self.square * 0.5, height: Self.square)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(dock.collapsed ? "Expand sessions (⌃⌥⌘V)" : "Collapse sessions (⌃⌥⌘V)")
-    }
-
-    /// Sessions laid out left-to-right, wrapping into stacked rows. Row 0
-    /// sits at the BOTTOM (closest to the corner); overflow grows upward.
+    /// Sessions laid out left-to-right, wrapping into stacked rows. Row 0 (the
+    /// first, fully-filled row) sits at the TOP; new sessions overflow onto
+    /// fresh rows BELOW it, filling each row from the LEFT (a partial last row
+    /// sits under the first column, not flush to the right edge).
     @ViewBuilder
     private func grid(_ sessions: [Session]) -> some View {
         if sessions.isEmpty {
@@ -542,8 +602,8 @@ struct SessionDockView: View {
             let rows = stride(from: 0, to: sessions.count, by: Self.perRow).map {
                 Array(sessions[$0 ..< min($0 + Self.perRow, sessions.count)])
             }
-            VStack(alignment: .trailing, spacing: Self.gap) {
-                ForEach(Array(rows.enumerated().reversed()), id: \.offset) { _, row in
+            VStack(alignment: .leading, spacing: Self.gap) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     HStack(spacing: Self.gap) {
                         ForEach(row) { session in
                             SessionSquare(
@@ -555,7 +615,7 @@ struct SessionDockView: View {
                                 name: engine.displayName(for: session),
                                 activity: session.activity,
                                 pulsing: session.activity == .waiting,
-                                subdued: Self.isDormant(session) && !Self.isElevated(session),
+                                subdued: !Self.isLit(session),
                                 onTap: { engine.focus(session) }
                             )
                             // Publish this square's centre so the cannon can
@@ -630,17 +690,31 @@ struct SessionDockView: View {
     /// elevated agent paints its priority color in place of green;
     /// everything else stays green, or gray once it goes dormant.
     static func bodyColor(for session: Session) -> Color {
+        // High/Urgent always show their priority colour — a deliberate "this
+        // matters" that stays visible in any state.
+        if isElevated(session) { return session.priority.color }
         switch session.activity {
-        case .thinking, .tool, .waiting, .initState:
-            return color(for: session.activity)
-        case .done, .idle:
-            // High/Urgent keep their priority color even when old.
-            if isElevated(session) { return session.priority.color }
-            // Everything else greys out once dormant.
-            if isDormant(session) { return dormantGray }
-            // Sidequest ("just for fun") finishes teal instead of green.
-            if session.priority == .sidequest { return session.priority.color }
-            return color(for: session.activity)
+        case .waiting:
+            return color(for: .waiting)               // amber — needs your input
+        case .done:
+            return isDormant(session) ? dormantGray : doneGreen   // green — just finished
+        case .idle:
+            return dormantGray                        // settled — nothing for you
+        case .thinking, .tool, .initState:
+            return Theme.Activity.tool                // blue — working (rendered quiet)
+        }
+    }
+
+    /// "Lit" squares pull focus (full colour + a resting glow): they want you
+    /// — waiting for input, or freshly finished — plus High/Urgent which stay
+    /// lit in any state. Working / idle / dormant squares stay quiet so a
+    /// glance lands only on what needs you.
+    static func isLit(_ session: Session) -> Bool {
+        if isElevated(session) { return true }
+        switch session.activity {
+        case .waiting: return true
+        case .done:    return !isDormant(session)
+        default:       return false
         }
     }
 
@@ -710,23 +784,36 @@ private struct SessionSquare: View {
     var body: some View {
         // Dormant squares keep the quiet original treatment; live ones get
         // a heavier fill + border so their color reads strongly.
-        let fillOpacity = subdued ? (hover ? 0.34 : 0.22) : (hover ? 0.46 : 0.34)
-        let borderOpacity = subdued ? (hover ? 0.95 : 0.60) : (hover ? 1.0 : 0.88)
+        // Wide gap between quiet (working/idle/dormant) and lit (needs-you /
+        // done / elevated) so the glance lands on what matters.
+        // Working squares get their OWN tier: a real blue fill (not the faint
+        // 0.10 that made them blur into the dormant grays — the only tell used
+        // to be the subtle border). Resting/dormant stay quiet; needs-you / done
+        // / elevated stay fully lit.
+        let working: Bool = {
+            switch activity {
+            case .thinking, .tool, .initState: return true
+            default: return false
+            }
+        }()
+        let strongEdge = working || !subdued   // full-weight border + a resting glow
+        let fillOpacity: Double = working
+            ? (hover ? 0.48 : 0.34)
+            : (subdued ? (hover ? 0.22 : 0.10) : (hover ? 0.52 : 0.40))
+        let borderOpacity: Double = working
+            ? (hover ? 1.0 : 0.85)
+            : (subdued ? (hover ? 0.70 : 0.34) : (hover ? 1.0 : 0.95))
         return Button(action: onTap) {
-            VStack(spacing: 1) {
-                Text(initials)
-                    .font(.system(size: size * 0.38, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
+            VStack(spacing: 0) {
+                // The tab NUMBER is the hero — it's your Zellij jump key.
                 Text(number)
-                    .font(.system(size: size * 0.22, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: size * 0.46, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white)
                     .monospacedDigit()
-                // Stable identity stripe — learnable "who" signal.
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(identityColor)
-                    .frame(width: size * 0.46, height: size * 0.08)
-                    .padding(.top, 1)
-                    .shadow(color: identityColor.opacity(hover ? 0.8 : 0), radius: 3)
+                // Name token — a small confirmation label under the number.
+                Text(initials)
+                    .font(.system(size: size * 0.26, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
@@ -737,7 +824,7 @@ private struct SessionSquare: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                    .stroke(stateColor.opacity(borderOpacity), lineWidth: subdued ? 0.8 : 1.0)
+                    .stroke(stateColor.opacity(borderOpacity), lineWidth: strongEdge ? 1.0 : 0.8)
             )
             // State-change flash — a bright wash that decays away.
             .overlay(
@@ -759,7 +846,12 @@ private struct SessionSquare: View {
                     .blendMode(.plusLighter)
                     .allowsHitTesting(false)
             )
-            .shadow(color: stateColor.opacity(flash ? 0.85 : (hover ? 0.55 : 0)), radius: flash ? 7 : 5)
+            // Lit squares carry a resting halo so they pop; quiet ones glow
+            // only on hover.
+            .shadow(
+                color: stateColor.opacity(flash ? 0.9 : (strongEdge ? (hover ? 0.7 : 0.4) : (hover ? 0.3 : 0))),
+                radius: flash ? 7 : (strongEdge ? 6 : 4)
+            )
             .scaleEffect(hover ? 1.08 : 1.0)
             .offset(y: bounceY)
         }
@@ -813,6 +905,10 @@ private struct SessionSquare: View {
 private struct DockEdgeBorder: Shape {
     var radius: CGFloat = 14
     var inset: CGFloat = 0.75
+    /// Outward "flare" at the two screen-edge ends — like the macOS notch
+    /// shoulders: the line curls out and meets the screen edge tangentially
+    /// (vertical) instead of stopping in a flat 90° corner.
+    var flare: CGFloat = 6
 
     func path(in rect: CGRect) -> Path {
         let r = max(0, radius - inset)
@@ -820,14 +916,23 @@ private struct DockEdgeBorder: Shape {
         let right = rect.maxX
         let top = rect.minY + inset
         let bottom = rect.maxY - inset
+        let f = flare
 
         var p = Path()
-        p.move(to: CGPoint(x: right, y: top))                       // top-right (open)
+        // Top-right flare: start out on the screen edge ABOVE the body, then
+        // curl down into the top edge (meets the screen tangent to vertical).
+        p.move(to: CGPoint(x: right, y: top - f))
+        p.addQuadCurve(to: CGPoint(x: right - f, y: top),
+                       control: CGPoint(x: right, y: top))
         p.addArc(tangent1End: CGPoint(x: left, y: top),            // along top, round into…
                  tangent2End: CGPoint(x: left, y: bottom), radius: r)
         p.addArc(tangent1End: CGPoint(x: left, y: bottom),        // …down left, round into…
-                 tangent2End: CGPoint(x: right, y: bottom), radius: r)
-        p.addLine(to: CGPoint(x: right, y: bottom))                // …along bottom to the edge
+                 tangent2End: CGPoint(x: right - f, y: bottom), radius: r)
+        p.addLine(to: CGPoint(x: right - f, y: bottom))            // …along bottom toward the edge
+        // Bottom-right flare: curl out of the bottom edge and flare DOWN to the
+        // screen edge (mirror of the top).
+        p.addQuadCurve(to: CGPoint(x: right, y: bottom + f),
+                       control: CGPoint(x: right, y: bottom))
         return p
     }
 }
@@ -862,12 +967,21 @@ private struct SquareCenterKey: PreferenceKey {
     }
 }
 
-/// The notification card. Compact pill — task chip + headline + subline —
-/// styled to match the dock (near-black fill, accent edge + glow). Tapping it
-/// jumps to the originating terminal tab.
+/// The notification card. A clean, restrained dark card — no neon: a plain
+/// near-black body with a faint neutral border, a simple system font, and the
+/// bullet artwork on the left. The TAB NAME is the title, a short status line
+/// sits under it (tinted by the variant), and a dim tab-number rides the right.
 private struct DockToastCard: View {
     static let width: CGFloat = 250
-    static let height: CGFloat = 46
+    static let height: CGFloat = 50
+    private static let radius: CGFloat = 13
+
+    /// The bullet artwork (diagonal cartridge PNG), loaded once from Downloads.
+    private static let bulletImage: NSImage? = {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/bullet (1).png")
+        return NSImage(contentsOf: url)
+    }()
 
     let toast: DockToast
     let flash: Bool
@@ -875,55 +989,64 @@ private struct DockToastCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 9) {
-                Text(toast.taskId)
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(toast.accent.opacity(0.28))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(toast.accent.opacity(0.85), lineWidth: 1)
-                    )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(toast.headline)
-                        .font(.system(size: 12, weight: .bold))
+            HStack(spacing: 10) {
+                bullet
+                VStack(alignment: .leading, spacing: 2) {
+                    // Title = the tab / agent name, in its natural case.
+                    Text(toast.project)
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    Text("\(toast.project) · \(toast.message)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .minimumScaleFactor(0.7)
+                    // Short status line — clean system font, variant-tinted.
+                    Text(toast.headline)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(toast.accent)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 6)
+                // Dim tab number, so you know which tab without clutter.
+                Text(toast.taskId)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .monospacedDigit()
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .frame(width: Self.width, height: Self.height)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.black.opacity(0.9))
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                    .fill(Color(white: 0.10).opacity(0.96))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(toast.accent.opacity(0.75), lineWidth: 1)
+                // Faint neutral border — no neon glow.
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
             )
             .overlay(
-                // Impact wash fired the moment the tracer lands.
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                // Soft impact wash the moment the bullet lands.
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                     .fill(.white)
-                    .opacity(flash ? 0.4 : 0)
+                    .opacity(flash ? 0.28 : 0)
                     .blendMode(.plusLighter)
                     .allowsHitTesting(false)
             )
-            .shadow(color: toast.accent.opacity(0.35), radius: 10)
+            .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var bullet: some View {
+        if let img = Self.bulletImage {
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+        } else {
+            Color.clear.frame(width: 34, height: 34)
+        }
     }
 }
 
@@ -1029,6 +1152,264 @@ private struct CannonProjectile: View {
 }
 
 /// Small breathing dot in the corner of a square that needs the user.
+// MARK: - Revolver cylinder (prototype)
+
+/// The scalloped/fluted face of a revolver cylinder: a disc with a concave
+/// notch bitten out of the edge between each chamber. Built as one big circle
+/// plus N notch circles straddling the rim; fill with `FillStyle(eoFill: true)`
+/// so the overlaps subtract, leaving the flutes.
+private struct FlutedCylinder: Shape {
+    var count: Int = 6
+    var bodyR: CGFloat = 0.46          // outer (bump) radius, ratio of size
+    var notchR: CGFloat = 0.17         // scallop radius
+    var notchCenter: CGFloat = 0.52    // scallop centre distance (past the rim)
+
+    func path(in rect: CGRect) -> Path {
+        let d = min(rect.width, rect.height)
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let R = d * bodyR, nR = d * notchR, nC = d * notchCenter
+        var p = Path()
+        p.addEllipse(in: CGRect(x: c.x - R, y: c.y - R, width: 2 * R, height: 2 * R))
+        for i in 0 ..< count {
+            // Notches sit BETWEEN chambers (half-step offset).
+            let a: Double = (-90.0 + 360.0 / Double(count) * (Double(i) + 0.5)) * .pi / 180.0
+            let nx = c.x + nC * CGFloat(cos(a))
+            let ny = c.y + nC * CGFloat(sin(a))
+            p.addEllipse(in: CGRect(x: nx - nR, y: ny - nR, width: 2 * nR, height: 2 * nR))
+        }
+        return p
+    }
+}
+
+/// A face-on six-shooter that sits at the left of the dock. Loaded brass rounds
+/// = agents in flight (capped at 6; "+N" rides the speedloader). A round LOADS
+/// when an agent starts and FIRES (cylinder spins + muzzle flash, synced to the
+/// dock shell) when one finishes — the dock squares stay the roster, this is the
+/// theatrical action piece. One-shot animations + an energy-gated waiting pulse,
+/// so it costs nothing at rest.
+private struct RevolverCylinder: View {
+    let inFlight: Int
+    let needsYou: Bool
+    /// Bumped by the parent on every notification. The gun FIRES on its change
+    /// (cylinder click + muzzle flash) — decoupled from `inFlight` so a
+    /// "needs input" toast (which doesn't spend a round) still fires the gun.
+    var firePulse: Int = 0
+    var size: CGFloat = 38
+
+    /// Synced with the dock shell + notch gunshot so the spin lands on the beat.
+    private static let fireDelay: TimeInterval = 0.5
+
+    /// The cylinder silhouette — a black-on-transparent PNG (6 bores at ring
+    /// 0.29, bore r 0.125). Loaded once; tinted to steel and the transparent
+    /// bores let the brass rounds behind it show through. Loaded from Downloads
+    /// like the other preview art.
+    private static let cylinderImage: NSImage? = {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads").appendingPathComponent("revolver-cylinder.png")
+        return NSImage(contentsOf: url)
+    }()
+
+    @State private var loaded: [Bool] = Array(repeating: false, count: 6)
+    @State private var angle: Double = 0
+    @State private var flash = false
+    @State private var overflow = 0
+    @State private var spinGen = 0
+
+    var body: some View {
+        let d = size                 // overall frame — leaves a small margin for the muzzle flash
+        let cylD = d * 0.80          // the cylinder image fills most of the frame (tight padding)
+        let c = CGPoint(x: d / 2, y: d / 2)
+        let ringR = cylD * 0.29      // bore-centre ring (measured from the PNG)
+        let boreR = cylD * 0.122     // bore radius
+
+        return Button(action: spin) {
+            ZStack {
+                // The cylinder image and its loaded rounds rotate together, so
+                // the scalloped edge visibly turns on each spin / fire.
+                ZStack {
+                    // Brass rounds sit BEHIND the silhouette; the PNG's
+                    // transparent bores let them show through when loaded.
+                    ForEach(0 ..< 6, id: \.self) { i in
+                        if loaded[i] {
+                            brassRound(r: boreR)
+                                .position(pos(i, center: c, r: ringR))
+                        }
+                    }
+                    cylinderBody(d: cylD)
+                }
+                .frame(width: d, height: d)
+                .rotationEffect(.degrees(angle))
+
+                // Muzzle flash at the FIXED barrel (12 o'clock).
+                muzzleFlash(d: cylD).position(x: c.x, y: c.y - ringR)
+
+                // A live round waiting on YOU pulses amber at the barrel.
+                if needsYou {
+                    DecorativeTimeline(fps: 15) { ctx in
+                        let p = 0.5 + 0.5 * sin(ctx.date.timeIntervalSinceReferenceDate * 4)
+                        Circle()
+                            .stroke(Theme.Neon.amber, lineWidth: 1.5)
+                            .frame(width: boreR * 2.1, height: boreR * 2.1)
+                            .opacity(0.45 + 0.55 * p)
+                            .shadow(color: Theme.Neon.amber.opacity(p), radius: 3)
+                    }
+                    .position(x: c.x, y: c.y - ringR)
+                }
+
+                // Publish the muzzle point (12 o'clock) so the cannon layer can
+                // aim the feed tracer, park the smoke, and float the card here.
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .position(x: c.x, y: c.y - ringR)
+                    .anchorPreference(key: SquareCenterKey.self, value: .center) {
+                        [dockMuzzleAnchorID: $0]
+                    }
+            }
+            .frame(width: d, height: d)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onChange(of: firePulse) { old, new in
+            guard new != old, new > 0 else { return }
+            fireOnce()
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if overflow > 0 {
+                Text("+\(overflow)")
+                    .font(.system(size: d * 0.22, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 0.5)
+                    .background(Capsule().fill(Color.black.opacity(0.7)))
+                    .offset(x: 6, y: 3)
+            }
+        }
+        .onAppear {
+            loaded = (0 ..< 6).map { $0 < min(inFlight, 6) }
+            overflow = max(0, inFlight - 6)
+        }
+        .onChange(of: inFlight) { old, new in
+            overflow = max(0, new - 6)
+            let oldT = min(old, 6), newT = min(new, 6)
+            guard newT != oldT else { return }
+            if newT > oldT {
+                // Load — a round seats the instant you send input (no delay).
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.62)) {
+                    loaded = (0 ..< 6).map { $0 < newT }
+                }
+            } else {
+                // Eject — keep the round chambered until the gun fires on the
+                // beat, then empty it. The spin + muzzle flash come from
+                // `firePulse` (fired for EVERY notification), so the eject and
+                // the flash land together without double-driving the rotation.
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.fireDelay) {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
+                        loaded = (0 ..< 6).map { $0 < newT }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fire the gun: click the cylinder one chamber forward and flash the
+    /// muzzle. Driven by `firePulse`, so it runs once per notification —
+    /// independent of whether a round was actually spent.
+    private func fireOnce() {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { angle += 60 }
+        flash = true
+        withAnimation(.easeOut(duration: 0.45)) { flash = false }
+    }
+
+    /// Flick the cylinder — a smooth exponential ease-out crawl PLUS the final
+    /// mechanical tick, fused so there's no dead stop between them.
+    ///
+    /// The main sweep (easeOutExpo) whips out fast then creeps very slowly to
+    /// JUST shy of the chamber, finishing its creep exactly when the sound's
+    /// last "tick" plays — and right then the final 22° tick snaps it onto the
+    /// chamber. Because the creep ends the instant the tick fires, the two read
+    /// as one motion that clicks into place (not the old stop-then-jump). The
+    /// generation token cancels a pending tick if you spam-spin.
+    private func spin() {
+        spinGen += 1
+        let gen = spinGen
+        let turns = Double(5 + Int.random(in: 0 ... 2))           // several full revolutions
+        let landing = Double(Int.random(in: 0 ..< 6)) * 60        // land on a random chamber
+        let click = 22.0                                          // the final tick, synced to the sound
+        SoundFX.play(SoundFX.spin)
+        // cubic-bezier(0.19, 1, 0.22, 1) == easeOutExpo — fast whip into a long
+        // slow creep, landing just short of the chamber at t = 2.0s.
+        withAnimation(.timingCurve(0.19, 1, 0.22, 1, duration: 2.0)) {
+            angle += turns * 360 + landing - click
+        }
+        // …and the creep flows straight into the final tick (no pause): snap the
+        // last 22° onto the chamber on the sound's tick.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            guard gen == spinGen else { return }
+            withAnimation(.spring(response: 0.16, dampingFraction: 0.68)) {
+                angle += click
+            }
+        }
+    }
+
+    /// Chamber `i` placed around the ring, 12 o'clock first.
+    private func pos(_ i: Int, center: CGPoint, r: CGFloat) -> CGPoint {
+        let a: Double = (-90.0 + 60.0 * Double(i)) * .pi / 180.0
+        return CGPoint(x: center.x + r * CGFloat(cos(a)),
+                       y: center.y + r * CGFloat(sin(a)))
+    }
+
+    /// The cylinder silhouette PNG, tinted to steel (template rendering keys off
+    /// its alpha, so the transparent bores/scallops/centre stay open).
+    @ViewBuilder
+    private func cylinderBody(d: CGFloat) -> some View {
+        if let img = Self.cylinderImage {
+            Image(nsImage: img)
+                .renderingMode(.template)
+                .resizable()
+                .frame(width: d, height: d)
+                .foregroundStyle(LinearGradient(
+                    colors: [Color(white: 0.62), Color(white: 0.24)],
+                    startPoint: .top, endPoint: .bottom))
+        } else {
+            Circle().fill(Color(white: 0.3)).frame(width: d, height: d)
+        }
+    }
+
+    /// A brass cartridge head, sized to fill a bore.
+    private func brassRound(r: CGFloat) -> some View {
+        Circle()
+            .fill(RadialGradient(
+                colors: [Color(red: 1.0, green: 0.87, blue: 0.50),
+                         Color(red: 0.70, green: 0.48, blue: 0.15)],
+                center: .init(x: 0.4, y: 0.35), startRadius: 0, endRadius: r))
+            .overlay(
+                Circle().fill(Color(red: 0.26, green: 0.19, blue: 0.08))
+                    .frame(width: r * 0.60, height: r * 0.60))   // primer
+            .frame(width: r * 2, height: r * 2)
+            .transition(.scale.combined(with: .opacity))
+    }
+
+    /// Burst at the barrel: a radial glow + eight white spikes, scaled by `flash`.
+    private func muzzleFlash(d: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(
+                    colors: [.white, Color(red: 1, green: 0.82, blue: 0.35), .clear],
+                    center: .center, startRadius: 0, endRadius: d * 0.28))
+                .frame(width: d * 0.55, height: d * 0.55)
+            ForEach(0 ..< 8, id: \.self) { k in
+                Capsule().fill(.white)
+                    .frame(width: 1.4, height: d * 0.30)
+                    .offset(y: -d * 0.13)
+                    .rotationEffect(.degrees(Double(k) * 45))
+            }
+        }
+        .scaleEffect(flash ? 1 : 0.1)
+        .opacity(flash ? 1 : 0)
+        .blendMode(.plusLighter)
+    }
+}
+
 private struct AttentionPulse: View {
     let color: Color
 
