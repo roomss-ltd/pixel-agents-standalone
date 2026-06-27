@@ -17,6 +17,12 @@ struct Session: Identifiable, Equatable {
     var activeToolIds: Set<String>
     var activeToolNames: [String: String]    // toolId -> toolName
     var subagentTools: [String: Set<String>]
+    /// Number of outstanding `Task`/`Agent` (sub-agent) tool calls seen on the
+    /// hook stream. While > 0 the main agent is delegating, so its sub-agents'
+    /// own tool hooks — which arrive with the SAME `session_id` and no
+    /// sidechain flag — are coalesced instead of churning this session's
+    /// activity. Reset to 0 on a new prompt / Stop.
+    var delegatingDepth: Int
     var lastUpdate: Date
     var terminalKind: TerminalKind
     /// True when this session was surfaced from a stale jsonl file at
@@ -40,6 +46,7 @@ struct Session: Identifiable, Equatable {
         self.activeToolIds = []
         self.activeToolNames = [:]
         self.subagentTools = [:]
+        self.delegatingDepth = 0
         self.lastUpdate = Date()
         self.terminalKind = .generic(nil)
         self.isHistorical = false

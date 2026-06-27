@@ -576,8 +576,25 @@ final class ActivityEngine: ObservableObject {
         case "UserPromptSubmit":
             session.activity = .thinking
             session.currentTool = nil
+            session.delegatingDepth = 0   // new turn — no sub-agents outstanding
         case "PreToolUse":
-            if let name = payload.toolName {
+            guard let name = payload.toolName else { break }
+            if name == "Task" || name == "Agent" {
+                // Main agent is delegating to a sub-agent. Bracket the run so
+                // its internal tool hooks (same session_id, no sidechain flag)
+                // can't churn the main activity. Shown as the Task tool itself.
+                session.delegatingDepth += 1
+                session.activity = .tool(name)
+                session.currentTool = name
+                let syntheticId = "hook:\(name)"
+                session.activeToolNames[syntheticId] = name
+                session.activeToolIds.insert(syntheticId)
+            } else if session.delegatingDepth > 0 {
+                // Tool call WHILE delegating = sub-agent noise. Ignore for the
+                // main agent's activity (the JSONL parser still tracks it for
+                // the sub-agent badge). Skip the store/notify entirely.
+                return
+            } else {
                 session.activity = .tool(name)
                 session.currentTool = name
                 // Synthetic tool ID for hook-tracked tools (parser uses real IDs from JSONL).
@@ -586,18 +603,42 @@ final class ActivityEngine: ObservableObject {
                 session.activeToolIds.insert(syntheticId)
             }
         case "PostToolUse", "PostToolUseFailure":
-            session.activity = .thinking
-            session.currentTool = nil
-            if let name = payload.toolName {
+            let name = payload.toolName
+            if let name, name == "Task" || name == "Agent" {
+                // A sub-agent run returned to the main agent.
+                session.delegatingDepth = max(0, session.delegatingDepth - 1)
                 let syntheticId = "hook:\(name)"
                 session.activeToolNames.removeValue(forKey: syntheticId)
                 session.activeToolIds.remove(syntheticId)
+                // Only resume "thinking" once the LAST sub-agent has returned;
+                // otherwise stay on the Task tool (parallel delegation).
+                if session.delegatingDepth == 0 {
+                    session.activity = .thinking
+                    session.currentTool = nil
+                }
+            } else if session.delegatingDepth > 0 {
+                return   // sub-agent tool completion — ignore for main activity
+            } else {
+                session.activity = .thinking
+                session.currentTool = nil
+                if let name {
+                    let syntheticId = "hook:\(name)"
+                    session.activeToolNames.removeValue(forKey: syntheticId)
+                    session.activeToolIds.remove(syntheticId)
+                }
             }
         case "PermissionRequest":
             session.activity = .waiting
-        case "Stop", "SubagentStop", "ManualInterrupt":
+        case "Stop", "ManualInterrupt":
             session.activity = .done
+            session.delegatingDepth = 0
             // Lingers as .done; the .idle decay timer is M5's responsibility.
+        case "SubagentStop":
+            // A SUB-agent finished — NOT the main agent. The old code merged
+            // this with Stop, marking the whole session done on every
+            // sub-agent exit (false completions). Leave the main agent's
+            // activity to its own Stop / PostToolUse(Task).
+            return
         case "SessionEnd":
             sessions.remove(at: index)
             sessionsByJsonlURL = sessionsByJsonlURL.filter { $0.value != id }

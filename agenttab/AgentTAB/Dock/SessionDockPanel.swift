@@ -690,6 +690,9 @@ private struct SessionSquare: View {
     /// (flash + hop) lands on the same beat as the shot it "fires", instead
     /// of jumping the instant the colour flips.
     private static let fireDelay: TimeInterval = 0.5
+    /// Bullet-blue (matches the notch's start comet / bullets) for the
+    /// "reloading" border sweep fired when the user sends input to a session.
+    private static let reloadColor = Color(red: 0x66 / 255.0, green: 0xB5 / 255.0, blue: 0xFF / 255.0)
 
     @State private var hover = false
     /// Brief bright wash fired whenever the activity state changes.
@@ -697,6 +700,12 @@ private struct SessionSquare: View {
     /// Vertical hop offset fired alongside the flash, drawing the eye to a
     /// change (0 = resting; negative = popped up).
     @State private var bounceY: CGFloat = 0
+    /// "Reload" border sweep — a bullet-blue line traces once around the square
+    /// when the user sends input (start). `reloadTrim` draws it on (0→1),
+    /// `reloadOpacity` fades it out. One-shot via `withAnimation`, so it costs
+    /// nothing at rest.
+    @State private var reloadTrim: CGFloat = 0
+    @State private var reloadOpacity: Double = 0
 
     var body: some View {
         // Dormant squares keep the quiet original treatment; live ones get
@@ -738,6 +747,18 @@ private struct SessionSquare: View {
                     .blendMode(.plusLighter)
                     .allowsHitTesting(false)
             )
+            // "Reload" sweep — a bullet-blue line draws around the square when
+            // input is sent (start), following the gun/bullet theme.
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                    .inset(by: 1)
+                    .trim(from: 0, to: reloadTrim)
+                    .stroke(Self.reloadColor,
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .opacity(reloadOpacity)
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
+            )
             .shadow(color: stateColor.opacity(flash ? 0.85 : (hover ? 0.55 : 0)), radius: flash ? 7 : 5)
             .scaleEffect(hover ? 1.08 : 1.0)
             .offset(y: bounceY)
@@ -751,22 +772,37 @@ private struct SessionSquare: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         // When the activity (its color) flips, pop a flash and let it fade.
         .onChange(of: stateColor) { _, _ in
-            // Sync the hop with the shot only when there IS one: finishing
-            // (.done) and needing input (.waiting) fire the gun/shell/smoke
-            // after `fireDelay`, so the reaction waits to match. Starting work
-            // (sending input) fires no shell, so it hops instantly.
-            let delay: TimeInterval = (activity == .done || activity == .waiting) ? Self.fireDelay : 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                flash = true
-                withAnimation(.easeOut(duration: 0.6)) { flash = false }
-                // Vertical hop: snap UP, then a bouncy settle back to the floor
-                // (the low-damping spring overshoots so it visibly bounces).
-                withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { bounceY = -7 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { bounceY = 0 }
+            switch activity {
+            case .thinking, .tool, .initState:
+                // Input sent → the session is "reloading". A bullet-blue line
+                // sweeps once around the square (charging), following the
+                // gun/bullet theme — no bounce, fires immediately.
+                triggerReload()
+            case .done, .waiting, .idle:
+                // Finish / needs-input / settle → vertical bounce + flash.
+                // Delayed to land with the shell on done/waiting; immediate
+                // otherwise (idle has no shot to sync with).
+                let delay: TimeInterval = (activity == .done || activity == .waiting) ? Self.fireDelay : 0
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    flash = true
+                    withAnimation(.easeOut(duration: 0.6)) { flash = false }
+                    // Snap UP, then a bouncy settle back to the floor.
+                    withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { bounceY = -7 }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { bounceY = 0 }
+                    }
                 }
             }
         }
+    }
+
+    /// Fire the one-shot "reload" sweep: a bullet-blue line traces around the
+    /// square, then fades once it closes the loop.
+    private func triggerReload() {
+        reloadTrim = 0
+        reloadOpacity = 1
+        withAnimation(.easeInOut(duration: 0.5)) { reloadTrim = 1 }
+        withAnimation(.easeOut(duration: 0.35).delay(0.5)) { reloadOpacity = 0 }
     }
 }
 
