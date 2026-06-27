@@ -4,18 +4,27 @@ import SwiftUI
 
 @MainActor
 final class ActivityEngine: ObservableObject {
-    @Published private(set) var sessions: [Session] = []
+    // The three inputs to `displaySessions` each clear its memo on change, so
+    // the filter runs once per change instead of on every body evaluation of
+    // all six observing views.
+    @Published private(set) var sessions: [Session] = [] {
+        didSet { _displaySessionsCache = nil }
+    }
 
     /// True once the Zellij plugin has been detected on the system. While
     /// active, the UI only counts/shows sessions matched to a real Zellij
     /// pane — historical jsonl files that don't correspond to a live tab
     /// are hidden so the OLDER list mirrors what Hammerspoon would show.
-    @Published private(set) var zellijDetected: Bool = false
+    @Published private(set) var zellijDetected: Bool = false {
+        didSet { _displaySessionsCache = nil }
+    }
 
     /// User-dismissed Zellij panes. The unlink button in the expanded
     /// panel adds a pane id here; the session is then filtered out of
     /// `displaySessions` until the user reopens it manually.
-    @Published private var deniedPaneIds: Set<Int> = []
+    @Published private var deniedPaneIds: Set<Int> = [] {
+        didSet { _displaySessionsCache = nil }
+    }
 
     /// Hide a session from the panel. Currently only Zellij sessions are
     /// dismissible — for non-Zellij the unlink button is a no-op.
@@ -30,7 +39,18 @@ final class ActivityEngine: ObservableObject {
     /// world and only surface Zellij-tagged sessions. Until the first match
     /// lands (or if Zellij isn't running) we show everything the JSONL
     /// watcher has discovered — the watcher already caps historical files.
+    /// Memo for `computeDisplaySessions()`, cleared by the `didSet` on each
+    /// input above. Lazily refilled on first read after a change.
+    private var _displaySessionsCache: [Session]?
+
     var displaySessions: [Session] {
+        if let cached = _displaySessionsCache { return cached }
+        let computed = computeDisplaySessions()
+        _displaySessionsCache = computed
+        return computed
+    }
+
+    private func computeDisplaySessions() -> [Session] {
         let denied = deniedPaneIds
         let withoutDenied = sessions.filter { s -> Bool in
             if case .zellij(let info) = s.terminalKind {

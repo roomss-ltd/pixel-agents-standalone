@@ -294,6 +294,15 @@ struct SessionDockView: View {
         engine.displaySessions.sorted { $0.priority.rawValue > $1.priority.rawValue }
     }
 
+    /// Cheap identity/order token for the layout animation. Hashes the session
+    /// ids without allocating an intermediate `[UUID]` every body evaluation
+    /// (the old `sessions.map(\.id)` minted a fresh array each render).
+    private func layoutToken(_ sessions: [Session]) -> Int {
+        var hasher = Hasher()
+        for s in sessions { hasher.combine(s.id) }
+        return hasher.finalize()
+    }
+
     var body: some View {
         let sessions = self.sessions
         // The toast slot sits ABOVE the strip; both hug the trailing (screen)
@@ -340,7 +349,7 @@ struct SessionDockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
             if let payload = note.object as? DockEventPayload { fire(payload) }
         }
-        .animation(.easeOut(duration: 0.18), value: sessions.map(\.id))
+        .animation(.easeOut(duration: 0.18), value: layoutToken(sessions))
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
     }
 
