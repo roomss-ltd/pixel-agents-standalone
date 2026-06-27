@@ -742,22 +742,39 @@ private struct CrateView: View {
             let t = tStart + (tEnd - tStart) * CGFloat(p)
             let pt = railPoint(t)
             let fade = max(0, min(1, min(CGFloat(p) / 0.12, (1 - CGFloat(p)) / 0.12)))
+            // Convert the load's PIXEL width into rail-param space so the glow
+            // spans the whole train (plus a bit), accounting for the rail's
+            // local scale (pixels travelled per unit of path parameter).
+            let dδ: CGFloat = 0.004
+            let pa = railPoint(t - dδ), pb = railPoint(t + dδ)
+            let pxPerParam = max(1, hypot(pb.x - pa.x, pb.y - pa.y) / (2 * dδ))
+            let glowHalf = min(0.30, (unitW / 2 + crateW * 0.6) / pxPerParam)
 
-            ZStack(alignment: .top) {
-                // Beam linking the trolleys of a chained load.
-                if n > 1 {
-                    Rectangle().fill(Color(white: 0.5))
-                        .frame(width: unitW - crateW, height: 0.8)
-                        .offset(y: hookD / 2 - 0.4)
+            ZStack {
+                // The STATUS LINE glow above the crate: the yellowish river-end
+                // colour painted onto the rail at the crate's current position,
+                // travelling with it from corner to corner.
+                railGlow(at: t, halfWidth: glowHalf)
+                    .opacity(Double(fade))
+
+                // The crate unit, hanging below the rail.
+                ZStack(alignment: .top) {
+                    // Beam linking the trolleys of a chained load.
+                    if n > 1 {
+                        Rectangle().fill(Color(white: 0.5))
+                            .frame(width: unitW - crateW, height: 0.8)
+                            .offset(y: hookD / 2 - 0.4)
+                    }
+                    HStack(spacing: linkGap) {
+                        ForEach(0 ..< n, id: \.self) { _ in container }
+                    }
                 }
-                HStack(spacing: linkGap) {
-                    ForEach(0 ..< n, id: \.self) { _ in container }
-                }
+                .frame(width: unitW, height: unitH)
+                .opacity(Double(fade))
+                // Hook centred on the rail; everything else hangs below it.
+                .position(x: pt.x, y: pt.y + unitH / 2 - hookD / 2)
             }
-            .frame(width: unitW, height: unitH)
-            .opacity(Double(fade))
-            // Hook centred on the rail; everything else hangs below it.
-            .position(x: pt.x, y: pt.y + unitH / 2 - hookD / 2)
+            .frame(width: size.width, height: size.height)
         }
         .onAppear {
             start = Date()
@@ -766,6 +783,41 @@ private struct CrateView: View {
                 onDone()
             }
         }
+    }
+
+    /// A short glowing segment of the rail at parameter `center`, painted like
+    /// the river's ends: NOT a flat slab but a graduated neon — concentric
+    /// trims from a wide dim orange up to a narrow white-hot core, so the centre
+    /// blooms and the ends taper out through amber → deep orange. Rides the
+    /// status line directly above the crate as it travels.
+    private func railGlow(at center: CGFloat, halfWidth w: CGFloat) -> some View {
+        let deep  = Color(red: 1.0, green: 0.50, blue: 0.14)   // deep orange — the soft edges
+        let amber = Color(red: 1.0, green: 0.72, blue: 0.26)   // river-spark amber — mid
+        let gold  = Color(red: 1.0, green: 0.88, blue: 0.52)   // pale gold — inner
+        // Each layer is narrower + brighter than the last; stacked with
+        // plusLighter they sum to white-hot in the middle and fade to a dim
+        // orange at the ends (the layers drop out one by one outward). An empty
+        // trim range just renders nothing, so no guard is needed.
+        func seg(_ hw: CGFloat) -> (CGFloat, CGFloat) {
+            (max(0, center - hw), min(1, center + hw))
+        }
+        let l0 = seg(w), l1 = seg(w * 0.66), l2 = seg(w * 0.40), l3 = seg(w * 0.16)
+        return ZStack {
+            shape.trim(from: l0.0, to: l0.1)
+                .stroke(deep.opacity(0.42), style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
+                .shadow(color: deep.opacity(0.8), radius: 5)
+                .blendMode(.plusLighter)
+            shape.trim(from: l1.0, to: l1.1)
+                .stroke(amber.opacity(0.80), style: StrokeStyle(lineWidth: 3.0, lineCap: .round))
+                .blendMode(.plusLighter)
+            shape.trim(from: l2.0, to: l2.1)
+                .stroke(gold.opacity(0.95), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                .blendMode(.plusLighter)
+            shape.trim(from: l3.0, to: l3.1)
+                .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+                .blendMode(.plusLighter)
+        }
+        .allowsHitTesting(false)
     }
 
     /// One trolley + cable + crate column.
@@ -1532,6 +1584,8 @@ enum SoundFX {
     static let shot = make("gun-shot.mp3", volume: 1.0)
     /// Played when a session starts waiting on the user (needs input).
     static let waiting = make("awp-shot.mp3", volume: 1.0)
+    /// The "flick the cylinder" widget — the revolver spins to a stop.
+    static let spin = make("revolver-spin.mp3", volume: 1.0)
 
     /// `volume` is 0.0–1.0 (fraction of the file's full level).
     private static func make(_ filename: String, volume: Float = 1.0) -> AVAudioPlayer? {

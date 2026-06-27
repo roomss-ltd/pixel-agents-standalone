@@ -247,7 +247,7 @@ struct ExpandedView: View {
                 CratePauseBadge(color: Theme.Neon.amber, size: size * 1.22)
             } else {
                 CrateBadge(count: restingCount,
-                           color: Color(red: 0.52, green: 0.74, blue: 0.66), size: size * 1.22)
+                           color: Color(red: 0.40, green: 0.86, blue: 0.82), size: size * 1.22)
             }
         }
         // Fade out while a GIF poses over this wing (bullets on start, target on finish).
