@@ -149,7 +149,9 @@ struct ExpandedView: View {
             onSizeChange(size)
         }
         .onChange(of: isExpanded) { _, expanded in
-            if expanded { tokenTracker.refresh() }
+            // Refresh on open + run the 60s timer only while visible; stop it
+            // on close so there's no idle directory scanning.
+            tokenTracker.setActive(expanded)
         }
         // A session just started waiting on the user — fire the AWP shot.
         .onChange(of: attentionCount) { old, new in

@@ -18,7 +18,8 @@ import CoreGraphics
 final class FullscreenDetector: ObservableObject {
     @Published private(set) var fullscreenDisplays: Set<CGDirectDisplayID> = []
 
-    private var timerCancellable: AnyCancellable?
+    private var observers: [NSObjectProtocol] = []
+    private var scanWork: DispatchWorkItem?
     private let tolerance: CGFloat = 1.0
 
     init() {
@@ -26,16 +27,48 @@ final class FullscreenDetector: ObservableObject {
     }
 
     deinit {
-        timerCancellable?.cancel()
+        let ws = NSWorkspace.shared.notificationCenter
+        let nc = NotificationCenter.default
+        for o in observers { ws.removeObserver(o); nc.removeObserver(o) }
     }
 
     private func start() {
         // First reading at launch so the panel doesn't briefly show in a
-        // fullscreen Space before the first tick.
+        // fullscreen Space before we've looked.
         scan()
-        timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in self?.scan() }
+
+        // Event-driven instead of a 1Hz poll: entering/leaving native
+        // fullscreen ALWAYS switches the active Space (a fullscreen app gets
+        // its own Space), so a space/app/display change is the only time the
+        // answer can change. Idle CPU for this detector is now zero.
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.activeSpaceDidChangeNotification,
+                     NSWorkspace.didActivateApplicationNotification] {
+            observers.append(ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleScan() }
+            })
+        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleScan() }
+        })
+    }
+
+    /// Coalesce a burst of events, then scan once the transition has settled.
+    /// A second scan a beat later catches the fullscreen animation finishing
+    /// (window bounds don't reach `screen.frame` until the animation ends).
+    private func scheduleScan() {
+        scanWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.scan() }
+        }
+        scanWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            MainActor.assumeIsolated { self?.scan() }
+        }
     }
 
     private func scan() {

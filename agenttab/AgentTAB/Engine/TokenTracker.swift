@@ -155,10 +155,26 @@ final class TokenTracker: ObservableObject {
     }
 
     func start() {
+        // One initial read so the collapsed counter shows a number at launch.
+        // The periodic refresh now runs ONLY while the panel is open (see
+        // `setActive`) — no perpetual 60s directory scan while collapsed.
         refresh()
-        timer = Timer.publish(every: 60, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in self?.refresh() }
+    }
+
+    /// Drive the periodic refresh off panel visibility. While the expanded
+    /// panel is open we refresh every 60s for a live-ish number; once it
+    /// closes the timer stops entirely, so there's zero idle disk scanning.
+    func setActive(_ active: Bool) {
+        if active {
+            refresh()
+            guard timer == nil else { return }
+            timer = Timer.publish(every: 60, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in self?.refresh() }
+        } else {
+            timer?.cancel()
+            timer = nil
+        }
     }
 
     /// Recompute the delta since the last pass. Cheap to call often —
