@@ -250,9 +250,11 @@ struct ExpandedView: View {
                 // Processing → the hamster runs in the left wing, mirrored so it
                 // runs toward the centre, not outward.
                 HamsterWheelLoader()
-                    .frame(width: size * 1.4, height: size * 1.4)
-                    .scaleEffect(x: -1, y: 1)
-                    .offset(x: 1)
+                    .frame(width: size * 1.86, height: size * 1.86)
+                    .scaleEffect(x: 1, y: 1)
+                    .offset(x: 5)
+                    // Drive belt: the wheel "powers" the status line above it.
+                    .overlay { HamsterDriveBelt(wheel: size * 1.86) }
             } else {
                 // Idle → the sleeping bear (off-duty), pairing with the turntable
                 // on the right. Replaces the resting-count badge.
@@ -721,6 +723,99 @@ struct ExpandedView: View {
 }
 
 // MARK: - Section header (dashed-line border + label, optional collapse)
+
+/// A glowing drive belt rising from the hamster wheel up to the status line, so
+/// the wheel reads as POWERING the river. Two thin magma bands tangent to the
+/// LEFT of the wheel; they overflow the badge upward and are clipped at the bar's
+/// top edge — exactly where the river runs — selling the connection.
+/// A proper cog outline — SQUARED teeth (flat tops + flat valleys, radial sides),
+/// not triangular points. Each tooth occupies `toothFrac` of its segment.
+private struct Gear: Shape {
+    var teeth: Int = 8
+    var toothDepth: CGFloat = 0.30   // fraction of radius
+    var toothFrac: Double = 0.55     // fraction of each segment that is the tooth
+
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let rOuter = min(rect.width, rect.height) / 2
+        let rInner = rOuter * (1 - toothDepth)
+        let seg = 2 * Double.pi / Double(teeth)
+        func pt(_ a: Double, _ r: CGFloat) -> CGPoint {
+            CGPoint(x: c.x + CGFloat(cos(a)) * r, y: c.y + CGFloat(sin(a)) * r)
+        }
+        var p = Path()
+        for i in 0 ..< teeth {
+            let base = Double(i) * seg - .pi / 2
+            let tEnd = base + seg * toothFrac
+            let next = base + seg
+            i == 0 ? p.move(to: pt(base, rInner)) : p.addLine(to: pt(base, rInner))
+            p.addLine(to: pt(base, rOuter))   // radial rise
+            p.addLine(to: pt(tEnd, rOuter))   // flat top
+            p.addLine(to: pt(tEnd, rInner))   // radial drop
+            p.addLine(to: pt(next, rInner))   // flat valley to next tooth
+        }
+        p.closeSubpath()
+        return p
+    }
+}
+
+private struct HamsterDriveBelt: View {
+    let wheel: CGFloat
+
+    var body: some View {
+        GeometryReader { geo in
+            let wcx = geo.size.width / 2 + wheel * 0.15   // wheel sits right-of-centre in its canvas
+            let wcy = geo.size.height / 2
+            let topY = wcy + wheel * 0.30                 // leaves the wheel's bottom rim
+            let railY = geo.size.height * 1.03            // the river's bottom rail
+            let pr = wheel * 0.17                         // pulley radius
+            ZStack {
+                // Two parallel bands = the belt, from the wheel down to the pulley.
+                belt(from: CGPoint(x: wcx, y: topY), to: CGPoint(x: wcx, y: railY - pr))
+                // A small pulley the belt drives on the rail — sells the connection.
+                pulley(pr).position(x: wcx, y: railY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// A small driven COG on the river rail — toothed, and turning slowly (the
+    /// belt drives it). Low-fps and freezes when quiet, so it's near-free.
+    private func pulley(_ pr: CGFloat) -> some View {
+        DecorativeTimeline(fps: 18) { ctx in
+            let angle = ctx.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 3.2) / 3.2 * -360.0
+            ZStack {
+                Gear(teeth: 6, toothDepth: 0.42, toothFrac: 0.5)
+                    .stroke(Magma.body, lineWidth: 1.3)
+                    .frame(width: pr * 2.5, height: pr * 2.5)
+                    .rotationEffect(.degrees(angle))
+                Circle().fill(Magma.gold.opacity(0.7))
+                    .frame(width: pr * 0.8, height: pr * 0.8)
+            }
+            .shadow(color: Magma.ember.opacity(0.8), radius: 2.5)
+            .blendMode(.plusLighter)
+        }
+    }
+
+    /// A two-band belt (parallel rails) between two points.
+    private func belt(from a: CGPoint, to b: CGPoint) -> some View {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let len = max(0.001, (dx * dx + dy * dy).squareRoot())
+        let px = -dy / len * 1.6, py = dx / len * 1.6   // perpendicular half-gap
+        return ZStack {
+            band(from: CGPoint(x: a.x + px, y: a.y + py), to: CGPoint(x: b.x + px, y: b.y + py))
+            band(from: CGPoint(x: a.x - px, y: a.y - py), to: CGPoint(x: b.x - px, y: b.y - py))
+        }
+    }
+
+    private func band(from a: CGPoint, to b: CGPoint) -> some View {
+        Path { p in p.move(to: a); p.addLine(to: b) }
+            .stroke(Magma.body, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+            .shadow(color: Magma.ember.opacity(0.8), radius: 3)
+            .blendMode(.plusLighter)
+    }
+}
 
 private struct Section<Content: View>: View {
     let label: String

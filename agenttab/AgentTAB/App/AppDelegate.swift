@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let screenTracker = ScreenTracker()
     let fullscreenDetector = FullscreenDetector()
     let tokenTracker = TokenTracker()
-    let rateLimits = RateLimitMonitor()
+    let rateLimits = RateLimitMonitor.shared
     private var onboardingWindow: NSWindow?
     private var trackerCancellable: AnyCancellable?
     private var autoHideCancellable: AnyCancellable?

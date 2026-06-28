@@ -24,6 +24,9 @@ import os
 
 @MainActor
 final class RateLimitMonitor: ObservableObject {
+    /// Shared instance so any view can observe it (like `EnergyMonitor.shared`).
+    static let shared = RateLimitMonitor()
+
     /// One usage window (5-hour or weekly).
     struct Window: Equatable {
         /// Percent of the window consumed, 0…100.

@@ -264,8 +264,8 @@ struct NotchStatusLine: View {
                 // Industrial freight rides the bottom rail while work is active.
                 RailFreight(working: working, shape: shape)
 
-                // Every so often a small airplane rides the same rail as the
-                // freight — a rarer, lighter flourish, tucked in the crate strip.
+                // A dirigible drifts across the upper band now and then — a rare,
+                // lighter flourish (the airplanes were retired).
                 RailAircraft(working: working, shape: shape)
 
                 // The siphon droplet — the "bullet", fired after the shooter.
@@ -346,6 +346,7 @@ struct NotchStatusLine: View {
                 SoundFX.play(sound)
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(800))
+                    if starting { FireStoker.shared.stoke() }
                     flowRail(toActive: new > 0)
                 }
                 return
@@ -374,6 +375,9 @@ struct NotchStatusLine: View {
                 }
                 // Comet lands ~0.55s later → river-flow the rail to its colour.
                 try? await Task.sleep(for: .milliseconds(550))
+                // Input comet sweeps left→RIGHT and reaches the fire here —
+                // toss a log on so the right-wing flame flares for a beat.
+                if starting { FireStoker.shared.stoke() }
                 flowRail(toActive: new > 0)
             }
         }
@@ -694,21 +698,35 @@ enum ShootAsset {
     static let target: [Frame] = loadNamed("target.gif")
     /// Right-wing projectiles while work STARTS (funnel pours on the left).
     static let bullets: [Frame] = loadNamed("bullets (1).gif")
-    /// Muzzle smoke for the dock cannon. Already transparent, so no keying.
-    static let smoke: [Frame] = loadNamed("smoke.gif", keyed: false)
+    /// Muzzle smoke for the dock cannon — a gray wisp on a WHITE page. We drop
+    /// the page with a luminance key and tint the wisp warm so it reads as a
+    /// translucent plume over the near-black drawer (see `loadKeyedLuma`).
+    static let smoke: [Frame] = loadKeyedLuma("wmremove-transformed (online-video-cutter.com).gif")
     /// Occasional flyover props that cross the status line while work is active.
     /// Both GIFs ship with native alpha (no white to key) and face LEFT, so the
     /// crossing view flips them when travelling left→right. The square jet reads
     /// cleanly; the slim one drags a contrail.
     /// Static SVG jet (dark teal body + orange exhaust). Rasterised once.
     static let contrailPlane: [Frame] = loadStatic("Airplane.svg")
+    /// Dirigibles/blimps that drift across the upper band.
+    static let airship: [Frame] = loadStatic("airship.png", pixelHeight: 256)
+    static let airship1: [Frame] = loadStatic("airship (1).png", pixelHeight: 256)
     /// Wooden crate box (SVG) — replaces the drawn crate, still hung by OUR
     /// trolley+cable crane. Recolour variants come later.
-    static let crateImage: CGImage? = loadStatic("crate.svg", pixelHeight: 128).first?.image
+    static let crateImage: CGImage? = loadStatic("crate.png", pixelHeight: 128).first?.image
     /// Shipping containers that ship WITH their own crane rig baked in (hook +
     /// cables + posts); they ride solo, no extra crane from us.
     static let containerImages: [CGImage] = ["container1.png", "container2.png"]
         .compactMap { loadNamed($0, keyed: false).first?.image }
+    /// Forge-railway cargo that rides the rail SOLO (own footprint, no harness):
+    /// just the molten-metal ladle now (barrels/oil moved to chained loads).
+    static let railProps: [CGImage] = ["molten.png"]
+        .compactMap { loadNamed($0, keyed: false).first?.image }
+    /// Boxes for chained, HARNESSED loads.
+    static let mineCartImage: CGImage? = loadStatic("mine-cart.png", pixelHeight: 128).first?.image
+    static let oilImage: CGImage? = loadStatic("oil.png", pixelHeight: 128).first?.image       // oil group
+    static let barrel1Image: CGImage? = loadStatic("barrel (1).png", pixelHeight: 128).first?.image // oil group
+    static let barrelImage: CGImage? = loadStatic("barrel.png", pixelHeight: 128).first?.image  // wooden barrel
     /// The fire "working" loader, pre-rendered from the original CSS to a PNG
     /// frame loop (one 6s LCM cycle at 15fps) — played natively (no WebKit).
     static let fire: [Frame] = loadSequence("fire_frames", prefix: "fire_", count: 90, fps: 15)
@@ -836,6 +854,94 @@ enum ShootAsset {
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }
+
+    /// Load a GIF of dark/gray art on a WHITE page (the muzzle-smoke wisp) and
+    /// luminance-key every frame, then crop them all to the SAME union bounding
+    /// box of the wisp. A shared crop is what keeps the plume from jittering —
+    /// per-frame boxes would jump as the curls move. The wide letterboxed source
+    /// (mostly white) collapses to a tight, near-square plume.
+    static func loadKeyedLuma(_ filename: String) -> [Frame] {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads").appendingPathComponent(filename)
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [] }
+        let n = CGImageSourceGetCount(src)
+        var keyed: [(img: CGImage, dur: Double, box: CGRect)] = []
+        for i in 0 ..< n {
+            guard let cg = CGImageSourceCreateImageAtIndex(src, i, nil),
+                  let (img, box) = keyLuma(cg) else { continue }
+            keyed.append((img, frameDuration(src, i), box))
+        }
+        let union = keyed.reduce(CGRect?.none) { acc, item in
+            acc.map { $0.union(item.box) } ?? item.box
+        }
+        return keyed.map { item in
+            let cropped = union.flatMap { item.img.cropping(to: $0) } ?? item.img
+            return Frame(image: cropped, duration: item.dur)
+        }
+    }
+
+    /// Redraw a frame into RGBA, set alpha from darkness (alpha rises as the
+    /// pixel darkens — a white page goes fully transparent), and paint the
+    /// survivor a soft warm-smoke tint so it reads as a translucent plume over
+    /// the near-black drawer instead of a flat gray decal. Premultiplied to match
+    /// the context. Returns the keyed image plus the bbox of its visible pixels.
+    private static func keyLuma(
+        _ cg: CGImage,
+        tint: (r: Double, g: Double, b: Double) = (220, 213, 203),
+        floor: Double = 200,
+        slope: Double = 2.6,
+        inset: Int = 6
+    ) -> (image: CGImage, box: CGRect)? {
+        let w = cg.width, h = cg.height
+        guard w > 0, h > 0 else { return nil }
+        let bytesPerRow = w * 4
+        var data = [UInt8](repeating: 0, count: bytesPerRow * h)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &data, width: w, height: h, bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow, space: cs,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        var minX = w, minY = h, maxX = -1, maxY = -1
+        var idx = 0
+        for y in 0 ..< h {
+            for x in 0 ..< w {
+                let lum = 0.21 * Double(data[idx]) + 0.72 * Double(data[idx + 1])
+                    + 0.07 * Double(data[idx + 2])
+                // Hard floor: anything brighter than `floor` is page, not smoke —
+                // force it fully transparent. Only the darker wisp ramps in. Without
+                // the floor the near-white field (250–255) still earned alpha ~5–8,
+                // a faint warm wash that read as a rectangle behind the plume.
+                let a = lum >= floor ? 0.0 : min(255.0, (floor - lum) * slope)
+                let af = a / 255.0
+                data[idx] = UInt8(tint.r * af)
+                data[idx + 1] = UInt8(tint.g * af)
+                data[idx + 2] = UInt8(tint.b * af)
+                data[idx + 3] = UInt8(a)
+                // Track the wisp's bbox ONLY over the inset interior. This GIF
+                // carries a 1px dark border around the whole frame; left in, it
+                // would force the crop out to the full letterbox. The inset skips
+                // it (the wisp itself sits well inside), so the crop is tight.
+                if a >= 24, x >= inset, x < w - inset, y >= inset, y < h - inset {
+                    if x < minX { minX = x }; if x > maxX { maxX = x }
+                    if y < minY { minY = y }; if y > maxY { maxY = y }
+                }
+                idx += 4
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(data) as CFData),
+              let img = CGImage(
+                width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: bytesPerRow, space: cs,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return nil }
+        let box = maxX >= minX
+            ? CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+            : CGRect(x: 0, y: 0, width: w, height: h)
+        return (img, box)
+    }
 }
 
 /// While work is in progress, small freight crates occasionally ride the
@@ -858,6 +964,17 @@ struct RailFreight: View {
         /// Non-nil → a solo shipping container (its own crane); the value indexes
         /// `ShootAsset.containerImages`. Nil → a crate chain on our crane.
         var containerIndex: Int? = nil
+        /// Non-nil → a solo forge-railway prop, indexing `ShootAsset.railProps`
+        /// (the molten ladle).
+        var propIndex: Int? = nil
+        /// Per-box image for a chained, harnessed load (carts / barrels / oil).
+        /// Empty → the default wooden crate (`crate.png`). Length == `boxes`.
+        var boxImages: [CGImage] = []
+        /// Box footprint for the chain, how far the boxes hang below the harness
+        /// (extra cable), and the spacing between boxes. Defaults suit the crate.
+        var boxSize: CGFloat = 9
+        var boxDrop: CGFloat = 0
+        var boxGap: CGFloat = 1.0
     }
 
     /// Visual crate variants.
@@ -925,59 +1042,59 @@ struct RailFreight: View {
             while !Task.isCancelled {
                 // Cadence scales with the active-session count — sparse with one
                 // session, busier as more agents work.
-                let lo = max(3.5, 11.0 - 1.3 * Double(intensity))
-                let hi = max(7.0, 19.0 - 1.9 * Double(intensity))
+                let lo = max(6.5, 13.0 - 1.0 * Double(intensity))
+                let hi = max(12.0, 22.0 - 1.4 * Double(intensity))
                 try? await Task.sleep(for: .seconds(Double.random(in: lo ... hi)))
                 if Task.isCancelled { return }
                 let dir = Bool.random()
                 let dur = Double.random(in: 3.6 ... 5.4)        // slower, smoother glide
                 let tint = Self.tints.randomElement() ?? .orange
-                let maxBoxes = min(6, 1 + intensity)            // small loads at low count
-                let allowTrain = w >= 3                         // trains/big loads only when busy
-
                 func container() -> Crate {
+                    // Solo loads: the molten ladle, or a shipping container.
+                    let props = ShootAsset.railProps
+                    if !props.isEmpty, Int.random(in: 0 ..< 100) < 55 {
+                        return Crate(leftToRight: dir, tint: tint, duration: dur,
+                                     boxes: 1, style: .wide, propIndex: Int.random(in: 0 ..< props.count))
+                    }
                     let idx = ShootAsset.containerImages.isEmpty
                         ? nil : Int.random(in: 0 ..< ShootAsset.containerImages.count)
                     return Crate(leftToRight: dir, tint: tint, duration: dur,
                                  boxes: 1, style: .wide, containerIndex: idx)
                 }
-
-                if !allowTrain {
-                    // Light load (1–2 sessions): a small chain or a lone container.
-                    if Int.random(in: 0 ..< 100) < 55 {
-                        crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                            boxes: Int.random(in: 2 ... maxBoxes), style: Self.randomStyle()))
-                    } else {
-                        crates.append(container())
-                    }
-                    continue
+                // A harnessed chain whose boxes are `img` (or a mix), n boxes long.
+                func chain(_ imgs: [CGImage], size: CGFloat, drop: CGFloat, gap: CGFloat = 1.0) -> Crate {
+                    Crate(leftToRight: dir, tint: tint, duration: dur, boxes: imgs.count,
+                          style: .plain, boxImages: imgs, boxSize: size, boxDrop: drop, boxGap: gap)
                 }
 
+                // ONE load per cycle — no loose trains.
                 switch Int.random(in: 0 ..< 100) {
-                case 0 ..< 40:
-                    // Chained load — moving as one.
+                case 0 ..< 30:
+                    // Crate chain — 2-3 common, 4 RARE.
+                    let n = Int.random(in: 0 ..< 100) < 15 ? 4 : Int.random(in: 2 ... 3)
                     crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: Int.random(in: 2 ... min(4, maxBoxes)), style: Self.randomStyle()))
-                case 40 ..< 62:
-                    // Loose train — separate CHAINED groups (each 2+ crates),
-                    // generously spaced so even a wide group fully clears before
-                    // the next spawns. Stagger scales with group width + speed.
-                    let groups = Int.random(in: 2 ... 3)
-                    for i in 0 ..< groups {
-                        if Task.isCancelled { return }
-                        let boxes = Int.random(in: 2 ... min(4, maxBoxes))
-                        crates.append(Crate(leftToRight: dir,
-                                            tint: Self.tints.randomElement() ?? .orange,
-                                            duration: dur, boxes: boxes, style: Self.randomStyle()))
-                        if i < groups - 1 {
-                            let staggerSec = dur * (Double(boxes) * 0.07 + 0.10)
-                            try? await Task.sleep(for: .seconds(staggerSec))
-                        }
+                                        boxes: n, style: Self.randomStyle()))
+                case 30 ..< 48:
+                    // Mine-cart chain (2 … 3).
+                    if let cart = ShootAsset.mineCartImage {
+                        let n = Int.random(in: 2 ... 3)
+                        crates.append(chain(Array(repeating: cart, count: n), size: 13, drop: 0))
                     }
-                case 62 ..< 82:
-                    // Big chained load — only when really busy.
-                    crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: Int.random(in: 4 ... maxBoxes), style: Self.randomStyle()))
+                case 48 ..< 66:
+                    // Oil group — oil drums + generic barrels mixed (1 … 3).
+                    let pool = [ShootAsset.oilImage, ShootAsset.barrel1Image].compactMap { $0 }
+                    if !pool.isEmpty {
+                        let n = Int.random(in: 1 ... 3)
+                        // 15% bigger, tighter spacing, slightly shorter harness.
+                        crates.append(chain((0 ..< n).map { _ in pool.randomElement()! },
+                                            size: 11.5, drop: 0.5, gap: 0.2))
+                    }
+                case 66 ..< 84:
+                    // Wooden-barrel chain (2 … 3).
+                    if let wood = ShootAsset.barrelImage {
+                        let n = Int.random(in: 2 ... 3)
+                        crates.append(chain(Array(repeating: wood, count: n), size: 10, drop: 1))
+                    }
                 default:
                     crates.append(container())
                 }
@@ -1004,20 +1121,23 @@ private struct CrateView: View {
 
     private let hookD: CGFloat = 2.5
     private let cableLen: CGFloat = 3
-    private let crateW: CGFloat = 9          // crate.svg is square
-    private let crateH: CGFloat = 9
     private let containerSize: CGFloat = 24  // solo container, own crane baked in
-    private let linkGap: CGFloat = 1.0       // tight chains
 
     var body: some View {
         // Bottom rail runs ~0.30 (right end) … 0.70 (left end) in path-param.
         let tStart: CGFloat = crate.leftToRight ? 0.70 : 0.30
         let tEnd: CGFloat = crate.leftToRight ? 0.30 : 0.70
         let isContainer = crate.containerIndex != nil && !ShootAsset.containerImages.isEmpty
-        let unitH = hookD + cableLen + crateH
+        let isProp = crate.propIndex != nil && !ShootAsset.railProps.isEmpty
+        let propSize: CGFloat = 22
+        // container1 (index 0) renders 25% smaller than container2.
+        let cSize: CGFloat = crate.containerIndex == 0 ? containerSize * 0.75 : containerSize
+        let boxW: CGFloat = crate.boxSize
+        let unitH = hookD + cableLen + crate.boxDrop + crate.boxSize
         let n = max(1, crate.boxes)
-        let unitW = isContainer ? containerSize
-                                : CGFloat(n) * crateW + CGFloat(n - 1) * linkGap
+        let unitW = isContainer ? cSize
+                  : isProp ? propSize
+                  : CGFloat(n) * boxW + CGFloat(n - 1) * crate.boxGap
 
         // A real clock drives progress so the body re-evaluates each frame —
         // letting the triangular fade (0 → 1 → 0) actually peak in the middle.
@@ -1026,44 +1146,50 @@ private struct CrateView: View {
             let t = tStart + (tEnd - tStart) * CGFloat(p)
             let pt = railPoint(t)
             let fade = max(0, min(1, min(CGFloat(p) / 0.12, (1 - CGFloat(p)) / 0.12)))
-            // Convert the load's PIXEL width into rail-param space so the glow
-            // spans the whole train (plus a bit), accounting for the rail's
-            // local scale (pixels travelled per unit of path parameter).
-            let dδ: CGFloat = 0.004
-            let pa = railPoint(t - dδ), pb = railPoint(t + dδ)
-            let pxPerParam = max(1, hypot(pb.x - pa.x, pb.y - pa.y) / (2 * dδ))
-            let edge = isContainer ? containerSize : crateW
-            let glowHalf = min(0.30, (unitW / 2 + edge * 0.6) / pxPerParam)
 
             ZStack {
-                // The STATUS LINE glow above the load: the yellowish river-end
-                // colour painted onto the rail at the load's current position,
-                // travelling with it from corner to corner.
-                railGlow(at: t, halfWidth: glowHalf)
-                    .opacity(Double(fade))
+                // A proper steel RAIL segment travelling with the load — a metal
+                // track with a bright rail-head — so the trolley reads as riding
+                // a rail rather than dangling from a glow.
+                railSegment(at: pt, width: unitW, fade: Double(fade))
 
-                if isContainer {
+                if isProp {
+                    // A solo forge-railway prop (boulder / mine-cart / molten
+                    // ladle) riding the rail — its own footprint, hung just under
+                    // the line like the container.
+                    Image(decorative: ShootAsset.railProps[crate.propIndex!], scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: propSize, height: propSize)
+                        // molten.png points RIGHT by default — mirror it when the
+                        // load is travelling left so it faces its direction.
+                        .scaleEffect(x: crate.leftToRight ? 1 : -1, y: 1)
+                        .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
+                        .opacity(Double(fade))
+                        .position(x: pt.x, y: pt.y + propSize / 2)
+                } else if isContainer {
                     // Shipping container with its OWN crane baked in: the image's
                     // built-in hook sits on the rail, the box hangs below. No
                     // trolley/cable from us.
                     Image(decorative: ShootAsset.containerImages[crate.containerIndex!], scale: 1)
                         .resizable()
                         .interpolation(.high)
-                        .frame(width: containerSize, height: containerSize)
+                        .frame(width: cSize, height: cSize)
                         .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
                         .opacity(Double(fade))
-                        .position(x: pt.x, y: pt.y + containerSize / 2)
+                        .position(x: pt.x, y: pt.y + cSize / 2)
                 } else {
-                    // Crate chain hung from OUR crane (trolley + cable per box).
+                    // Crate / mine-cart chain hung from OUR crane (trolley + cable
+                    // per box).
                     ZStack(alignment: .top) {
                         // Beam linking the trolleys of a chained load.
                         if n > 1 {
                             Rectangle().fill(Color(white: 0.5))
-                                .frame(width: unitW - crateW, height: 0.8)
+                                .frame(width: unitW - boxW, height: 0.8)
                                 .offset(y: hookD / 2 - 0.4)
                         }
-                        HStack(spacing: linkGap) {
-                            ForEach(0 ..< n, id: \.self) { _ in container }
+                        HStack(spacing: crate.boxGap) {
+                            ForEach(0 ..< n, id: \.self) { i in chainColumn(i) }
                         }
                     }
                     .frame(width: unitW, height: unitH)
@@ -1083,64 +1209,54 @@ private struct CrateView: View {
         }
     }
 
-    /// A short glowing segment of the rail at parameter `center`, painted like
-    /// the river's ends: NOT a flat slab but a graduated neon — concentric
-    /// trims from a wide dim orange up to a narrow white-hot core, so the centre
-    /// blooms and the ends taper out through amber → deep orange. Rides the
-    /// status line directly above the crate as it travels.
-    private func railGlow(at center: CGFloat, halfWidth w: CGFloat) -> some View {
-        // A cool-WHITE comet marking the crate on the rail — pops against the
-        // warm magma vein. Concentric layers stacked with plusLighter sum to a
-        // white-hot core inside a soft white halo. An empty trim range renders
-        // nothing, so no guard is needed.
-        let warm = Color(red: 1.0, green: 0.96, blue: 0.88)   // faint warm-white mid
-        func seg(_ hw: CGFloat) -> (CGFloat, CGFloat) {
-            (max(0, center - hw), min(1, center + hw))
-        }
-        let l0 = seg(w), l1 = seg(w * 0.6), l2 = seg(w * 0.30), l3 = seg(w * 0.12)
+    /// A proper STEEL RAIL segment riding the status line above the load and
+    /// travelling with it: a dark steel web with a bright rail-head (the running
+    /// surface) and a faint warm under-glow tying it to the magma line. The
+    /// trolley/hook rides on this, so the cargo reads as on a track, not a glow.
+    private func railSegment(at pt: CGPoint, width: CGFloat, fade: Double) -> some View {
+        let w = width + 12
         return ZStack {
-            shape.trim(from: l0.0, to: l0.1)
-                .stroke(Color.white.opacity(0.26), style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
-                .shadow(color: Color.white.opacity(0.75), radius: 5)
-                .blendMode(.plusLighter)
-            shape.trim(from: l1.0, to: l1.1)
-                .stroke(warm.opacity(0.6), style: StrokeStyle(lineWidth: 2.8, lineCap: .round))
-                .blendMode(.plusLighter)
-            shape.trim(from: l2.0, to: l2.1)
-                .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
-                .blendMode(.plusLighter)
-            shape.trim(from: l3.0, to: l3.1)
-                .stroke(.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-                .blendMode(.plusLighter)
+            // Warm under-glow — keeps the magma read.
+            Capsule().fill(Magma.body)
+                .frame(width: w, height: 2)
+                .blur(radius: 2.5)
+                .opacity(0.45)
+            // Rail web (darker steel base).
+            Capsule()
+                .fill(LinearGradient(colors: [Color(white: 0.50), Color(white: 0.26)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: w, height: 3.2)
+            // Rail head — the bright running surface on top.
+            Capsule()
+                .fill(LinearGradient(colors: [Color(white: 0.92), Color(white: 0.66)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: w, height: 1.3)
+                .offset(y: -0.95)
         }
+        .opacity(fade)
+        .shadow(color: .black.opacity(0.4), radius: 1, y: 0.6)
+        .position(x: pt.x, y: pt.y)
         .allowsHitTesting(false)
     }
 
-    /// One trolley + cable + crate column.
-    private var container: some View {
-        VStack(spacing: 0) {
+    /// One harness column: trolley + cable + the box for chain index `i`. The
+    /// box image comes from `crate.boxImages` (carts / barrels / oil), falling
+    /// back to the wooden crate; `boxDrop` adds cable so a box hangs lower.
+    private func chainColumn(_ i: Int) -> some View {
+        let img = i < crate.boxImages.count ? crate.boxImages[i] : ShootAsset.crateImage
+        return VStack(spacing: 0) {
             Circle().fill(Color(white: 0.55)).frame(width: hookD, height: hookD)
-            Rectangle().fill(Color(white: 0.45)).frame(width: 0.8, height: cableLen)
-            crateBox
-        }
-    }
-
-    /// The crate box — the wooden crate SVG (recolour variants come later),
-    /// falling back to a tinted rounded rect if the asset didn't load.
-    private var crateBox: some View {
-        Group {
-            if let img = ShootAsset.crateImage {
-                Image(decorative: img, scale: 1)
-                    .resizable()
-                    .interpolation(.high)
-                    .saturation(0)        // steel-gray cargo — cool vs the warm rail
-                    .brightness(0.08)
-            } else {
-                RoundedRectangle(cornerRadius: 1.4).fill(crate.tint)
+            Rectangle().fill(Color(white: 0.45)).frame(width: 0.8, height: cableLen + crate.boxDrop)
+            Group {
+                if let img {
+                    Image(decorative: img, scale: 1).resizable().interpolation(.high)
+                } else {
+                    RoundedRectangle(cornerRadius: 1.4).fill(crate.tint)
+                }
             }
+            .frame(width: crate.boxSize, height: crate.boxSize)
+            .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
         }
-        .frame(width: crateW, height: crateH)
-        .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
     }
 
     private func railPoint(_ t: CGFloat) -> CGPoint {
@@ -1179,7 +1295,8 @@ struct RailAircraft: View {
     /// so both share a value — flip a plane's flag if it ever flies tail-first.
     private static var catalog: [(frames: [ShootAsset.Frame], height: CGFloat, facesLeft: Bool)] {
         [
-            (ShootAsset.contrailPlane, 32, false),  // SVG jet + exhaust
+            (ShootAsset.airship, 30, false),    // dirigible — reversed
+            (ShootAsset.airship1, 30, false),   // second blimp variant
         ].filter { !$0.frames.isEmpty }
     }
 
@@ -1195,13 +1312,13 @@ struct RailAircraft: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
-        // Same density rule as the freight: restart on the active-session count
-        // so the (rare) plane cadence eases with it.
+        // Blimps only fly once at least THREE agents are running; cadence still
+        // eases with the count above that.
         .onChange(of: working) { _, w in
             stopSpawning()
-            if w > 0 { startSpawning(working: w) }
+            if w >= 3 { startSpawning(working: w) }
         }
-        .onAppear { if working > 0 { startSpawning(working: working) } }
+        .onAppear { if working >= 3 { startSpawning(working: working) } }
         .onDisappear { stopSpawning() }
     }
 
@@ -1271,8 +1388,8 @@ private struct AircraftView: View {
                     // nose, so the plane always flies nose-first.
                     .scaleEffect(x: (plane.leftToRight == plane.facesLeft) ? -1 : 1, y: 1)
                     .opacity(Double(fade))
-                    // Tuck just below the rail, in the same strip as the crates.
-                    .position(x: pt.x, y: pt.y + h / 2 + 1.5)
+                    // Tuck below the rail — a bit lower so it clears the border.
+                    .position(x: pt.x, y: pt.y + h / 2 + 6)
             }
             .frame(width: size.width, height: size.height)
         }
@@ -1884,22 +2001,16 @@ struct RingLoader: View {
 /// radii, inset-shadow shading, clip-path paws and 8 synced keyframes are hard
 /// to reproduce natively. Shown while work is in progress. (A live webview is
 /// heavier than the hand-built loaders; bake to a GIF/native port if it stays.)
+/// The "working" hamster — formerly a WKWebView (CSS hamster wheel, ~8% CPU in a
+/// browser process). Now a native Lottie (`R.json`): full fidelity, tiny, native
+/// alpha, paused when quiet. The caller frames + mirrors it. `HamsterWebView` is
+/// kept below for revert.
 struct HamsterWheelLoader: View {
-    /// Render the CSS at its native 168px (font-size 14) for full detail, then
-    /// scale the whole webview DOWN to the badge. That supersamples it (a big
-    /// crisp render sampled into few pixels) rather than rasterising the CSS at
-    /// the tiny point size — which is what made it look pixelated.
-    private static let render: CGFloat = 168
+    @ObservedObject private var energy = EnergyMonitor.shared
 
     var body: some View {
-        GeometryReader { geo in
-            let target = max(8, min(geo.size.width, geo.size.height))
-            HamsterWebView(px: Self.render)
-                .frame(width: Self.render, height: Self.render)
-                .scaleEffect(target / Self.render)
-                .frame(width: geo.size.width, height: geo.size.height)
-        }
-        .allowsHitTesting(false)
+        LottieLoop(filename: "Hamster Wheel Loading.json", paused: energy.quiet, loopMode: .loop)
+            .allowsHitTesting(false)
     }
 }
 
@@ -2468,21 +2579,57 @@ struct LottieLoop: View {
 /// process, measured). Now a native Lottie animation (`Fire.json`): tiny, full
 /// fidelity (every ember + flicker), and freezes when quiet. `FireWebView` is
 /// kept below for revert.
+/// Fires a one-shot "stoke" pulse at the right-wing fire when the input comet
+/// reaches it — the FireLoader flares as if a fresh log was tossed on. Decoupled
+/// through a shared object because the comet (notch rail) and the fire (right
+/// wing) live in sibling subviews.
+@MainActor final class FireStoker: ObservableObject {
+    static let shared = FireStoker()
+    @Published private(set) var stokeID = 0
+    func stoke() { stokeID += 1 }
+}
+
 struct FireLoader: View {
     @ObservedObject private var energy = EnergyMonitor.shared
+    @ObservedObject private var stoker = FireStoker.shared
     /// Scale of the flame relative to the badge (the flame is allowed to spill
     /// past the glyph box — it reads as a bigger fire).
-    private static let fill: CGFloat = 1.0
+    private static let fill: CGFloat = 1.25
+    /// 0 at rest … 1 immediately after a log is added. Drives a brief glow + a
+    /// small upward leap, then settles. A `withAnimation` one-shot — no clock, so
+    /// it costs nothing at rest (battery-safe even while the Lottie is frozen).
+    @State private var stoke: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
             let target = max(8, min(geo.size.width, geo.size.height))
-            LottieLoop(filename: "Qujf8Dc4li (1).json", paused: energy.quiet, loopMode: .loop)
-                .frame(width: target * Self.fill, height: target * Self.fill)
-                .offset(x: target * 0.05 + 1, y: -target * 0.12)   // nudge up + a hair right (+1px)
-                .frame(width: geo.size.width, height: geo.size.height)
+            ZStack {
+                // Fuel flash — a warm ember bloom that surges with the new wood,
+                // then dies back. Kept additive so it brightens the flame itself.
+                RadialGradient(
+                    colors: [Color(red: 1.0, green: 0.80, blue: 0.40).opacity(0.85 * stoke),
+                             Color(red: 1.0, green: 0.46, blue: 0.10).opacity(0.45 * stoke),
+                             .clear],
+                    center: .center, startRadius: 0, endRadius: target * 0.7)
+                    .frame(width: target * 1.5, height: target * 1.5)
+                    .offset(x: target * 0.05 + 1, y: -target * 0.12)
+                    .blendMode(.plusLighter)
+
+                LottieLoop(filename: "Fire (1).json", paused: energy.quiet, loopMode: .loop)
+                    .frame(width: target * Self.fill, height: target * Self.fill)
+                    .offset(x: target * 0.05 + 1, y: -target * 0.12)   // nudge up + a hair right (+1px)
+                    // Small leap from the base (anchored low so it doesn't punch
+                    // into the border just above) — fuel makes the flames jump.
+                    .scaleEffect(1 + 0.13 * stoke, anchor: .bottom)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
+        .onChange(of: stoker.stokeID) { _, _ in
+            // Surge fast (the log lands), then ease back down over ~0.9s.
+            withAnimation(.easeOut(duration: 0.15)) { stoke = 1 }
+            withAnimation(.easeIn(duration: 0.9).delay(0.15)) { stoke = 0 }
+        }
     }
 }
 

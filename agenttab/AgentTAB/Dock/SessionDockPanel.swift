@@ -256,10 +256,14 @@ private struct DockSizeKey: PreferenceKey {
 /// shared `SquareCenterKey` anchor dictionary — so the cannon layer can aim
 /// the feed tracer, park the smoke, and float the toast all off one anchor.
 private let dockMuzzleAnchorID = UUID()
+/// The cylinder's CENTRE (the bore hub), published separately from the 12-o'clock
+/// muzzle — the smoke billows up out of the centre circle, not the top edge.
+private let dockCylinderAnchorID = UUID()
 
 struct SessionDockView: View {
     @EnvironmentObject var engine: ActivityEngine
     @EnvironmentObject var dock: DockState
+    @ObservedObject private var rateLimits = RateLimitMonitor.shared
     var onSizeChange: (CGSize) -> Void = { _ in }
 
     private static let square: CGFloat = 36
@@ -367,11 +371,12 @@ struct SessionDockView: View {
         .overlayPreferenceValue(SquareCenterKey.self) { centers in
             GeometryReader { geo in
                 let muzzle = dock.collapsed ? nil : centers[dockMuzzleAnchorID].map { geo[$0] }
+                let cylinder = dock.collapsed ? nil : centers[dockCylinderAnchorID].map { geo[$0] }
                 ZStack {
-                    // Smoke rises from the GUN — the spent round's exhaust
-                    // collects at the muzzle for the whole notification.
-                    if let front = toasts.first, let m = muzzle {
-                        SmokePuff(origin: m, restartKey: front.id)
+                    // Smoke rises from the cylinder's CENTRE — the spent round's
+                    // exhaust collects at the bore for the whole notification.
+                    if let front = toasts.first, let c = cylinder ?? muzzle {
+                        SmokePuff(origin: c, restartKey: front.id)
                             .id(front.id)
                     }
                     // The gun fires the round toward the notification's anchor.
@@ -478,6 +483,9 @@ struct SessionDockView: View {
             }
         }
         let needsYou = sessions.contains { $0.activity == .waiting }
+        // PROTOTYPE: rate-limit gauges. Fractions 0…1 of each window consumed.
+        let weeklyFrac = max(0, min(1, (rateLimits.weekly?.utilization ?? 0) / 100.0))
+        let fiveHourFrac = max(0, min(1, (rateLimits.fiveHour?.utilization ?? 0) / 100.0))
         // The revolver scales with the number of square rows so it never looks
         // dwarfed by a tall two-row magazine: its frame tracks the grid height.
         let rows = dock.collapsed
@@ -532,6 +540,11 @@ struct SessionDockView: View {
                 .overlay(BorderComet(start: 0.5, end: 0.0, trigger: shootPulse))
                 // Muzzle spark pop when the shoot comet fires out the top-right.
                 .overlay(MuzzleSparks(trigger: shootPulse))
+                // PROTOTYPE — EDGE GAUGES: weekly fills the TOP edge from the
+                // top-right end inward; 5-hour fills the BOTTOM edge from the
+                // bottom-right end inward. Each heats (orange → white-hot) as it
+                // approaches its cap.
+                .overlay(RateLimitGauges(weekly: weeklyFrac, fiveHour: fiveHourFrac))
         )
         // Room for the flare "horns" (vertical) AND the border's left-corner
         // bloom (leading) to extend beyond the box without the content-sized,
@@ -1028,6 +1041,78 @@ private struct MuzzleSparks: View {
     }
 }
 
+/// PROTOTYPE — rate-limit edge gauges. `weekly` fills the TOP edge from the
+/// top-right end inward; `fiveHour` fills the BOTTOM edge from the bottom-right
+/// end inward. Each heats orange → white-hot as it nears its cap. Param ranges
+/// along `DockEdgeBorder` are approximate (the path isn't uniform by arc-length).
+private struct RateLimitGauges: View {
+    let weekly: Double      // 0…1
+    let fiveHour: Double     // 0…1
+
+    var body: some View {
+        let line = DockEdgeBorder(radius: 14, inset: 0.75)
+        // The faster, decision-relevant window (5-hour) rides the TOP edge —
+        // first place the eye lands under the squares; the slow weekly budget is
+        // ambient context on the BOTTOM. Each fills from its screen-edge flare
+        // inward; 100% reaches the MIDDLE of the left vertical border (param 0.5).
+        let topTo = 0.5 * CGFloat(fiveHour)        // 5-hour: param 0 → 0.5*util
+        let botFrom = 1 - 0.5 * CGFloat(weekly)    // weekly: param 1-0.5*util → 1
+        GeometryReader { geo in
+            let path = line.path(in: CGRect(origin: .zero, size: geo.size))
+            ZStack {
+                gauge(line, from: 0, to: topTo, util: fiveHour)
+                gauge(line, from: botFrom, to: 1, util: weekly)
+                // Separator tick where molten meets cold — the current-fill mark.
+                if fiveHour > 0.001, let p = junction(path, at: topTo) {
+                    tick.position(p)
+                }
+                if weekly > 0.001, let p = junction(path, at: botFrom) {
+                    tick.position(p)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// A short, cool graduation mark dropped where the molten fill ends and the
+    /// cold border resumes — small (a separator, not a bar). Steel-white so it
+    /// reads against the orange line; a faint dark edge keeps it crisp.
+    private var tick: some View {
+        Rectangle()
+            .fill(Color(red: 0.84, green: 0.89, blue: 0.98))
+            .frame(width: 1.6, height: 7)
+            .shadow(color: .black.opacity(0.55), radius: 0.5)
+    }
+
+    /// Exact point at trim fraction `t` along the border (the path isn't
+    /// arc-length uniform, so we sample the trimmed path's end point).
+    private func junction(_ path: Path, at t: CGFloat) -> CGPoint? {
+        path.trimmedPath(from: 0, to: max(0.0001, min(1, t))).currentPoint
+    }
+
+    @ViewBuilder
+    private func gauge(_ line: DockEdgeBorder, from: CGFloat, to: CGFloat, util: Double) -> some View {
+        if to > from + 0.001 {
+            let c = Self.heat(util)
+            line.trim(from: max(0, from), to: min(1, to))
+                .stroke(c, style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+                .shadow(color: Magma.ember.opacity(0.55), radius: 5)
+                .shadow(color: c.opacity(0.7), radius: 2)
+                .blendMode(.plusLighter)
+        }
+    }
+
+    /// Warm gauge ramp: orange (low use) → white-hot (near the cap) — stays in
+    /// the magma family (no cold-blue) so it reads molten at any fill.
+    private static func heat(_ t: Double) -> Color {
+        let a = Magma.bodyRGB, b = Magma.whiteRGB
+        let f = min(1, max(0, t))
+        return Color(red: a.r + (b.r - a.r) * f,
+                     green: a.g + (b.g - a.g) * f,
+                     blue: a.b + (b.b - a.b) * f)
+    }
+}
+
 private struct SessionSquare: View {
     let size: CGFloat
     let initials: String      // 2-char name token, e.g. "mb"
@@ -1443,10 +1528,19 @@ private struct SmokePuff: View {
     /// frame 0 every time — without it the inner clock would stick on the
     /// last (dissipated) frame after the first finish.
     var restartKey: AnyHashable = 0
-    /// On-screen footprint of the plume. Tall so the smoke has room to rise;
-    /// the toast slot reserves matching headroom above the strip.
-    var width: CGFloat = 72
-    var height: CGFloat = 104
+    /// Plume height; the toast reserves matching headroom above the strip. The
+    /// WIDTH is derived from the keyed wisp's real aspect (every frame shares the
+    /// same crop) so the GIF is shown at its true proportions — never stretched.
+    var height: CGFloat = 77
+    /// Where the wisp's BASE sits horizontally within its crop (0 = left edge,
+    /// 1 = right). Measured at 0.40 — left of centre — so we nudge the frame right
+    /// to drop the base onto the cylinder's centre instead of off to its side.
+    private static let baseColumn: CGFloat = 0.40
+    private var aspect: CGFloat {
+        guard let f = ShootAsset.smoke.first, f.image.height > 0 else { return 0.95 }
+        return CGFloat(f.image.width) / CGFloat(f.image.height)
+    }
+    private var width: CGFloat { height * aspect }
     /// Roughly the toast's dwell, so the last wisp fades as the card leaves.
     var lifetime: Double = 4.0
 
@@ -1457,14 +1551,18 @@ private struct SmokePuff: View {
             let age = ctx.date.timeIntervalSince(startDate)
             let appear = min(1, age / 0.18)
             let fade = max(0, min(1, (lifetime - age) / 1.2))
-            // The GIF's baked-in delays are 5fps (choppy); play its 106 frames
-            // at a real rate, once through, so it flows and dissipates.
-            KeyedGIFView(frames: ShootAsset.smoke, fps: 26, loop: false)
+            // A 1s curling wisp (25fps, native delays). Loop it through the
+            // toast's dwell; the appear/fade envelope below does the rise-in and
+            // dissipation, so the plume never just freezes on a frame.
+            KeyedGIFView(frames: ShootAsset.smoke, loop: true)
                 .id(restartKey)   // remount → restart from frame 0 each finish
                 .frame(width: width, height: height)
                 .opacity(appear * fade)
-                // Pin the plume's BASE to the muzzle; it extends upward.
-                .position(x: origin.x, y: origin.y - height / 2 + 8)
+                // Drop the wisp's BASE onto the cylinder centre: shift right by
+                // however far the base sits left of the frame centre, and sit the
+                // frame's bottom just at the centre so the plume rises out of it.
+                .position(x: origin.x + (0.5 - Self.baseColumn) * width,
+                          y: origin.y - height / 2 + 2)
         }
         .onAppear { startDate = Date() }
         .allowsHitTesting(false)
@@ -1663,12 +1761,20 @@ private struct RevolverCylinder: View {
                 }
 
                 // Publish the muzzle point (12 o'clock) so the cannon layer can
-                // aim the feed tracer, park the smoke, and float the card here.
+                // aim the feed tracer and float the card here.
                 Color.clear
                     .frame(width: 1, height: 1)
                     .position(x: c.x, y: c.y - ringR)
                     .anchorPreference(key: SquareCenterKey.self, value: .center) {
                         [dockMuzzleAnchorID: $0]
+                    }
+                // Publish the cylinder CENTRE (bore hub) — the smoke rises out
+                // of the centre circle rather than the top edge.
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .position(x: c.x, y: c.y)
+                    .anchorPreference(key: SquareCenterKey.self, value: .center) {
+                        [dockCylinderAnchorID: $0]
                     }
             }
             .frame(width: d, height: d)
