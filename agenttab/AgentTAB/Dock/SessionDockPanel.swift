@@ -292,6 +292,12 @@ struct SessionDockView: View {
     /// + muzzle flash). The gun is now the single muzzle every toast comes out
     /// of, so this — not the in-flight count — is the authoritative "fire".
     @State private var revolverFire = 0
+    /// Bumped when input arrives (the working count rises) → a magma comet rises
+    /// from the bottom up to the middle of the left bar (loading the chamber).
+    @State private var inputPulse = 0
+    /// Bumped when a session FINISHES (.success) → a magma comet leaves the middle
+    /// of the left bar, up over the top, and out the end (firing the round).
+    @State private var shootPulse = 0
 
     /// Matches the notch shooter's `shootDelay`: the gun "poses" this long
     /// before the gunshot sound + bullet fire, so the dock shell launches on
@@ -318,6 +324,17 @@ struct SessionDockView: View {
         return (major, minor)
     }
 
+    /// Count of agents actively WORKING (input has been sent, still running).
+    /// A rise in this means new input arrived → drives the "loading" comet.
+    private func workingCount(_ sessions: [Session]) -> Int {
+        sessions.reduce(into: 0) { n, s in
+            switch s.activity {
+            case .thinking, .tool, .initState: n += 1
+            default: break
+            }
+        }
+    }
+
     /// Cheap identity/order token for the layout animation. Hashes the session
     /// ids without allocating an intermediate `[UUID]` every body evaluation
     /// (the old `sessions.map(\.id)` minted a fresh array each render).
@@ -333,18 +350,15 @@ struct SessionDockView: View {
         // right-glued. Above: headroom the smoke + card erupt into. The panel
         // is bottom-anchored, so reserving headroom grows the window UPWARD.
         VStack(alignment: .trailing, spacing: 0) {
-            if dock.collapsed {
-                // Collapsed: no revolver on screen to fire from — fall back to
-                // a plain card riding the trailing edge.
-                if !toasts.isEmpty { collapsedToastCard }
-            } else {
-                // Reserve the headroom UNCONDITIONALLY (not just while a toast is
-                // live). Toggling it per-toast resized the whole dock window every
-                // time a notification came and went — a feedback loop through
-                // DockSizeKey → resize() → re-anchor that made the drawer seize.
-                // The space is transparent, so a constant window height is free.
-                Color.clear.frame(width: DockToastCard.width, height: Self.deckHeadroom)
-            }
+            // Reserve the headroom UNCONDITIONALLY, in BOTH states. Toggling it
+            // per-toast (the old collapsed path inserted the card into the flow
+            // only when a toast existed) resized the dock window every time a
+            // notification came and went — a DockSizeKey → resize() → re-anchor
+            // feedback loop that made the drawer jitter. The space is transparent,
+            // so a constant window size is free. A touch wider than the card so it
+            // never clips against the right-glued edge when the strip is narrow
+            // (collapsed, or only a few sessions).
+            Color.clear.frame(width: DockToastCard.width + 28, height: Self.deckHeadroom)
             strip(sessions)
         }
         // FX layer (non-interactive): the muzzle smoke + the tracer that feeds
@@ -378,7 +392,7 @@ struct SessionDockView: View {
         // and rests just above the drawer. Its own overlay so it stays tappable.
         .overlay {
             GeometryReader { geo in
-                if !dock.collapsed, !toasts.isEmpty {
+                if !toasts.isEmpty {
                     notificationStack(panelWidth: geo.size.width)
                 }
             }
@@ -392,6 +406,11 @@ struct SessionDockView: View {
         .onPreferenceChange(DockSizeKey.self) { onSizeChange($0) }
         .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
             if let payload = note.object as? DockEventPayload { fire(payload) }
+        }
+        // Input arriving = the count of WORKING agents rising → fire the "loading"
+        // comet up from the bottom to the chamber (middle of the left bar).
+        .onChange(of: workingCount(sessions)) { old, new in
+            if new > old { inputPulse += 1 }
         }
         .animation(.easeOut(duration: 0.18), value: layoutToken(sessions))
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
@@ -499,10 +518,20 @@ struct SessionDockView: View {
                 )
                 .overlay(
                     // Border on TOP + LEFT + BOTTOM only (right is glued to the
-                    // screen edge). A "heating element": calm gray at rest, then
-                    // riding the magma ramp + breathing faster with the load.
+                    // screen edge). Cold gray at rest; when work starts the molten
+                    // frame connects in from the two ends and meets in the middle
+                    // (the river's merge), retracting when the last agent quiets.
                     ForgeBorder(active: inFlight)
                 )
+                // Magma comets riding the same border path: input LOADS the chamber
+                // (bottom-right → middle of the left bar), a finish FIRES it out
+                // (middle of the left bar → over the top → end). The input comet is
+                // synced to the merge curve so it rides the river's bottom front.
+                .overlay(BorderComet(start: 1.0, end: 0.5, trigger: inputPulse,
+                                     animation: .easeInOut(duration: 0.7)))
+                .overlay(BorderComet(start: 0.5, end: 0.0, trigger: shootPulse))
+                // Muzzle spark pop when the shoot comet fires out the top-right.
+                .overlay(MuzzleSparks(trigger: shootPulse))
         )
         // Room for the flare "horns" (vertical) AND the border's left-corner
         // bloom (leading) to extend beyond the box without the content-sized,
@@ -512,16 +541,6 @@ struct SessionDockView: View {
         .padding(.leading, 9)
     }
 
-    /// Collapsed fallback card. With the revolver hidden there's no muzzle to
-    /// erupt from, so the card just rides the trailing edge above the handle.
-    @ViewBuilder
-    private var collapsedToastCard: some View {
-        if let toast = toasts.first {
-            DockToastCard(toast: toast, onTap: { tapToast(toast) })
-                .transition(.scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity))
-                .padding(.bottom, Self.gap)
-        }
-    }
 
     // MARK: Cannon firing
 
@@ -553,6 +572,8 @@ struct SessionDockView: View {
         // pull the new card in from the right onto the FRONT of the stack (older
         // ones slide back). A hard cap guards memory.
         revolverFire += 1
+        // A FINISH fires the "shoot" comet up over the top and out the end.
+        if payload.variant == .success { shootPulse += 1 }
         withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) {
             toasts.insert(next, at: 0)
             if toasts.count > 8 { toasts.removeLast() }
@@ -849,39 +870,161 @@ enum DockMagma {
 /// under load and diverge from the river).
 private struct ForgeBorder: View {
     let active: Int
+    /// 0 = retracted (cold gray frame), 1 = fully connected (lit molten frame).
+    /// Animated ONLY on the work-starts / work-ends transition — a one-shot
+    /// "river" merge / unmerge, NOT a clock, so it's free at rest and while
+    /// steady. Mirrors the notch river: the molten connects in from the two
+    /// screen-edge ends and meets in the middle when work begins, and retracts
+    /// back to the ends when the last agent goes quiet.
+    @State private var merge: CGFloat = 0
+    /// Pending retract, held so the border doesn't dissipate until the shoot
+    /// comet has played out. Cancelled if work restarts during the hold.
+    @State private var unmergeWork: DispatchWorkItem?
+    /// ≈ the shoot comet's lifetime after the last agent quiets: the finish
+    /// event's shootDelay (0.5) + the comet flight (~0.55), so the frame stays
+    /// lit until the round has fired out the top.
+    private static let dissipateDelay: Double = 1.1
+
     var body: some View {
-        // STATIC — no clock. The hue is fixed (river orange); only the glow
-        // intensity rises with the load, and only re-renders when the count
-        // changes, so it costs nothing at rest or while steady.
-        let idle = active == 0
         let line = DockEdgeBorder(radius: 14, inset: 0.75)
-        // Idle: a calm thin gray line, no bloom.
-        if idle {
-            return AnyView(line.stroke(Color.white.opacity(0.5), lineWidth: 1.5))
-        }
-        // Active: a FAITHFUL replica of the notch river's `moltenVein` — three
-        // stacked strokes so the frame glows exactly like the river:
-        //   1. a wide deep-red BASE carrying the double bloom (ember + gold),
-        //   2. the hot-orange BODY,
-        //   3. a thin gold-white CORE on plusLighter (the bright white centreline).
-        // Static (no clock) — the cold→white-hot load ramp lives in the rounds +
-        // centre glow, so this costs nothing at rest while matching the river.
-        // The drawer renders at 1:1 (the notch is supersampled), so the river's
-        // gold-white core shows at full width here and washes the line yellow.
-        // To match what the EYE sees, the body orange is widened to dominate and
-        // the yellow contributors (gold inner glow + the core highlight) are
-        // pulled down — so the frame reads orange like the river, not gold.
-        return AnyView(
-            ZStack {
-                line.stroke(Magma.deep, style: StrokeStyle(lineWidth: 3.6, lineCap: .round))
-                    .shadow(color: Magma.ember.opacity(0.45), radius: 6)
-                    .shadow(color: Magma.gold.opacity(0.30), radius: 3)
-                line.stroke(Magma.body, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
-                line.stroke(Magma.core, style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
-                    .blendMode(.plusLighter)
-                    .opacity(0.45)
+        return ZStack {
+            // Cold base frame — always present; the molten covers it when lit.
+            line.stroke(Color.white.opacity(0.5), lineWidth: 1.5)
+            if merge >= 0.999 {
+                // Fully connected → ONE continuous stroke, so there's no meeting
+                // seam (two round caps butting at 0.5 left a dark-red dot).
+                moltenSeg(line, from: 0, to: 1)
+            } else {
+                // Mid-transition → connect in from BOTH ends (param 0 = top-right
+                // flare, param 1 = bottom-right flare) toward the centre (param
+                // 0.5, the left edge), like the river merging from the sides.
+                moltenSeg(line, from: 0, to: merge * 0.5)
+                moltenSeg(line, from: 1 - merge * 0.5, to: 1)
             }
-        )
+        }
+        // Set the resting state without animating on first appear.
+        .onAppear { merge = active > 0 ? 1 : 0 }
+        // Work starts → connect in immediately (the river takes priority, and the
+        // input comet rides its bottom front). Last agent goes quiet → HOLD, then
+        // retract — so the dissipation only happens AFTER the shoot comet has
+        // played out, never on top of it.
+        .onChange(of: active > 0) { _, on in
+            unmergeWork?.cancel()
+            if on {
+                withAnimation(.easeInOut(duration: 0.7)) { merge = 1 }
+            } else {
+                let work = DispatchWorkItem {
+                    withAnimation(.easeInOut(duration: 0.7)) { merge = 0 }
+                }
+                unmergeWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.dissipateDelay, execute: work)
+            }
+        }
+    }
+
+    /// One run of the molten frame over a trim range — the drawer's `moltenVein`:
+    /// a wide deep-red base carrying the double bloom (ember + gold), the hot-
+    /// orange body, and a thin gold-white core. Widths tuned so it reads ORANGE
+    /// (not gold) at the dock's 1:1 scale. Always rendered (empty when the trim is
+    /// zero-length) so the trim animates smoothly instead of popping in.
+    @ViewBuilder
+    private func moltenSeg(_ line: DockEdgeBorder, from: CGFloat, to: CGFloat) -> some View {
+        let seg = line.trim(from: max(0, min(from, to)), to: max(from, to))
+        ZStack {
+            seg.stroke(Magma.deep, style: StrokeStyle(lineWidth: 3.6, lineCap: .round))
+                .shadow(color: Magma.ember.opacity(0.45), radius: 6)
+                .shadow(color: Magma.gold.opacity(0.30), radius: 3)
+            seg.stroke(Magma.body, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+            seg.stroke(Magma.core, style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
+                .blendMode(.plusLighter)
+                .opacity(0.45)
+        }
+    }
+}
+
+/// A magma comet that streaks along the drawer's border — the dock's echo of the
+/// notch's siphon comet. Border params: 0 = top-right end, 0.5 ≈ middle of the
+/// left bar (by the revolver/chamber), 1 = bottom-right end. Travels `start`→`end`
+/// once per `trigger` bump with a short trailing tail, then vanishes. One-shot,
+/// no clock — free at rest.
+private struct BorderComet: View {
+    var start: CGFloat
+    var end: CGFloat
+    let trigger: Int
+    /// The input comet uses the SAME curve/duration as the border merge so it
+    /// rides exactly on the river's bottom front (synced, not competing).
+    var animation: Animation = .easeOut(duration: 0.55)
+    @State private var phase: CGFloat = 1   // 1 = finished / hidden
+
+    var body: some View {
+        let line = DockEdgeBorder(radius: 14, inset: 0.75)
+        let head = start + (end - start) * phase
+        let tailLen: CGFloat = 0.16
+        let behind = head + (start >= end ? tailLen : -tailLen)   // tail trails toward `start`
+        let from = max(0, min(head, behind))
+        let to = min(1, max(head, behind))
+        // Bright until it actually ARRIVES (so the input comet visibly reaches
+        // the middle of the left bar before fading); quick fade over the last
+        // sliver; fully hidden at rest.
+        let vis: Double = phase >= 1 ? 0 : (phase < 0.92 ? 1 : max(0, Double(1 - phase) / 0.08))
+        // ALWAYS rendered (no conditional view) so the TRIM animates and the
+        // comet actually travels — a conditional `if` would animate the view's
+        // insertion/removal (a fade) instead. Opacity hides it at rest.
+        return ZStack {
+            line.trim(from: from, to: to)            // warm halo
+                .stroke(Magma.gold, style: StrokeStyle(lineWidth: 3.2, lineCap: .round))
+                .shadow(color: Magma.ember.opacity(0.95), radius: 8)
+                .shadow(color: Magma.gold.opacity(0.9), radius: 4)
+                .blendMode(.plusLighter)
+                .opacity(vis)
+            line.trim(from: from, to: to)            // white-hot core — pops over the orange border
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .blendMode(.plusLighter)
+                .opacity(vis)
+        }
+        .onChange(of: trigger) { _, _ in
+            phase = 0
+            withAnimation(animation) { phase = 1 }
+        }
+    }
+}
+
+/// A tiny one-shot spark pop at the muzzle (the top-right exit) fired when the
+/// shoot comet reaches the end — the round leaving the barrel. Fans upward and
+/// fades fast; no trailing sparks (the drawer stays calm). Event-driven, no clock.
+private struct MuzzleSparks: View {
+    let trigger: Int
+    /// Fire when the comet arrives at the exit (≈ the shoot comet's flight time).
+    var fireDelay: Double = 0.5
+    @State private var phase: CGFloat = 1   // 1 = done / hidden
+
+    // Fixed fan of sparks (angle° from +x, with +y up) spraying up-and-out.
+    private static let sparks: [(angle: Double, dist: Double)] = [
+        (58, 11), (80, 13), (100, 9), (120, 12), (90, 6),
+    ]
+
+    var body: some View {
+        GeometryReader { geo in
+            let origin = CGPoint(x: geo.size.width - 3, y: 3)   // top-right flare tip
+            ForEach(Array(Self.sparks.enumerated()), id: \.offset) { _, s in
+                let rad = s.angle * .pi / 180
+                let d = s.dist * Double(phase)
+                Circle()
+                    .fill(Magma.white)
+                    .frame(width: 2.2, height: 2.2)
+                    .shadow(color: Magma.gold.opacity(0.9), radius: 2)
+                    .blendMode(.plusLighter)
+                    .position(x: origin.x + cos(rad) * d, y: origin.y - sin(rad) * d)
+                    .opacity(phase >= 1 ? 0 : Double(1 - phase * phase))
+            }
+        }
+        .allowsHitTesting(false)
+        .onChange(of: trigger) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + fireDelay) {
+                phase = 0
+                withAnimation(.easeOut(duration: 0.4)) { phase = 1 }
+            }
+        }
     }
 }
 
