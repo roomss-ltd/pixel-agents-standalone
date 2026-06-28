@@ -33,7 +33,12 @@ targets:
           - "**/*.md"
           - "Resources/sounds/**"
           - "Resources/sounds"
+          - "Resources/Animations/**"
+          - "Resources/Animations"
       - path: AgentTAB/Resources/sounds
+        type: folder
+        buildPhase: resources
+      - path: AgentTAB/Resources/Animations
         type: folder
         buildPhase: resources
     resources:

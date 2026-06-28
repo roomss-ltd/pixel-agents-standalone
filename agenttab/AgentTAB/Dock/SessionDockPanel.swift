@@ -1393,12 +1393,9 @@ private struct DockToastCard: View {
     static let height: CGFloat = 44
     private static let radius: CGFloat = 12
 
-    /// The status icon (focus reticle), loaded once from Downloads.
-    private static let bulletImage: NSImage? = {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads/focus.png")
-        return NSImage(contentsOf: url)
-    }()
+    /// The status icon (focus reticle), loaded once from the app bundle.
+    private static let bulletImage: NSImage? = BundledAsset.url("focus-reticle.png")
+        .flatMap { NSImage(contentsOf: $0) }
 
     let toast: DockToast
     let onTap: () -> Void
@@ -1681,13 +1678,10 @@ private struct RevolverCylinder: View {
 
     /// The cylinder silhouette — a black-on-transparent PNG (6 bores at ring
     /// 0.29, bore r 0.125). Loaded once; tinted to steel and the transparent
-    /// bores let the brass rounds behind it show through. Loaded from Downloads
-    /// like the other preview art.
-    private static let cylinderImage: NSImage? = {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent("revolver-cylinder.png")
-        return NSImage(contentsOf: url)
-    }()
+    /// bores let the brass rounds behind it show through. Loaded from the app
+    /// bundle.
+    private static let cylinderImage: NSImage? = BundledAsset.url("revolver-cylinder.png")
+        .flatMap { NSImage(contentsOf: $0) }
 
     @State private var loaded: [Bool] = Array(repeating: false, count: 6)
     @State private var angle: Double = 0

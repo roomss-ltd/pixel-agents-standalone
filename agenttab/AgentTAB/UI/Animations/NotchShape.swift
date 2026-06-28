@@ -677,10 +677,23 @@ struct KeyedGIFView: View {
     }
 }
 
-/// Loads the "shoot" hand GIF from ~/Downloads (prefers `Shoot.gif`, else the
-/// newest .gif), decodes its frames, and keys out the white background so it
-/// reads as a transparent cut-out. Cached once. Reading Downloads on a
-/// non-sandboxed app may trigger a one-time macOS permission prompt.
+/// Resolves runtime art shipped INSIDE the app bundle — `Resources/Animations`
+/// for GIF/PNG/Lottie, `Resources/sounds` for audio. Everything used to be read
+/// from the user's `~/Downloads`, which broke on any other machine; bundling
+/// makes the app portable and self-contained.
+enum BundledAsset {
+    static func url(_ filename: String, in subdir: String = "Animations") -> URL? {
+        let ns = filename as NSString
+        return Bundle.main.url(forResource: ns.deletingPathExtension,
+                               withExtension: ns.pathExtension,
+                               subdirectory: subdir)
+    }
+}
+
+/// Loads the gun / finish / start GIFs and rail art from the app bundle
+/// (`Resources/Animations`), decodes + downscales the frames, and keys out the
+/// white background where needed so they read as transparent cut-outs. Cached
+/// once. Bundled (not `~/Downloads`) so the app ships self-contained.
 enum ShootAsset {
     struct Frame { let image: CGImage; let duration: Double }
 
@@ -693,15 +706,15 @@ enum ShootAsset {
     static let coffee: [Frame] = loadNamed("Hot Beverage.gif")
     static let sleepBear: [Frame] = loadNamed("Sleeping bear.gif")
     /// Left-wing shooter (work starts). TEMP: funnel instead of bullets.
-    static let funnel: [Frame] = loadNamed("funnel.gif")
+    static let funnel: [Frame] = loadNamed("start-funnel.gif")
     /// Left-wing target when work finishes (gun fires right→left).
-    static let target: [Frame] = loadNamed("target.gif")
+    static let target: [Frame] = loadNamed("finish-target.gif")
     /// Right-wing projectiles while work STARTS (funnel pours on the left).
-    static let bullets: [Frame] = loadNamed("bullets (1).gif")
+    static let bullets: [Frame] = loadNamed("start-bullets.gif")
     /// Muzzle smoke for the dock cannon — a gray wisp on a WHITE page. We drop
     /// the page with a luminance key and tint the wisp warm so it reads as a
     /// translucent plume over the near-black drawer (see `loadKeyedLuma`).
-    static let smoke: [Frame] = loadKeyedLuma("wmremove-transformed (online-video-cutter.com).gif")
+    static let smoke: [Frame] = loadKeyedLuma("muzzle-smoke.gif")
     /// Occasional flyover props that cross the status line while work is active.
     /// Both GIFs ship with native alpha (no white to key) and face LEFT, so the
     /// crossing view flips them when travelling left→right. The square jet reads
@@ -709,50 +722,47 @@ enum ShootAsset {
     /// Static SVG jet (dark teal body + orange exhaust). Rasterised once.
     static let contrailPlane: [Frame] = loadStatic("Airplane.svg")
     /// Dirigibles/blimps that drift across the upper band.
-    static let airship: [Frame] = loadStatic("airship.png", pixelHeight: 256)
-    static let airship1: [Frame] = loadStatic("airship (1).png", pixelHeight: 256)
+    static let airship: [Frame] = loadStatic("airship-1.png", pixelHeight: 256)
+    static let airship1: [Frame] = loadStatic("airship-2.png", pixelHeight: 256)
     /// Wooden crate box (SVG) — replaces the drawn crate, still hung by OUR
     /// trolley+cable crane. Recolour variants come later.
     static let crateImage: CGImage? = loadStatic("crate.png", pixelHeight: 128).first?.image
     /// Shipping containers that ship WITH their own crane rig baked in (hook +
     /// cables + posts); they ride solo, no extra crane from us.
-    static let containerImages: [CGImage] = ["container1.png", "container2.png"]
+    static let containerImages: [CGImage] = ["container-1.png", "container-2.png"]
         .compactMap { loadNamed($0, keyed: false).first?.image }
     /// Forge-railway cargo that rides the rail SOLO (own footprint, no harness):
     /// just the molten-metal ladle now (barrels/oil moved to chained loads).
-    static let railProps: [CGImage] = ["molten.png"]
+    static let railProps: [CGImage] = ["molten-ladle.png"]
         .compactMap { loadNamed($0, keyed: false).first?.image }
     /// Boxes for chained, HARNESSED loads.
     static let mineCartImage: CGImage? = loadStatic("mine-cart.png", pixelHeight: 128).first?.image
-    static let oilImage: CGImage? = loadStatic("oil.png", pixelHeight: 128).first?.image       // oil group
-    static let barrel1Image: CGImage? = loadStatic("barrel (1).png", pixelHeight: 128).first?.image // oil group
-    static let barrelImage: CGImage? = loadStatic("barrel.png", pixelHeight: 128).first?.image  // wooden barrel
+    static let oilImage: CGImage? = loadStatic("oil-drum.png", pixelHeight: 128).first?.image       // oil group
+    static let barrel1Image: CGImage? = loadStatic("barrel-metal.png", pixelHeight: 128).first?.image // oil group
+    static let barrelImage: CGImage? = loadStatic("barrel-wood.png", pixelHeight: 128).first?.image  // wooden barrel
     /// The fire "working" loader, pre-rendered from the original CSS to a PNG
     /// frame loop (one 6s LCM cycle at 15fps) — played natively (no WebKit).
     static let fire: [Frame] = loadSequence("fire_frames", prefix: "fire_", count: 90, fps: 15)
 
     private static func load() -> [Frame] {
-        guard let url = sourceURL else { return [] }
+        guard let url = BundledAsset.url("gun-fire.gif") else { return [] }
         return frames(at: url)
     }
 
-    /// Load a specific GIF by filename from ~/Downloads, optionally keying out
-    /// its white background.
+    /// Load a specific GIF/PNG by bundled filename, optionally keying out its
+    /// white background.
     static func loadNamed(_ filename: String, keyed: Bool = true) -> [Frame] {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent(filename)
+        guard let url = BundledAsset.url(filename) else { return [] }
         return frames(at: url, keyed: keyed)
     }
 
-    /// Rasterise a single static image (e.g. an SVG) from ~/Downloads into one
-    /// frame, `pixelHeight` tall at the source aspect — crisp enough to display
-    /// well above its on-screen size. macOS draws SVG natively via NSImage. The
-    /// offscreen bitmap starts transparent, so the art's own alpha is preserved
-    /// (no keying). Returns [] if the file is missing or can't be drawn.
+    /// Rasterise a single bundled static image into one frame, `pixelHeight` tall
+    /// at the source aspect — crisp enough to display well above its on-screen
+    /// size. The offscreen bitmap starts transparent, so the art's own alpha is
+    /// preserved (no keying). Returns [] if the file is missing or can't be drawn.
     static func loadStatic(_ filename: String, pixelHeight: Int = 480) -> [Frame] {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent(filename)
-        guard let img = NSImage(contentsOf: url),
+        guard let url = BundledAsset.url(filename),
+              let img = NSImage(contentsOf: url),
               img.size.width > 0, img.size.height > 0 else { return [] }
         let aspect = img.size.width / img.size.height
         let pxH = max(1, pixelHeight)
@@ -788,34 +798,50 @@ enum ShootAsset {
         return out
     }
 
-    private static func frames(at url: URL, keyed: Bool = true) -> [Frame] {
+    /// Decode each frame DOWNSCALED to `maxPixel` on its longest side via an
+    /// ImageIO thumbnail (ImageIO decodes at reduced scale — it never materialises
+    /// the full bitmap), optionally keying out white. These GIFs are authored at
+    /// 640² yet render ≤30 pt, so 128 px is 2×+ the on-screen size while cutting
+    /// RAM ~25× (e.g. 72 MB → ~3 MB). Per-frame timing is read separately, so the
+    /// cadence is unchanged.
+    private static func frames(at url: URL, keyed: Bool = true, maxPixel: Int = 128) -> [Frame] {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [] }
         let n = CGImageSourceGetCount(src)
+        let thumbOpts = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ] as CFDictionary
         var out: [Frame] = []
         for i in 0 ..< n {
-            guard let cg = CGImageSourceCreateImageAtIndex(src, i, nil) else { continue }
-            guard let img = keyed ? keyWhite(cg) : cg else { continue }
-            out.append(Frame(image: img, duration: frameDuration(src, i)))
+            // Drain the full-size decode intermediate each iteration so it never
+            // piles up (thumbnail-from-image decodes the full frame transiently).
+            autoreleasepool {
+                guard let cg = CGImageSourceCreateThumbnailAtIndex(src, i, thumbOpts) else { return }
+                guard let img = keyed ? keyWhite(cg) : cg else { return }
+                out.append(Frame(image: img, duration: frameDuration(src, i)))
+            }
         }
         return out
     }
 
-    private static var sourceURL: URL? {
-        let dl = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads")
-        let named = dl.appendingPathComponent("Shoot.gif")
-        if FileManager.default.fileExists(atPath: named.path) { return named }
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: dl, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return urls
-            .filter { $0.pathExtension.lowercased() == "gif" }
-            .max { a, b in
-                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                return da < db
-            }
+    /// Downscale a CGImage so its longest side is ≤ `maxPixel`, preserving aspect
+    /// + alpha. Caps the resident size of keyed/cropped frames (used by the smoke
+    /// loader, which keys + crops at source res then shrinks the small result).
+    private static func downscale(_ cg: CGImage, maxPixel: Int) -> CGImage {
+        let w = cg.width, h = cg.height
+        let longest = max(w, h)
+        guard longest > maxPixel, longest > 0 else { return cg }
+        let scale = Double(maxPixel) / Double(longest)
+        let nw = max(1, Int((Double(w) * scale).rounded()))
+        let nh = max(1, Int((Double(h) * scale).rounded()))
+        guard let ctx = CGContext(
+            data: nil, width: nw, height: nh, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cg }
+        ctx.interpolationQuality = .high
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: nw, height: nh))
+        return ctx.makeImage() ?? cg
     }
 
     private static func frameDuration(_ src: CGImageSource, _ i: Int) -> Double {
@@ -861,22 +887,26 @@ enum ShootAsset {
     /// per-frame boxes would jump as the curls move. The wide letterboxed source
     /// (mostly white) collapses to a tight, near-square plume.
     static func loadKeyedLuma(_ filename: String) -> [Frame] {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent(filename)
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [] }
+        guard let url = BundledAsset.url(filename),
+              let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [] }
         let n = CGImageSourceGetCount(src)
         var keyed: [(img: CGImage, dur: Double, box: CGRect)] = []
         for i in 0 ..< n {
-            guard let cg = CGImageSourceCreateImageAtIndex(src, i, nil),
-                  let (img, box) = keyLuma(cg) else { continue }
-            keyed.append((img, frameDuration(src, i), box))
+            autoreleasepool {
+                guard let cg = CGImageSourceCreateImageAtIndex(src, i, nil),
+                      let (img, box) = keyLuma(cg) else { return }
+                keyed.append((img, frameDuration(src, i), box))
+            }
         }
         let union = keyed.reduce(CGRect?.none) { acc, item in
             acc.map { $0.union(item.box) } ?? item.box
         }
         return keyed.map { item in
             let cropped = union.flatMap { item.img.cropping(to: $0) } ?? item.img
-            return Frame(image: cropped, duration: item.dur)
+            // Key + crop at source res for clean edges, THEN downscale the small
+            // result — the wisp renders at ~77 pt, so ~200 px stays crisp at a
+            // fraction of the RAM (~20 MB → ~3 MB across the 25 frames).
+            return Frame(image: downscale(cropped, maxPixel: 200), duration: item.dur)
         }
     }
 
@@ -2009,7 +2039,7 @@ struct HamsterWheelLoader: View {
     @ObservedObject private var energy = EnergyMonitor.shared
 
     var body: some View {
-        LottieLoop(filename: "Hamster Wheel Loading.json", paused: energy.quiet, loopMode: .loop)
+        LottieLoop(filename: "hamster-wheel.json", paused: energy.quiet, loopMode: .loop)
             .allowsHitTesting(false)
     }
 }
@@ -2564,9 +2594,8 @@ struct LottieLoop: View {
     var loopMode: LottieLoopMode = .loop
 
     var body: some View {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent(filename)
-        LottieView(animation: LottieAnimation.filepath(url.path))
+        let url = BundledAsset.url(filename)
+        LottieView(animation: LottieAnimation.filepath(url?.path ?? ""))
             .configuration(LottieConfiguration(renderingEngine: .coreAnimation))
             .resizable()
             .playbackMode(paused
@@ -2615,7 +2644,7 @@ struct FireLoader: View {
                     .offset(x: target * 0.05 + 1, y: -target * 0.12)
                     .blendMode(.plusLighter)
 
-                LottieLoop(filename: "Fire (1).json", paused: energy.quiet, loopMode: .loop)
+                LottieLoop(filename: "forge-fire.json", paused: energy.quiet, loopMode: .loop)
                     .frame(width: target * Self.fill, height: target * Self.fill)
                     .offset(x: target * 0.05 + 1, y: -target * 0.12)   // nudge up + a hair right (+1px)
                     // Small leap from the base (anchored low so it doesn't punch
@@ -3321,7 +3350,7 @@ enum SVGAsset {
 /// Gunshot SFX for the siphon — `gun-reload.mp3` when a session starts work,
 /// `gun-shot.mp3` when one finishes. Loaded once from ~/Downloads.
 enum SoundFX {
-    static let reload = make("gun-reload-3.mp3", volume: 0.5)
+    static let reload = make("gun-reload.mp3", volume: 0.5)
     static let shot = make("gun-shot.mp3", volume: 1.0)
     /// Played when a session starts waiting on the user (needs input).
     static let waiting = make("awp-shot.mp3", volume: 1.0)
@@ -3330,8 +3359,7 @@ enum SoundFX {
 
     /// `volume` is 0.0–1.0 (fraction of the file's full level).
     private static func make(_ filename: String, volume: Float = 1.0) -> AVAudioPlayer? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads").appendingPathComponent(filename)
+        guard let url = BundledAsset.url(filename, in: "sounds") else { return nil }
         let player = try? AVAudioPlayer(contentsOf: url)
         player?.volume = volume
         player?.prepareToPlay()
