@@ -336,6 +336,12 @@ final class ActivityEngine: ObservableObject {
     }
     private let parser = TranscriptParser()
     private let permissionTimer = PermissionTimer()
+    /// Pending ".waiting" commits, keyed by claude session id. A PermissionRequest
+    /// followed by ANY other hook within `waitingDebounceDelay` (auto-approved
+    /// tools, fast prompts) never becomes .waiting — so it can't fire a spurious
+    /// attention toast + AWP sound. Same spirit as the delegation done-settle.
+    private var waitingDebounce: [String: DispatchWorkItem] = [:]
+    private static let waitingDebounceDelay: TimeInterval = 1.0
     private let jsonlWatcher: JSONLWatcher
     private var hookSocket: HookSocketListener?
     private var lastHookEvent: [String: Date] = [:]   // claudeSessionId -> when
@@ -660,6 +666,13 @@ final class ActivityEngine: ObservableObject {
         // sub-agents are mid-flight).
         lastHookEvent[payload.sessionId] = Date()
 
+        // Any hook other than PermissionRequest means a pending permission pause
+        // resolved (the tool proceeded / the turn moved on) — cancel its debounce
+        // so it never raises a stale "waiting" alert.
+        if payload.hookEvent != "PermissionRequest" {
+            cancelWaitingDebounce(payload.sessionId)
+        }
+
         switch payload.hookEvent {
         case "SessionStart":
             session.activity = .initState
@@ -718,7 +731,13 @@ final class ActivityEngine: ObservableObject {
                 }
             }
         case "PermissionRequest":
-            session.activity = .waiting
+            // Debounce: don't flip to .waiting (which fires the attention toast +
+            // AWP sound) for a pause that resolves quickly — auto-approved tools
+            // (Bash/make/Edit) fire PermissionRequest then PreToolUse milliseconds
+            // later, cancelling this. Only a request still pending past the delay
+            // is a genuine "needs you".
+            scheduleWaitingCommit(for: payload.sessionId)
+            return
         case "Stop":
             // The MAIN agent's turn ended. If sub-agents are still outstanding,
             // do NOT mark done or fire the shell — the orchestrated unit of work
@@ -773,6 +792,38 @@ final class ActivityEngine: ObservableObject {
         if oldActivity != session.activity {
             AgentLog.engine.info("transition hook session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public) event=\(payload.hookEvent, privacy: .public)")
         }
+        notifySessionStateChange(session, oldActivity: oldActivity, source: .hook)
+    }
+
+    /// Schedule a debounced ".waiting" commit for a PermissionRequest — replaced
+    /// if re-issued, cancelled by any follow-up hook.
+    private func scheduleWaitingCommit(for sessionId: String) {
+        waitingDebounce[sessionId]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.commitWaitingIfStillPending(sessionId)
+        }
+        waitingDebounce[sessionId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.waitingDebounceDelay, execute: work)
+    }
+
+    private func cancelWaitingDebounce(_ sessionId: String) {
+        waitingDebounce[sessionId]?.cancel()
+        waitingDebounce[sessionId] = nil
+    }
+
+    /// Fires `waitingDebounceDelay` after a PermissionRequest that got no
+    /// follow-up hook — a genuine wait. Commits .waiting + the single alert.
+    private func commitWaitingIfStillPending(_ sessionId: String) {
+        waitingDebounce[sessionId] = nil
+        guard let index = sessions.firstIndex(where: { $0.claudeSessionId == sessionId })
+        else { return }
+        var session = sessions[index]
+        let oldActivity = session.activity
+        guard oldActivity != .waiting, oldActivity != .done else { return }
+        session.activity = .waiting
+        session.lastUpdate = Date()
+        sessions[index] = session
+        AgentLog.engine.info("transition waiting-debounce session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→waiting")
         notifySessionStateChange(session, oldActivity: oldActivity, source: .hook)
     }
 

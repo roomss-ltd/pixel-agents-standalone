@@ -27,7 +27,7 @@ struct DotSpinnerLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.0   // total cycle (loaders.jsx:14, speed * 1.111)
 
@@ -56,7 +56,7 @@ struct QuantumLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let outerAngle = (t * 360 / 1.75).truncatingRemainder(dividingBy: 360)
             let innerAngle = -(t * 360 / 1.75).truncatingRemainder(dividingBy: 360)
@@ -88,7 +88,7 @@ struct TrioLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.3
 
@@ -118,7 +118,7 @@ struct ChaoticOrbitLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.5
             let p = (t / period).truncatingRemainder(dividingBy: 1)
@@ -156,7 +156,7 @@ struct GridLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.2
             let dot = size * 0.22
@@ -192,7 +192,7 @@ struct ReuleauxLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let rotation = (t * 360 / 1.5).truncatingRemainder(dividingBy: 360)
             ReuleauxShape()
@@ -246,7 +246,7 @@ struct ChangeLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let rotation = (t * 360 / 2.0).truncatingRemainder(dividingBy: 360)
             ZStack {

@@ -54,6 +54,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dock.reposition(to: screenTracker.activeScreen)
         dock.orderFront(nil)
 
+        // Warm the heavier image caches OFF the main thread so the first
+        // notification doesn't hitch decoding + luminance-keying them (the smoke
+        // wisp in particular processes ~10M pixels on first use).
+        Task.detached(priority: .utility) {
+            _ = ShootAsset.smoke; _ = ShootAsset.frames; _ = ShootAsset.target
+            _ = ShootAsset.bullets; _ = ShootAsset.funnel
+            _ = ShootAsset.containerImages; _ = ShootAsset.railProps
+            _ = ShootAsset.crateImage; _ = ShootAsset.mineCartImage
+            _ = ShootAsset.oilImage; _ = ShootAsset.barrel1Image
+            _ = ShootAsset.barrelImage; _ = ShootAsset.airship; _ = ShootAsset.airship1
+        }
+
         // Follow the cursor across displays. ScreenTracker debounces the
         // mouseMoved firehose to 150ms and only publishes when the
         // resolved screen actually changes.

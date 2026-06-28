@@ -39,18 +39,14 @@ enum Priority: Int, CaseIterable, Codable {
         }
     }
 
-    /// Neon palette, deliberately kept OUT of the busy state-color hues
-    /// (blue = in-progress, amber = waiting, green = done) so a card's
-    /// priority never collides with what it's doing: Sidequest is electric
-    /// CYAN ("for fun, because I want to" — playful, far from the done
-    /// green), Low is neon yellow, Medium + High are VIOLET (Medium dimmed
-    /// so the pair still reads as a hierarchy), Urgent is a true red. All
-    /// are vivid so they glow against the pitch-black panel.
+    /// Neon palette. Sidequest is electric CYAN (playful), Low is neon yellow,
+    /// Medium — the DEFAULT — is a calm BLUE so most agents read as neutral;
+    /// only the ELEVATED levels alarm: High is VIOLET, Urgent a true red.
     var color: Color {
         switch self {
         case .sidequest: return Priority.neonCyan
         case .low:       return Priority.neonYellow
-        case .medium:    return Priority.neonViolet.opacity(0.62)
+        case .medium:    return Priority.neonBlue
         case .high:      return Priority.neonViolet
         case .urgent:    return Priority.neonRed
         }
@@ -62,5 +58,6 @@ enum Priority: Int, CaseIterable, Codable {
     static let neonCyan   = Color(red: 0x18 / 255.0, green: 0xDC / 255.0, blue: 0xE8 / 255.0)
     static let neonYellow = Color(red: 0xFF / 255.0, green: 0xF5 / 255.0, blue: 0x70 / 255.0)
     static let neonViolet = Color(red: 0xA6 / 255.0, green: 0x6C / 255.0, blue: 0xFF / 255.0)
+    static let neonBlue   = Color(red: 0x4D / 255.0, green: 0xA6 / 255.0, blue: 0xFF / 255.0)
     static let neonRed    = Color(red: 0xFF / 255.0, green: 0x4D / 255.0, blue: 0x4D / 255.0)
 }

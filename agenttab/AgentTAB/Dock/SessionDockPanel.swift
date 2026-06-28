@@ -123,6 +123,10 @@ final class SessionDockPanel: NSPanel {
     private var hotKeyObserver: NSObjectProtocol?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    private var mouseMonitor: Any?
+    /// Frames of the visible, INTERACTIVE content (strip + any toast) in the
+    /// content view's top-left coordinate space — used to decide click-through.
+    private var hitRects: [CGRect] = []
 
     init() {
         super.init(
@@ -143,18 +147,22 @@ final class SessionDockPanel: NSPanel {
             .fullScreenAuxiliary,
         ]
         self.isReleasedWhenClosed = false
-        // The dock is interactive (squares are buttons). It's content-sized
-        // so there's almost no transparent margin to swallow stray clicks.
-        self.ignoresMouseEvents = false
+        // Click-through by DEFAULT: the window reserves toast headroom + a
+        // constant width, so most of it is transparent (especially collapsed).
+        // A mouse monitor flips this OFF only while the cursor is over the
+        // visible strip/toast, so the freed space passes clicks to the app behind.
+        self.ignoresMouseEvents = true
         self.hidesOnDeactivate = false
 
         installToggleHotkey()
+        startClickThroughMonitor()
     }
 
     deinit {
         if let o = hotKeyObserver { NotificationCenter.default.removeObserver(o) }
         if let m = globalKeyMonitor { NSEvent.removeMonitor(m) }
         if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = mouseMonitor { NSEvent.removeMonitor(m) }
     }
 
     // Never steal key/main focus — clicking a square must keep the user's
@@ -202,9 +210,13 @@ final class SessionDockPanel: NSPanel {
 
     /// Install the SwiftUI strip, wired to the shared activity engine.
     func install(engine: ActivityEngine) {
-        let root = SessionDockView(onSizeChange: { [weak self] size in
-            self?.resize(to: size)
-        })
+        let root = SessionDockView(
+            onSizeChange: { [weak self] size in self?.resize(to: size) },
+            onHitRects: { [weak self] rects in
+                self?.hitRects = rects
+                self?.updateClickability()
+            }
+        )
         .environmentObject(engine)
         .environmentObject(dockState)
 
@@ -240,9 +252,40 @@ final class SessionDockPanel: NSPanel {
         )
         setFrameOrigin(origin)
     }
+
+    /// Global mouse monitor: flips `ignoresMouseEvents` so the window captures
+    /// clicks ONLY while the cursor is over the visible strip/toast — the
+    /// transparent headroom + reserved width pass clicks straight to the app
+    /// behind. (A non-key, non-activating panel never consumes mouse-moved, so
+    /// the global monitor keeps firing in both states.)
+    private func startClickThroughMonitor() {
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            self?.updateClickability()
+        }
+    }
+
+    private func updateClickability() {
+        let cursor = NSEvent.mouseLocation
+        let f = self.frame                       // window in screen coords
+        let inside = hitRects.contains { r in
+            // SwiftUI rect (top-left, y-down) → screen rect (bottom-left, y-up).
+            NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
+                .insetBy(dx: -3, dy: -3)
+                .contains(cursor)
+        }
+        let target = !inside
+        if ignoresMouseEvents != target { ignoresMouseEvents = target }
+    }
 }
 
 // MARK: - SwiftUI strip
+
+private struct DockHitRectsKey: PreferenceKey {
+    static var defaultValue: [CGRect] = []
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value += nextValue()
+    }
+}
 
 private struct DockSizeKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
@@ -265,6 +308,7 @@ struct SessionDockView: View {
     @EnvironmentObject var dock: DockState
     @ObservedObject private var rateLimits = RateLimitMonitor.shared
     var onSizeChange: (CGSize) -> Void = { _ in }
+    var onHitRects: ([CGRect]) -> Void = { _ in }
 
     private static let square: CGFloat = 36
     private static let gap: CGFloat = 6
@@ -364,6 +408,10 @@ struct SessionDockView: View {
             // (collapsed, or only a few sessions).
             Color.clear.frame(width: DockToastCard.width + 28, height: Self.deckHeadroom)
             strip(sessions)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: DockHitRectsKey.self,
+                                           value: [g.frame(in: .named("dockSpace"))])
+                })
         }
         // FX layer (non-interactive): the muzzle smoke + the tracer that feeds
         // the gun from the finishing square. Both aim at the revolver muzzle,
@@ -399,6 +447,10 @@ struct SessionDockView: View {
             GeometryReader { geo in
                 if !toasts.isEmpty {
                     notificationStack(panelWidth: geo.size.width)
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: DockHitRectsKey.self,
+                                                   value: [g.frame(in: .named("dockSpace"))])
+                        })
                 }
             }
         }
@@ -409,6 +461,8 @@ struct SessionDockView: View {
             }
         )
         .onPreferenceChange(DockSizeKey.self) { onSizeChange($0) }
+        .coordinateSpace(name: "dockSpace")
+        .onPreferenceChange(DockHitRectsKey.self) { onHitRects($0) }
         .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
             if let payload = note.object as? DockEventPayload { fire(payload) }
         }
@@ -602,8 +656,8 @@ struct SessionDockView: View {
             }
         }
 
-        // Auto-dismiss this card after a few seconds (oldest clears first).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) {
+        // Auto-dismiss this card after its dwell (oldest clears first).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
             withAnimation(.easeOut(duration: 0.3)) {
                 toasts.removeAll { $0.id == next.id }
             }
@@ -745,31 +799,34 @@ struct SessionDockView: View {
         }
     }
 
-    /// Above-default priority (High/Urgent). Its color replaces GREEN as
-    /// the finished-state color — so a finished important agent reads as
-    /// violet/red instead of a generic green completion.
+    /// Above-default priority (High/Urgent). Makes a WAITING agent's square
+    /// shout (violet/red instead of amber) and keeps it visually lit in every
+    /// state — but it no longer overrides the working (blue) / done (green)
+    /// colours, so you can always tell whether it's running or finished.
     static func isElevated(_ session: Session) -> Bool {
         session.priority.rawValue > Priority.default.rawValue
     }
 
-    /// Body color for a square. While it's WORKING / WAITING / STARTING it
-    /// always shows its activity-state color (you need to see what it's
-    /// doing). Only once it's FINISHED does priority come into play: an
-    /// elevated agent paints its priority color in place of green;
-    /// everything else stays green, or gray once it goes dormant.
+    /// Body color for a square. The ACTIVITY state drives it — working → cool
+    /// steel (blue), finished → green — so you can always tell whether an agent
+    /// is RUNNING or DONE. A High/Urgent agent NEVER greys out: working → blue,
+    /// done → green, and any time it's idle OR waiting on you it paints violet/red
+    /// — a loud "act on this NOW" that you clear by getting it running (blue) or
+    /// letting it finish (green).
     static func bodyColor(for session: Session) -> Color {
-        // High/Urgent always show their priority colour — a deliberate "this
-        // matters" that stays visible in any state.
-        if isElevated(session) { return session.priority.color }
         switch session.activity {
-        case .waiting:
-            return color(for: .waiting)               // amber — needs your input
-        case .done:
-            return isDormant(session) ? dormantGray : doneGreen   // green — just finished
-        case .idle:
-            return dormantGray                        // settled — nothing for you
         case .thinking, .tool, .initState:
-            return workingSteel                       // cool steel — calm work tile
+            return workingSteel                       // blue — working, whatever the priority
+        case .done:
+            // Elevated stays GREEN (never greys out); normal greys after the window.
+            if isElevated(session) { return doneGreen }
+            return isDormant(session) ? dormantGray : doneGreen
+        case .waiting:
+            // High/Urgent waiting on you → priority colour (louder than amber).
+            return isElevated(session) ? session.priority.color : color(for: .waiting)
+        case .idle:
+            // Elevated idle still wants action → priority colour, never a settled grey.
+            return isElevated(session) ? session.priority.color : dormantGray
         }
     }
 
@@ -1544,14 +1601,14 @@ private struct SmokePuff: View {
     @State private var startDate = Date()
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
             let age = ctx.date.timeIntervalSince(startDate)
             let appear = min(1, age / 0.18)
             let fade = max(0, min(1, (lifetime - age) / 1.2))
             // A 1s curling wisp (25fps, native delays). Loop it through the
             // toast's dwell; the appear/fade envelope below does the rise-in and
             // dissipation, so the plume never just freezes on a frame.
-            KeyedGIFView(frames: ShootAsset.smoke, loop: true)
+            KeyedGIFView(frames: ShootAsset.smoke, fps: 30, loop: true)   // 30fps: even cadence into the 60 redraw
                 .id(restartKey)   // remount → restart from frame 0 each finish
                 .frame(width: width, height: height)
                 .opacity(appear * fade)
@@ -1579,7 +1636,7 @@ private struct CannonProjectile: View {
     private let duration: Double = 0.36
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
             let raw = ctx.date.timeIntervalSince(startDate) / duration
             let t = CGFloat(min(1, max(0, raw)))
             let head = point(at: t)
@@ -1821,7 +1878,12 @@ private struct RevolverCylinder: View {
     /// muzzle. Driven by `firePulse`, so it runs once per notification —
     /// independent of whether a round was actually spent.
     private func fireOnce() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { angle += 60 }
+        // Advance one chamber, snapping to a clean multiple of 60° — this also
+        // absorbs any leftover drift from an interrupted spin, so the FIXED barrel
+        // markers (muzzle flash / needs-you ring) always frame a bore at rest.
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
+            angle = ((angle / 60).rounded() + 1) * 60
+        }
         flash = true
         withAnimation(.easeOut(duration: 0.45)) { flash = false }
     }
@@ -1839,20 +1901,24 @@ private struct RevolverCylinder: View {
         spinGen += 1
         let gen = spinGen
         let turns = Double(5 + Int.random(in: 0 ... 2))           // several full revolutions
-        let landing = Double(Int.random(in: 0 ..< 6)) * 60        // land on a random chamber
+        // Absolute target: round the current angle to a clean chamber first (so any
+        // leftover drift from an interrupted spin is corrected), then add whole
+        // revolutions + a random chamber. The rest is ALWAYS a clean multiple of 60°.
+        let base = (angle / 60).rounded() * 60
+        let target = base + turns * 360 + Double(Int.random(in: 0 ..< 6)) * 60
         let click = 22.0                                          // the final tick, synced to the sound
         SoundFX.play(SoundFX.spin)
         // cubic-bezier(0.19, 1, 0.22, 1) == easeOutExpo — fast whip into a long
         // slow creep, landing just short of the chamber at t = 2.0s.
         withAnimation(.timingCurve(0.19, 1, 0.22, 1, duration: 2.0)) {
-            angle += turns * 360 + landing - click
+            angle = target - click
         }
         // …and the creep flows straight into the final tick (no pause): snap the
-        // last 22° onto the chamber on the sound's tick.
+        // last 22° ONTO the chamber (absolute, so it lands clean even after drift).
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             guard gen == spinGen else { return }
             withAnimation(.spring(response: 0.16, dampingFraction: 0.68)) {
-                angle += click
+                angle = target
             }
         }
     }

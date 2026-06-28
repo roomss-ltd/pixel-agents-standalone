@@ -56,6 +56,7 @@ struct ExpandedView: View {
     @State private var showSettings: Bool = false
     @State private var showHistory: Bool = false   // activity dashboard (7d / 30d / squares)
     @State private var isEditMode: Bool = false
+    @ObservedObject private var rateLimits = RateLimitMonitor.shared
 
     /// Section ordering mode. `.recency` keeps the original behaviour
     /// (tab-index for live sections, last-update for finished ones);
@@ -107,6 +108,7 @@ struct ExpandedView: View {
                         sections
                             .transition(.opacity)
                     }
+                    rateLimitMeters
                     footer
                 }
                 .padding(.top, 8)
@@ -559,6 +561,49 @@ struct ExpandedView: View {
         }
     }
 
+    /// Subscription usage meters (5-hour + weekly windows) from RateLimitMonitor
+    /// — a thin status strip above the footer.
+    private var rateLimitMeters: some View {
+        HStack(spacing: 16) {
+            rateMeter("5H", rateLimits.fiveHour)
+            rateMeter("7D", rateLimits.weekly)
+        }
+    }
+
+    private func rateMeter(_ label: String, _ window: RateLimitMonitor.Window?) -> some View {
+        let frac = max(0, min(1, (window?.utilization ?? 0) / 100.0))
+        let known = window != nil
+        return HStack(spacing: 7) {
+            Text(label)
+                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                .foregroundStyle(Theme.textDim)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.07))
+                    Capsule().fill(Self.rateHeat(frac))
+                        .frame(width: max(0, geo.size.width * frac))
+                }
+            }
+            .frame(height: 4)
+            Text(known ? "\(Int((frac * 100).rounded()))%" : "—")
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(known ? Theme.textDim : Color.white.opacity(0.18))
+                .monospacedDigit()
+                .frame(width: 30, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Usage ramp: green (plenty left) → amber → red (near the cap).
+    private static func rateHeat(_ t: Double) -> Color {
+        let f = min(1, max(0, t))
+        let g = (r: 0.36, g: 0.78, b: 0.45), a = (r: 0.98, g: 0.72, b: 0.20), r = (r: 0.96, g: 0.32, b: 0.26)
+        func lerp(_ x: (r: Double, g: Double, b: Double), _ y: (r: Double, g: Double, b: Double), _ u: Double) -> Color {
+            Color(red: x.r + (y.r - x.r) * u, green: x.g + (y.g - x.g) * u, blue: x.b + (y.b - x.b) * u)
+        }
+        return f < 0.5 ? lerp(g, a, f / 0.5) : lerp(a, r, (f - 0.5) / 0.5)
+    }
+
     /// Footer "⋯" menu — quick access to app-level actions
     /// (quit, uninstall, about).
     private var appMenuButton: some View {
@@ -782,7 +827,7 @@ private struct HamsterDriveBelt: View {
     /// A small driven COG on the river rail — toothed, and turning slowly (the
     /// belt drives it). Low-fps and freezes when quiet, so it's near-free.
     private func pulley(_ pr: CGFloat) -> some View {
-        DecorativeTimeline(fps: 18) { ctx in
+        DecorativeTimeline(fps: 12) { ctx in
             let angle = ctx.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: 3.2) / 3.2 * -360.0
             ZStack {

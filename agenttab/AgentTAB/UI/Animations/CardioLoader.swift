@@ -5,7 +5,7 @@ struct CardioLoader: View {
     var size: CGFloat = 24
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let elapsed = context.date.timeIntervalSinceReferenceDate
             let p = (elapsed / Theme.Animations.cardioPeriod).truncatingRemainder(dividingBy: 1)
 

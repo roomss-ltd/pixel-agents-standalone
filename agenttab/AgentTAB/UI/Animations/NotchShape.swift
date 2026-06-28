@@ -420,7 +420,7 @@ struct NotchStatusLine: View {
         let duration = Self.flowDuration
         if railAnimating {
             // Flowing — drive the moving fronts at display rate for ~0.9s.
-            TimelineView(.animation) { ctx in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                 let elapsed = ctx.date.timeIntervalSince(flowStart)
                 let p = min(1.0, max(0.0, elapsed / duration))
                 let half = CGFloat(p) * 0.5
@@ -651,7 +651,7 @@ struct KeyedGIFView: View {
         let spf = fps.map { 1.0 / max(0.0001, $0) }
         let total = spf.map { $0 * Double(frames.count) }
             ?? max(0.0001, frames.reduce(0) { $0 + $1.duration })
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let elapsed = max(0, context.date.timeIntervalSince(start))
             let t = loop ? elapsed.truncatingRemainder(dividingBy: total)
                          : min(elapsed, total - 0.0001)
@@ -1137,7 +1137,7 @@ private struct CrateView: View {
 
         // A real clock drives progress so the body re-evaluates each frame —
         // letting the triangular fade (0 → 1 → 0) actually peak in the middle.
-        return TimelineView(.animation) { ctx in
+        return TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
             let p = min(1, max(0, ctx.date.timeIntervalSince(start) / crate.duration))
             let t = tStart + (tEnd - tStart) * CGFloat(p)
             let pt = railPoint(t)
@@ -1370,7 +1370,7 @@ private struct AircraftView: View {
         let aspect = img.map { CGFloat($0.width) / CGFloat(max(1, $0.height)) } ?? 1
         let w = h * aspect
 
-        return TimelineView(.animation) { ctx in
+        return TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
             let p = min(1, max(0, ctx.date.timeIntervalSince(start) / plane.duration))
             let t = tStart + (tEnd - tStart) * CGFloat(p)
             let pt = railPoint(t)
@@ -1518,7 +1518,7 @@ struct CometSparks: View {
     var body: some View {
         Group {
             if let ft = fireTime {
-                TimelineView(.animation) { ctx in
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                     let elapsed = ctx.date.timeIntervalSince(ft)
                     let raw = min(1.0, max(0.0, elapsed / Self.dur))
                     let eased = raw * raw * (3 - 2 * raw)        // smoothstep ≈ easeInOut
@@ -1799,7 +1799,7 @@ struct WashingMachineLoader: View {
     var body: some View {
         GeometryReader { geo in
             let scale = min(geo.size.width / 120, geo.size.height / 150)
-            TimelineView(.animation) { ctx in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
                 let p = t.truncatingRemainder(dividingBy: 3.0) / 3.0
                 let b = shakeBurst(t)          // 0…1 envelope, brief, every ~8s
@@ -1893,7 +1893,7 @@ struct JumpingBoxLoader: View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height) * 0.46
             let base = s * 0.083
-            TimelineView(.animation) { ctx in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                 let period = 0.5
                 let p = ctx.date.timeIntervalSinceReferenceDate
                     .truncatingRemainder(dividingBy: period) / period
@@ -1929,7 +1929,7 @@ struct AtomLoader: View {
     var orange = Color(red: 1.0, green: 0x3D/255.0, blue: 0.0)
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
             Canvas { gc, size in
                 let s = min(size.width, size.height)
                 let cx = size.width / 2, cy = size.height / 2
@@ -1973,7 +1973,7 @@ struct RingLoader: View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height)
             let lw = s * 0.08
-            TimelineView(.animation) { ctx in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
                 ZStack {
                     ring(lw).rotationEffect(.degrees(t / 1.0 * 360))
@@ -2134,7 +2134,7 @@ struct TurntableLoader: View {
     }
 
     private var plate: some View {
-        DecorativeTimeline(fps: 24) { ctx in
+        DecorativeTimeline(fps: 12) { ctx in
             let angle = (ctx.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: 2.0) / 2.0) * 360.0
             ZStack {
