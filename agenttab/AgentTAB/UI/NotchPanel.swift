@@ -286,7 +286,7 @@ final class NotchPanel: NSPanel {
     private func installEdgeHoverMonitor() {
         guard edgeHoverMonitor == nil else { return }
         edgeHoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.evaluateEdgeHover() }
+            MainActor.assumeIsolated { self?.evaluateEdgeHover() }
         }
     }
 
@@ -343,7 +343,7 @@ final class NotchPanel: NSPanel {
         // `addGlobalMonitorForEvents` for mouse events does NOT require
         // accessibility permission (only keyboard events do).
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.updateClickability(force: false) }
+            MainActor.assumeIsolated { self?.updateClickability(force: false) }
         }
         DispatchQueue.main.async { [weak self] in
             self?.updateClickability(force: true)

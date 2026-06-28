@@ -58,7 +58,9 @@ final class ScreenTracker: ObservableObject {
 
     private func startMouseMonitor() {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.scheduleUpdate() }
+            // Global monitors fire on the main run loop already — assume the
+            // isolation rather than spawning a fresh Task per move event.
+            MainActor.assumeIsolated { self?.scheduleUpdate() }
         }
     }
 

@@ -65,7 +65,10 @@ final class RateLimitMonitor: ObservableObject {
 
     /// Fetch the current limits. Keeps the last good values on any failure.
     func refresh() async {
-        guard let token = Self.readToken() else {
+        // Read the Keychain token OFF the main actor — the `security` subprocess
+        // spawn + waitUntilExit() blocks for tens of ms, which would otherwise
+        // hitch the UI on every poll.
+        guard let token = await Task.detached(priority: .utility, operation: { Self.readToken() }).value else {
             log.debug("no Claude Code token in keychain")
             return
         }
@@ -97,7 +100,7 @@ final class RateLimitMonitor: ObservableObject {
     // MARK: - Token (read from the Keychain via the `security` CLI; the item's
     // ACL already allows it — the same call `/usage` relies on).
 
-    private static func readToken() -> String? {
+    nonisolated private static func readToken() -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         proc.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
