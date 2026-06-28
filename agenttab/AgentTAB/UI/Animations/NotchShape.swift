@@ -403,13 +403,15 @@ struct NotchStatusLine: View {
         // Magma palette — a layered molten vein: deep-red base, hot-orange body,
         // gold-white core, with a gold→red bloom + slow white-hot spots drifting
         // through it (the "alive"). The front + white sparks add the highlights.
+        // Sourced from the shared `Magma` palette (the single source of truth);
+        // the dock heat ramp re-bases its hot end on these same numbers.
         let idle = WallpaperColor.average.opacity(0.70)
-        let deep = Color(red: 0.80, green: 0.09, blue: 0.0)        // deep-red base
-        let mid = Color(red: 1.0, green: 0.40, blue: 0.05)         // hot-orange body
-        let core = Color(red: 1.0, green: 0.86, blue: 0.50)        // gold-white core
-        let glowInner = Color(red: 1.0, green: 0.66, blue: 0.18)   // gold bloom (tight)
-        let glowOuter = Color(red: 1.0, green: 0.26, blue: 0.04)   // deep red-orange (wide)
-        let hot = Color(red: 1.0, green: 0.95, blue: 0.82)         // white-hot drifting spot
+        let deep = Magma.deep          // deep-red base
+        let mid = Magma.body           // hot-orange body
+        let core = Magma.core          // gold-white core
+        let glowInner = Magma.gold     // gold bloom (tight)
+        let glowOuter = Magma.ember    // deep red-orange (wide)
+        let hot = Magma.white          // white-hot drifting spot
         let rs = StrokeStyle(lineWidth: 2.0, lineCap: .round)
         let duration = Self.flowDuration
         if railAnimating {

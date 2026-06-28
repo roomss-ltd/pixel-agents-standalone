@@ -483,6 +483,20 @@ struct SessionDockView: View {
         .background(
             containerShape
                 .fill(Color.black.opacity(0.85))
+                // Warm ember wash — the interior reads as coals glowing inside a
+                // dark furnace rather than a cold black box, tying it to the magma
+                // frame. Rises from the bottom (heat rising) and brightens with the
+                // load, like the river. STATIC (no clock) — costs nothing at rest.
+                .overlay(
+                    containerShape
+                        .fill(LinearGradient(
+                            colors: [Magma.ember.opacity(0.18 * (0.5 + 0.5 * DockMagma.heat(active: inFlight))),
+                                     Magma.deep.opacity(0.07 * (0.5 + 0.5 * DockMagma.heat(active: inFlight))),
+                                     .clear],
+                            startPoint: .bottom, endPoint: .top))
+                        .blendMode(.plusLighter)
+                        .allowsHitTesting(false)
+                )
                 .overlay(
                     // Border on TOP + LEFT + BOTTOM only (right is glued to the
                     // screen edge). A "heating element": calm gray at rest, then
@@ -490,9 +504,12 @@ struct SessionDockView: View {
                     ForgeBorder(active: inFlight)
                 )
         )
-        // Room for the flare "horns" to extend beyond the box without the
-        // content-sized panel clipping them.
-        .padding(.vertical, 7)
+        // Room for the flare "horns" (vertical) AND the border's left-corner
+        // bloom (leading) to extend beyond the box without the content-sized,
+        // right-glued panel clipping them — otherwise the glow gets sliced by a
+        // straight window edge and the rounded corners read as 90° turns.
+        .padding(.vertical, 8)
+        .padding(.leading, 9)
     }
 
     /// Collapsed fallback card. With the revolver hidden there's no muzzle to
@@ -661,10 +678,15 @@ struct SessionDockView: View {
     // shared Activity greens (which the 0.22 square fill washed out).
     static let doneGreen = Color(red: 0x66 / 255.0, green: 0xF4 / 255.0, blue: 0x9E / 255.0)
     static let idleGreen = Color(red: 0x22 / 255.0, green: 0xC8 / 255.0, blue: 0x82 / 255.0)
+    // "Working" is COOL STEEL resting in the forge — a muted slate-blue, not the
+    // old icy neon. It deliberately CONTRASTS the warm frame + ember wash + brass
+    // rounds (warm = heat/activity at the edges, cool = the calm work tiles), and
+    // stays clearly distinct from amber "needs-you" and green "done".
+    static let workingSteel = Color(red: 0.46, green: 0.60, blue: 0.78)
 
     static func color(for activity: Activity) -> Color {
         switch activity {
-        case .thinking, .tool: return Theme.Activity.tool
+        case .thinking, .tool: return workingSteel
         case .waiting:         return Theme.Activity.waiting
         case .done:            return doneGreen
         case .initState:       return Theme.Activity.initState
@@ -713,7 +735,7 @@ struct SessionDockView: View {
         case .idle:
             return dormantGray                        // settled — nothing for you
         case .thinking, .tool, .initState:
-            return Theme.Activity.tool                // blue — working (rendered quiet)
+            return workingSteel                       // cool steel — calm work tile
         }
     }
 
@@ -758,19 +780,46 @@ struct SessionDockView: View {
     }
 }
 
+/// The canonical magma palette — ONE source of truth for the app's lava look,
+/// anchored on the notch river's signature stops. The notch river uses these
+/// named colours directly; the dock heat ramp (`DockMagma`) re-bases its HOT
+/// end on the same RGB, so the two read as the exact same molten material.
+enum Magma {
+    // Raw components are the source of truth (so both a SwiftUI `Color` and the
+    // dock's interpolated ramp can be built from the identical numbers).
+    static let deepRGB:  (r: Double, g: Double, b: Double) = (0.80, 0.09, 0.00) // deep-red base
+    static let bodyRGB:  (r: Double, g: Double, b: Double) = (1.00, 0.40, 0.05) // hot-orange body
+    static let goldRGB:  (r: Double, g: Double, b: Double) = (1.00, 0.66, 0.18) // gold bloom
+    static let coreRGB:  (r: Double, g: Double, b: Double) = (1.00, 0.86, 0.50) // gold-white core
+    static let whiteRGB: (r: Double, g: Double, b: Double) = (1.00, 0.95, 0.82) // white-hot
+    static let emberRGB: (r: Double, g: Double, b: Double) = (1.00, 0.26, 0.04) // wide red-orange bloom
+
+    static var deep:  Color { color(deepRGB) }
+    static var body:  Color { color(bodyRGB) }
+    static var gold:  Color { color(goldRGB) }
+    static var core:  Color { color(coreRGB) }
+    static var white: Color { color(whiteRGB) }
+    static var ember: Color { color(emberRGB) }
+
+    static func color(_ c: (r: Double, g: Double, b: Double)) -> Color {
+        Color(red: c.r, green: c.g, blue: c.b)
+    }
+}
+
 /// Shared magma "heat ramp" for the dock — maps the number of in-flight agents
 /// to a colour from idle-ember up to white-hot, so the border, revolver and
 /// squares all read the same load temperature.
 enum DockMagma {
     // A real THERMAL ramp — cold metal heating up. Cold steel-blue when barely
-    // loaded (a clean step from the gray idle, no muddy orange), warming through
-    // amber to the gold / white-hot the eye likes as the chambers fill.
+    // loaded (a clean step from the gray idle, no muddy orange), then the HOT
+    // end is the notch river's EXACT lava (gold → gold-white core → white-hot),
+    // so the drawer and the river read as the same molten material.
     private static let stops: [(h: Double, r: Double, g: Double, b: Double)] = [
-        (0.00, 0.30, 0.36, 0.46),   // cold steel-blue — clean "cold metal"
-        (0.38, 0.47, 0.50, 0.53),   // cool neutral
-        (0.62, 0.82, 0.60, 0.32),   // warming
-        (0.80, 1.00, 0.73, 0.22),   // gold (the liked end)
-        (1.00, 1.00, 0.94, 0.80),   // white-hot (the liked end)
+        (0.00, 0.30, 0.36, 0.46),                                          // cold steel-blue — the "cold" tail
+        (0.42, 0.47, 0.50, 0.53),                                          // cool neutral bridge
+        (0.64, Magma.goldRGB.r,  Magma.goldRGB.g,  Magma.goldRGB.b),       // gold (river-matched)
+        (0.84, Magma.coreRGB.r,  Magma.coreRGB.g,  Magma.coreRGB.b),       // gold-white core (river-matched)
+        (1.00, Magma.whiteRGB.r, Magma.whiteRGB.g, Magma.whiteRGB.b),      // white-hot (river-matched)
     ]
 
     /// In-flight count → heat 0…1 (ramps up fast, eases toward 1).
@@ -793,22 +842,46 @@ enum DockMagma {
     }
 }
 
-/// The dock's 3-sided border as a heating element: calm white-gray when nothing
-/// is in flight, else riding the magma ramp and breathing faster under load.
+/// The dock's 3-sided border — the drawer's "river line". It carries the SAME
+/// magma orange as the notch river so the two read identically; load shows as
+/// glow intensity, NOT hue (the cold→white-hot ramp lives in the rounds + the
+/// centre glow, not on the frame — that's what made the border pale to gold
+/// under load and diverge from the river).
 private struct ForgeBorder: View {
     let active: Int
     var body: some View {
-        // STATIC heat — no clock. Colour + glow rise with the load but only
-        // re-render when the session count changes, so it costs nothing at rest
-        // or while steady. (The breathing version was the battery culprit.)
-        let heat = DockMagma.heat(active: active)
+        // STATIC — no clock. The hue is fixed (river orange); only the glow
+        // intensity rises with the load, and only re-renders when the count
+        // changes, so it costs nothing at rest or while steady.
         let idle = active == 0
-        let color = idle ? Color.white.opacity(0.5) : DockMagma.color(heat)
-        // Thin, fixed-width line + a TIGHT glow. Heat drives brightness, NOT
-        // thickness, so the line stays clean (no fat band) as sessions stack.
-        return DockEdgeBorder(radius: 14, inset: 0.75)
-            .stroke(color, lineWidth: 1.5)
-            .shadow(color: idle ? .clear : color.opacity(0.35 + 0.45 * heat), radius: idle ? 0 : 2.5)
+        let line = DockEdgeBorder(radius: 14, inset: 0.75)
+        // Idle: a calm thin gray line, no bloom.
+        if idle {
+            return AnyView(line.stroke(Color.white.opacity(0.5), lineWidth: 1.5))
+        }
+        // Active: a FAITHFUL replica of the notch river's `moltenVein` — three
+        // stacked strokes so the frame glows exactly like the river:
+        //   1. a wide deep-red BASE carrying the double bloom (ember + gold),
+        //   2. the hot-orange BODY,
+        //   3. a thin gold-white CORE on plusLighter (the bright white centreline).
+        // Static (no clock) — the cold→white-hot load ramp lives in the rounds +
+        // centre glow, so this costs nothing at rest while matching the river.
+        // The drawer renders at 1:1 (the notch is supersampled), so the river's
+        // gold-white core shows at full width here and washes the line yellow.
+        // To match what the EYE sees, the body orange is widened to dominate and
+        // the yellow contributors (gold inner glow + the core highlight) are
+        // pulled down — so the frame reads orange like the river, not gold.
+        return AnyView(
+            ZStack {
+                line.stroke(Magma.deep, style: StrokeStyle(lineWidth: 3.6, lineCap: .round))
+                    .shadow(color: Magma.ember.opacity(0.45), radius: 6)
+                    .shadow(color: Magma.gold.opacity(0.30), radius: 3)
+                line.stroke(Magma.body, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                line.stroke(Magma.core, style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
+                    .blendMode(.plusLighter)
+                    .opacity(0.45)
+            }
+        )
     }
 }
 
@@ -864,7 +937,7 @@ private struct SessionSquare: View {
         }()
         let strongEdge = working || !subdued   // full-weight border + a resting glow
         let fillOpacity: Double = working
-            ? (hover ? 0.48 : 0.34)
+            ? (hover ? 0.50 : 0.38)   // cool work tiles — present but calm, not shouting
             : (subdued ? (hover ? 0.22 : 0.10) : (hover ? 0.52 : 0.40))
         let borderOpacity: Double = working
             ? (hover ? 1.0 : 0.85)
