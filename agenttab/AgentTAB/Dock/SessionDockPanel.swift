@@ -265,10 +265,12 @@ struct SessionDockView: View {
     private static let square: CGFloat = 36
     private static let gap: CGFloat = 6
     private static let pad: CGFloat = 7
-    /// Squares per row before wrapping up into a new row.
-    private static let perRow: Int = 7
-    /// Headroom reserved above the strip while a toast is live, so the muzzle
-    /// smoke + card have room to erupt upward (the panel grows up).
+    /// Squares per row before wrapping up into a new row. Fixed (not balanced)
+    /// so each tab keeps a stable position — muscle memory over symmetry.
+    private static let perRow: Int = 6
+    /// Transparent headroom reserved above the strip so the muzzle smoke + the
+    /// card (and its upward stack of older cards) have room above the drawer.
+    /// Constant — see the body comment on why it must never toggle.
     private static let deckHeadroom: CGFloat = 120
 
     // MARK: Cannon / toast state
@@ -290,9 +292,6 @@ struct SessionDockView: View {
     /// + muzzle flash). The gun is now the single muzzle every toast comes out
     /// of, so this — not the in-flight count — is the authoritative "fire".
     @State private var revolverFire = 0
-    /// In-flight "spent casing" flicks — one per sub-agent completion. Each
-    /// tosses a brass casing off its square, then is removed.
-    @State private var casings: [Casing] = []
 
     /// Matches the notch shooter's `shootDelay`: the gun "poses" this long
     /// before the gunshot sound + bullet fire, so the dock shell launches on
@@ -338,7 +337,12 @@ struct SessionDockView: View {
                 // Collapsed: no revolver on screen to fire from — fall back to
                 // a plain card riding the trailing edge.
                 if !toasts.isEmpty { collapsedToastCard }
-            } else if !toasts.isEmpty {
+            } else {
+                // Reserve the headroom UNCONDITIONALLY (not just while a toast is
+                // live). Toggling it per-toast resized the whole dock window every
+                // time a notification came and went — a feedback loop through
+                // DockSizeKey → resize() → re-anchor that made the drawer seize.
+                // The space is transparent, so a constant window height is free.
                 Color.clear.frame(width: DockToastCard.width, height: Self.deckHeadroom)
             }
             strip(sessions)
@@ -356,8 +360,7 @@ struct SessionDockView: View {
                         SmokePuff(origin: m, restartKey: front.id)
                             .id(front.id)
                     }
-                    // The gun fires the round UP toward the notification — the
-                    // bullet leaves the muzzle and the card pops where it lands.
+                    // The gun fires the round toward the notification's anchor.
                     ForEach(shots) { shot in
                         if let m = muzzle {
                             CannonProjectile(
@@ -367,21 +370,12 @@ struct SessionDockView: View {
                             )
                         }
                     }
-                    // Sub-agent finished → a spent brass casing flicks sideways
-                    // off that session's square (no toast, no sound).
-                    ForEach(casings) { casing in
-                        if let anchor = centers[casing.sessionId] {
-                            CasingFlick(origin: geo[anchor])
-                                .id(casing.id)
-                        }
-                    }
                 }
             }
             .allowsHitTesting(false)
         }
-        // Card layer (interactive): the toast floats up out of the muzzle
-        // smoke. Kept in its own overlay so it stays tappable while the FX
-        // layer above ignores hits.
+        // Card layer (interactive): the toast is pulled in from the right edge
+        // and rests just above the drawer. Its own overlay so it stays tappable.
         .overlay {
             GeometryReader { geo in
                 if !dock.collapsed, !toasts.isEmpty {
@@ -399,25 +393,24 @@ struct SessionDockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .agentTabSessionEvent)) { note in
             if let payload = note.object as? DockEventPayload { fire(payload) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .agentTabSubagentDone)) { note in
-            if let sid = note.object as? UUID { flickCasing(for: sid) }
-        }
         .animation(.easeOut(duration: 0.18), value: layoutToken(sessions))
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
     }
 
-    /// The notification anchor — a FIXED spot at the panel's top-right (the panel
-    /// is glued to the screen edge), so the cards never shift with session count.
+    /// The notification anchor — pinned to the panel's right edge (glued to the
+    /// screen edge), so the card hugs the right and never drifts with session count.
     private func cardAnchorX(panelWidth: CGFloat) -> CGFloat {
         panelWidth - DockToastCard.width / 2 - 12
     }
     private func cardAnchorY() -> CGFloat {
-        // Front card near the top, with room above for the stack to peek.
-        10 + CGFloat(Self.maxStack - 1) * 7 + DockToastCard.height / 2
+        // Rest the FRONT card just above the drawer's top edge. The strip always
+        // begins at the bottom of the fixed headroom, so this lands correctly
+        // whether the drawer is one row or two. Older cards stack UP from here.
+        Self.deckHeadroom - DockToastCard.height / 2 - 3
     }
 
-    /// Where the bullet should land — the front card's centre. The gun fires a
-    /// tracer up-and-right from the muzzle to this fixed anchor.
+    /// Where the tracer should land — the front card's resting centre. The gun
+    /// fires a tracer from the muzzle up to this anchor as the card pulls in.
     private func cardLanding(panelWidth: CGFloat) -> CGPoint {
         CGPoint(x: cardAnchorX(panelWidth: panelWidth), y: cardAnchorY())
     }
@@ -435,8 +428,10 @@ struct SessionDockView: View {
                     .opacity(1 - Double(idx) * 0.30)
                     .allowsHitTesting(idx == 0)
                     .zIndex(Double(Self.maxStack - idx))
+                    // Pulled in from the right screen edge (a drawer-pull), then
+                    // fades out on dismiss.
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.7, anchor: .bottom).combined(with: .opacity),
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
                         removal: .opacity))
             }
             if toasts.count > Self.maxStack {
@@ -524,16 +519,6 @@ struct SessionDockView: View {
         }
     }
 
-    /// A sub-agent finished for `sessionId` — toss a spent casing off its square
-    /// and clear it once the short flick is done. No card, no sound.
-    private func flickCasing(for sessionId: UUID) {
-        let casing = Casing(sessionId: sessionId)
-        casings.append(casing)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            casings.removeAll { $0.id == casing.id }
-        }
-    }
-
     /// Reserve the card slot, launch a tracer from the firing square, land the
     /// card on impact, then auto-dismiss.
     private func launchCannon(_ payload: DockEventPayload) {
@@ -547,17 +532,18 @@ struct SessionDockView: View {
             headline: Self.headline(for: payload.variant),
             accent: accent
         )
-        // Fire the gun — cylinder click + muzzle flash — and push the new card to
-        // the FRONT of the stack (older ones slide back). A hard cap guards memory.
+        // Click the revolver (cylinder turn + flash) as the round chambers, and
+        // pull the new card in from the right onto the FRONT of the stack (older
+        // ones slide back). A hard cap guards memory.
         revolverFire += 1
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) {
             toasts.insert(next, at: 0)
             if toasts.count > 8 { toasts.removeLast() }
         }
 
         if !dock.collapsed {
-            // The finishing square fires a tracer UP into the muzzle; the smoke
-            // billows from the gun and the card lifts out of it.
+            // The finishing square fires a tracer into the muzzle; the smoke
+            // billows from the gun as the card pulls in.
             let shot = CannonShot(sessionId: payload.sessionId, accent: accent)
             shots = [shot]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
@@ -598,7 +584,7 @@ struct SessionDockView: View {
     static func headline(for v: DockToastVariant) -> String {
         switch v {
         case .attention: return "Needs You"
-        case .success:   return "Finished · Clear"
+        case .success:   return "Finished"
         case .urgent:    return "Still Hot"
         }
     }
@@ -1087,12 +1073,6 @@ private struct CannonShot: Identifiable {
     let accent: Color
 }
 
-/// One in-flight "spent casing" flick — a sub-agent finished for `sessionId`.
-private struct Casing: Identifiable {
-    let id = UUID()
-    let sessionId: UUID
-}
-
 /// Collects every visible square's centre point, keyed by session id, so the
 /// cannon layer can resolve where to launch a tracer from.
 private struct SquareCenterKey: PreferenceKey {
@@ -1103,19 +1083,19 @@ private struct SquareCenterKey: PreferenceKey {
     }
 }
 
-/// The notification card. A clean, restrained dark card — no neon: a plain
-/// near-black body with a faint neutral border, a simple system font, and the
-/// bullet artwork on the left. The TAB NAME is the title, a short status line
-/// sits under it (tinted by the variant), and a dim tab-number rides the right.
+/// The notification card — a dispatch tag built from the SAME keycap material
+/// as the dock squares so it reads as one machine. A shell-casing bullet on the
+/// left, project · status in the middle, and the tab number as a real keycap
+/// chip on the right — the hero, since it's your Zellij jump key.
 private struct DockToastCard: View {
-    static let width: CGFloat = 250
-    static let height: CGFloat = 40
-    private static let radius: CGFloat = 11
+    static let width: CGFloat = 256
+    static let height: CGFloat = 44
+    private static let radius: CGFloat = 12
 
-    /// The bullet artwork (diagonal cartridge PNG), loaded once from Downloads.
+    /// The status icon (focus reticle), loaded once from Downloads.
     private static let bulletImage: NSImage? = {
         let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads/bullet (1).png")
+            .appendingPathComponent("Downloads/focus.png")
         return NSImage(contentsOf: url)
     }()
 
@@ -1124,48 +1104,49 @@ private struct DockToastCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 7) {
+            HStack(spacing: 9) {
                 bullet
-                // One line: project · status … tab. Reads the same at any width.
-                Text(toast.project)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text("·")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.3))
-                Text(toast.headline)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(toast.accent)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // One line: project · status. Monospaced (dispatch-tag serial)
+                // but normal case, so it sits next to the keycaps without shouting.
+                HStack(spacing: 7) {
+                    Text(toast.project)
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text("·")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.25))
+                    Text(toast.headline)
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(toast.accent)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 Spacer(minLength: 6)
-                Text(toast.taskId)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .monospacedDigit()
+                tabChip
             }
-            .padding(.horizontal, 11)
+            .padding(.leading, 8)
+            .padding(.trailing, 7)
             .frame(width: Self.width, height: Self.height)
-            // Keycap material to match the squares: top-lit gradient, a bright top
-            // bevel, an accent-tinted border + glow, and a grounding shadow.
+            // The card is a slice of the dock panel itself: a FLAT near-black body
+            // + a neutral hairline edge. No body gradient, no accent halo — colour
+            // lives ONLY inside (status text + the tab keycap), exactly like the
+            // dock contains its colour inside the squares.
             .background(
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(white: 0.17), Color(white: 0.09)],
-                                         startPoint: .top, endPoint: .bottom))
+                    .fill(Color(white: 0.11))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .stroke(toast.accent.opacity(0.45), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .stroke(LinearGradient(colors: [.white.opacity(0.4), .white.opacity(0.0)],
+                    .stroke(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.0)],
                                            startPoint: .top, endPoint: .center), lineWidth: 1)
                     .blendMode(.plusLighter)
             )
-            .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
-            .shadow(color: toast.accent.opacity(0.22), radius: 5)
+            .shadow(color: .black.opacity(0.55), radius: 7, y: 3)
         }
         .buttonStyle(.plain)
     }
@@ -1182,49 +1163,57 @@ private struct DockToastCard: View {
             Color.clear.frame(width: 24, height: 24)
         }
     }
-}
 
-/// A spent brass casing tossed off a square when one of its sub-agents finishes.
-/// Ejects up-and-right, tumbles, then gravity pulls it down as it fades — quick
-/// (~0.55s) and self-timed. Deliberately small + sideways so it never reads like
-/// the upward bullet of a real completion.
-private struct CasingFlick: View {
-    let origin: CGPoint
-    @State private var start = Date()
-    private let dur: Double = 0.55
-
-    var body: some View {
-        TimelineView(.animation) { ctx in
-            let t = min(1.0, ctx.date.timeIntervalSince(start) / dur)
-            let dx = 34.0 * t                                  // travels right
-            let dy = -16.0 * sin(t * .pi) + 26.0 * t * t       // arc up, then fall
-            let rot = 320.0 * t                                // tumble
-            let fade = t < 0.7 ? 1.0 : max(0, 1 - (t - 0.7) / 0.3)
-            casing
-                .rotationEffect(.degrees(rot))
-                .opacity(fade)
-                .position(x: origin.x + 14 + CGFloat(dx),
-                          y: origin.y - 2 + CGFloat(dy))
-        }
-        .onAppear { start = Date() }
-        .allowsHitTesting(false)
+    /// The tab number as a mini keycap chip — the hero, matching the dock
+    /// squares: embossed mono digits with the pane as a small superscript, on
+    /// the same accent-tinted keycap material (top bevel + seat + border + ground).
+    private var tabChip: some View {
+        let s: CGFloat = 30
+        return numberView(size: s)
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(0.55), radius: 0.5, y: 1)
+            .frame(width: s, height: s)
+            .background(
+                RoundedRectangle(cornerRadius: s * 0.24, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [toast.accent.opacity(0.42), toast.accent.opacity(0.20)],
+                        startPoint: .top, endPoint: .bottom))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: s * 0.24, style: .continuous)
+                    .stroke(toast.accent.opacity(0.75), lineWidth: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: s * 0.24, style: .continuous)
+                    .stroke(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.0)],
+                                           startPoint: .top, endPoint: .center), lineWidth: 1)
+                    .blendMode(.plusLighter)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: s * 0.24, style: .continuous)
+                    .stroke(LinearGradient(colors: [.clear, .black.opacity(0.4)],
+                                           startPoint: .center, endPoint: .bottom), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
     }
 
-    /// A tiny brass casing on its side — body + a darker rim (the case head).
-    private var casing: some View {
-        Capsule()
-            .fill(LinearGradient(
-                colors: [Color(red: 1.0, green: 0.86, blue: 0.52),
-                         Color(red: 0.78, green: 0.55, blue: 0.22)],
-                startPoint: .top, endPoint: .bottom))
-            .frame(width: 11, height: 4.5)
-            .overlay(alignment: .leading) {
-                Capsule()
-                    .fill(Color(red: 0.55, green: 0.38, blue: 0.14))
-                    .frame(width: 3, height: 4.5)          // case-head rim
+    /// Tab number, hero-sized. "6.2" → big "6" + small superscript "2".
+    @ViewBuilder
+    private func numberView(size: CGFloat) -> some View {
+        let hero = Font.system(size: size * 0.46, weight: .heavy, design: .monospaced)
+        if let dot = toast.taskId.firstIndex(of: ".") {
+            let tab = String(toast.taskId[..<dot])
+            let pane = String(toast.taskId[toast.taskId.index(after: dot)...])
+            HStack(alignment: .top, spacing: 0.5) {
+                Text(tab).font(hero).monospacedDigit()
+                Text(pane)
+                    .font(.system(size: size * 0.30, weight: .heavy, design: .monospaced))
+                    .monospacedDigit()
+                    .opacity(0.85)
             }
-            .overlay(Capsule().stroke(Color.black.opacity(0.25), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.4), radius: 1, y: 0.5)
+        } else {
+            Text(toast.taskId).font(hero).monospacedDigit()
+        }
     }
 }
 
@@ -1329,7 +1318,6 @@ private struct CannonProjectile: View {
     }
 }
 
-/// Small breathing dot in the corner of a square that needs the user.
 // MARK: - Revolver cylinder (prototype)
 
 /// The scalloped/fluted face of a revolver cylinder: a disc with a concave
