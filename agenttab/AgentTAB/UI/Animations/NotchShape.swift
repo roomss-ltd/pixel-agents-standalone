@@ -16,6 +16,7 @@ import AppKit
 import ImageIO
 import AVFoundation
 import WebKit
+import Lottie
 
 /// Flat top, rounded bottom corners.
 struct DropPanelShape: Shape {
@@ -605,6 +606,30 @@ private func rotateVec(_ v: CGVector, by a: CGFloat) -> CGVector {
 
 /// Plays the white-keyed GIF frames on their own clock via `TimelineView`.
 /// Each frame is a CGImage with near-white pixels already made transparent.
+/// Plays a pre-rendered frame sequence on a `DecorativeTimeline` — slow fps, and
+/// FREEZES to a static frame when the screens sleep / Low Power / Reduce Motion.
+/// The cheap NATIVE replacement for a WKWebView CSS loop (no browser engine, no
+/// always-on display-rate clock). Loops over `frames.count / fps` seconds.
+struct FrameSequence: View {
+    let frames: [ShootAsset.Frame]
+    var fps: Double = 15
+
+    var body: some View {
+        if frames.isEmpty {
+            Color.clear
+        } else {
+            DecorativeTimeline(fps: fps) { ctx in
+                let total = Double(frames.count) / max(1, fps)
+                let t = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: total)
+                let idx = min(frames.count - 1, max(0, Int(t * fps)))
+                Image(decorative: frames[idx].image, scale: 1)
+                    .resizable()
+                    .interpolation(.high)
+            }
+        }
+    }
+}
+
 struct KeyedGIFView: View {
     let frames: [ShootAsset.Frame]
     /// When set, ignore the GIF's embedded per-frame delays and play every
@@ -684,6 +709,9 @@ enum ShootAsset {
     /// cables + posts); they ride solo, no extra crane from us.
     static let containerImages: [CGImage] = ["container1.png", "container2.png"]
         .compactMap { loadNamed($0, keyed: false).first?.image }
+    /// The fire "working" loader, pre-rendered from the original CSS to a PNG
+    /// frame loop (one 6s LCM cycle at 15fps) — played natively (no WebKit).
+    static let fire: [Frame] = loadSequence("fire_frames", prefix: "fire_", count: 90, fps: 15)
 
     private static func load() -> [Frame] {
         guard let url = sourceURL else { return [] }
@@ -723,6 +751,23 @@ enum ShootAsset {
         NSGraphicsContext.restoreGraphicsState()
         guard let cg = rep.cgImage else { return [] }
         return [Frame(image: cg, duration: 0.1)]
+    }
+
+    /// Load a PNG frame SEQUENCE (`<prefix>000.png` …) from a ~/Downloads subdir
+    /// — a loop pre-rendered from a CSS loader, played back natively (no WebKit).
+    /// Each frame's own alpha is preserved.
+    static func loadSequence(_ subdir: String, prefix: String, count: Int, fps: Double) -> [Frame] {
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads").appendingPathComponent(subdir)
+        let dur = 1.0 / max(1, fps)
+        var out: [Frame] = []
+        for i in 0 ..< count {
+            let url = base.appendingPathComponent(String(format: "%@%03d.png", prefix, i))
+            guard let img = NSImage(contentsOf: url),
+                  let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+            out.append(Frame(image: cg, duration: dur))
+        }
+        return out
     }
 
     private static func frames(at url: URL, keyed: Bool = true) -> [Frame] {
@@ -2398,15 +2443,43 @@ private struct SitSpinWebView: NSViewRepresentable {
 /// The Uiverse flame loader (HTML + CSS by Admin12121): a flickering orange fire
 /// with rising ember particles. Markup + CSS verbatim, run in a transparent
 /// WKWebView. TEMP swap in the working badge — fits the gun/"still hot" theme.
+/// A native Lottie loader — the proper replacement for the WKWebView CSS loaders:
+/// tiny vector animation, full fidelity, native alpha, paused when quiet. Uses
+/// lottie-ios's SwiftUI `LottieView` + `.resizable()` so it HONOURS the SwiftUI
+/// frame (the raw `LottieAnimationView` ignored it and rendered at native size).
+struct LottieLoop: View {
+    let filename: String       // e.g. "Fire.json"
+    let paused: Bool
+    var loopMode: LottieLoopMode = .loop
+
+    var body: some View {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads").appendingPathComponent(filename)
+        LottieView(animation: LottieAnimation.filepath(url.path))
+            .configuration(LottieConfiguration(renderingEngine: .coreAnimation))
+            .resizable()
+            .playbackMode(paused
+                ? .paused
+                : .playing(.fromProgress(0, toProgress: 1, loopMode: loopMode)))
+    }
+}
+
+/// The fire "working" loader — formerly a WKWebView (~8% CPU in a hidden WebKit
+/// process, measured). Now a native Lottie animation (`Fire.json`): tiny, full
+/// fidelity (every ember + flicker), and freezes when quiet. `FireWebView` is
+/// kept below for revert.
 struct FireLoader: View {
-    private static let render: CGFloat = 150   // the flame is 100px; room for shadow + embers
+    @ObservedObject private var energy = EnergyMonitor.shared
+    /// Scale of the flame relative to the badge (the flame is allowed to spill
+    /// past the glyph box — it reads as a bigger fire).
+    private static let fill: CGFloat = 1.0
 
     var body: some View {
         GeometryReader { geo in
             let target = max(8, min(geo.size.width, geo.size.height))
-            FireWebView()
-                .frame(width: Self.render, height: Self.render)
-                .scaleEffect(target / Self.render)
+            LottieLoop(filename: "Qujf8Dc4li (1).json", paused: energy.quiet, loopMode: .loop)
+                .frame(width: target * Self.fill, height: target * Self.fill)
+                .offset(x: target * 0.05 + 1, y: -target * 0.12)   // nudge up + a hair right (+1px)
                 .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
@@ -2662,18 +2735,71 @@ private struct GlowRingWebView: NSViewRepresentable {
 /// record (cream label + centre) on a sage-green body with a tonearm. Has a
 /// SOLID background, so it reads as a small card, not a transparent overlay.
 /// Markup + CSS verbatim, run in a WKWebView. TEMP swap in the working badge.
+/// Native re-draw of the Uiverse turntable — formerly a WKWebView (a whole
+/// browser engine spinning a disc, running even at idle). Same colours + sizes
+/// from the original CSS; the plate rotates via `DecorativeTimeline`, which ticks
+/// slowly and FREEZES when the screens sleep / Low Power / Reduce Motion, so
+/// there's no WebKit at runtime. `TurntableWebView` is kept below for revert.
 struct TurntableLoader: View {
     private static let render: CGFloat = 190   // body is 175px; room for the drop shadow
+    private static let green = Color(red: 0xAB/255.0, green: 0xC4/255.0, blue: 0xAA/255.0)
+    private static let dark  = Color(red: 0x67/255.0, green: 0x5D/255.0, blue: 0x50/255.0)
+    private static let cream = Color(red: 0xF3/255.0, green: 0xDE/255.0, blue: 0xBA/255.0)
 
     var body: some View {
         GeometryReader { geo in
             let target = max(8, min(geo.size.width, geo.size.height))
-            TurntableWebView()
+            card
                 .frame(width: Self.render, height: Self.render)
                 .scaleEffect(target / Self.render)
                 .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
+    }
+
+    private var card: some View {
+        ZStack {
+            // Hard offset shadow (CSS `box-shadow: 5px 5px 0 0`).
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Self.dark).frame(width: 175, height: 175).offset(x: 5, y: 5)
+            // Body card.
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Self.green).frame(width: 175, height: 175)
+            // Rotating plate, centred on the body.
+            plate
+            // Tone-arm in the bottom-right of the body (over the plate).
+            arm.frame(width: 175, height: 175, alignment: .bottomTrailing)
+        }
+    }
+
+    private var plate: some View {
+        DecorativeTimeline(fps: 24) { ctx in
+            let angle = (ctx.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 2.0) / 2.0) * 360.0
+            ZStack {
+                Circle().fill(Self.dark).frame(width: 150, height: 150)
+                // 2-tone border ring: cream top + bottom, dark left + right.
+                ZStack {
+                    Circle().stroke(Self.dark, lineWidth: 3)
+                    Circle().trim(from: 0.625, to: 0.875).stroke(Self.cream, lineWidth: 3)
+                    Circle().trim(from: 0.125, to: 0.375).stroke(Self.cream, lineWidth: 3)
+                }
+                .frame(width: 111, height: 111)
+                Circle().fill(Self.cream).frame(width: 70, height: 70)
+                Circle().fill(Self.dark).frame(width: 20, height: 20)
+            }
+            .rotationEffect(.degrees(angle))
+        }
+        .frame(width: 150, height: 150)
+    }
+
+    private var arm: some View {
+        VStack(spacing: -8) {
+            Circle().fill(Self.cream).frame(width: 25, height: 25)        // counterweight head
+            Capsule().fill(Self.cream).frame(width: 10, height: 45)       // arm shaft
+        }
+        .rotationEffect(.degrees(-45))
+        .padding(8)
     }
 }
 

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let screenTracker = ScreenTracker()
     let fullscreenDetector = FullscreenDetector()
     let tokenTracker = TokenTracker()
+    let rateLimits = RateLimitMonitor()
     private var onboardingWindow: NSWindow?
     private var trackerCancellable: AnyCancellable?
     private var autoHideCancellable: AnyCancellable?
@@ -37,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         engine.start()
         tokenTracker.start()
+        rateLimits.start()
 
         let panel = NotchPanel(rootView: AnyView(EmptyView()))
         notchPanel = panel
