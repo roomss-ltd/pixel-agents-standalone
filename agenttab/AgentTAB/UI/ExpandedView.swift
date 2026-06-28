@@ -129,6 +129,7 @@ struct ExpandedView: View {
             if !isExpanded {
                 NotchStatusLine(idle: restingCount, working: inProgressCount,
                                 activeShooter: $activeShooter)
+                    .offset(x: -1.5)   // nudge the rail a hair left
             }
         }
         .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
@@ -245,9 +246,19 @@ struct ExpandedView: View {
                 // Same squircle box as the idle counter, but a pause glyph
                 // instead of a number — the session is waiting on you.
                 CratePauseBadge(color: Theme.Neon.amber, size: size * 1.22)
+            } else if inProgressCount > 0 {
+                // Processing → the hamster runs in the left wing, mirrored so it
+                // runs toward the centre, not outward.
+                HamsterWheelLoader()
+                    .frame(width: size * 1.4, height: size * 1.4)
+                    .scaleEffect(x: -1, y: 1)
+                    .offset(x: 1)
             } else {
-                CrateBadge(count: restingCount,
-                           color: Color(red: 0.40, green: 0.86, blue: 0.82), size: size * 1.22)
+                // Idle → the sleeping bear (off-duty), pairing with the turntable
+                // on the right. Replaces the resting-count badge.
+                BearLoader()
+                    .frame(width: size * 1.2, height: size * 1.38)
+                    .offset(x: -2)
             }
         }
         // Fade out while a GIF poses over this wing (bullets on start, target on finish).
@@ -261,12 +272,15 @@ struct ExpandedView: View {
     private func compactRightBadge(size: CGFloat) -> some View {
         Group {
             if inProgressCount > 0 {
-                FireLoader()   // TEMP: swapped in for HamsterWheelLoader()
+                FireLoader()   // working — the kept favourite
                     .frame(width: size * 1.8, height: size * 1.8)
                     .offset(x: -6.5, y: 2)
             } else {
-                BearLoader()
-                    .frame(width: size * 1.2, height: size * 1.38)
+                // Default / idle: the turntable (replaces BearLoader, which is
+                // kept in the project so we can switch back).
+                TurntableLoader()
+                    .frame(width: size * 1.5, height: size * 1.5)
+                    .offset(x: -4)
             }
         }
         // Fade out while the gun GIF poses over this wing.

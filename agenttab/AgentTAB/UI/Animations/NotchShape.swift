@@ -271,6 +271,11 @@ struct NotchStatusLine: View {
                 SiphonDroplet(trigger: siphonID,
                               start: siphonStart, end: siphonEnd,
                               color: siphonColor, outline: shape)
+                // Sparks thrown off the comet as it flies — a lit fuse igniting
+                // the far wing.
+                CometSparks(trigger: siphonID,
+                            start: siphonStart, end: siphonEnd,
+                            outline: shape)
 
                 // LEFT-wing flourish: a target on a FINISH only (no funnel on
                 // a start — the start just plays bullets on the right).
@@ -320,8 +325,11 @@ struct NotchStatusLine: View {
             let cometOrange = Color(red: 1.0, green: 0.74, blue: 0.28)
             if starting {
                 siphonStart = 1.0; siphonEnd = 0.0
-                siphonColor = (old == 0) ? blueVivid : cometOrange
-                shootTint = blueVivid
+                // First session igniting an idle rail → a white-hot "fuse" comet
+                // (no blue), sparking as it flies to ignite the right wing.
+                let igniteWhite = Color(red: 1.0, green: 0.95, blue: 0.84)
+                siphonColor = (old == 0) ? igniteWhite : cometOrange
+                shootTint = (old == 0) ? igniteWhite : blueVivid
             } else {
                 siphonStart = 0.0; siphonEnd = 1.0
                 siphonColor = cometOrange
@@ -392,8 +400,16 @@ struct NotchStatusLine: View {
     /// fronts flash bright like lava with sparks.
     @ViewBuilder
     private func railView(_ shape: NotchOutlineShape) -> some View {
-        let active = Color(red: 0.45, green: 0.93, blue: 0.88)   // white+blue+green merge
+        // Magma palette — a layered molten vein: deep-red base, hot-orange body,
+        // gold-white core, with a gold→red bloom + slow white-hot spots drifting
+        // through it (the "alive"). The front + white sparks add the highlights.
         let idle = WallpaperColor.average.opacity(0.70)
+        let deep = Color(red: 0.80, green: 0.09, blue: 0.0)        // deep-red base
+        let mid = Color(red: 1.0, green: 0.40, blue: 0.05)         // hot-orange body
+        let core = Color(red: 1.0, green: 0.86, blue: 0.50)        // gold-white core
+        let glowInner = Color(red: 1.0, green: 0.66, blue: 0.18)   // gold bloom (tight)
+        let glowOuter = Color(red: 1.0, green: 0.26, blue: 0.04)   // deep red-orange (wide)
+        let hot = Color(red: 1.0, green: 0.95, blue: 0.82)         // white-hot drifting spot
         let rs = StrokeStyle(lineWidth: 2.0, lineCap: .round)
         let duration = Self.flowDuration
         if railAnimating {
@@ -404,24 +420,18 @@ struct NotchStatusLine: View {
                 let half = CGFloat(p) * 0.5
                 let leftTo = flowToActive ? half : (0.5 - half)
                 let rightFrom = flowToActive ? (1 - half) : (0.5 + half)
-                // Param direction each front travels (merge → in toward centre,
-                // unmerge → out toward the ends). Sparks trail opposite this.
-                let leftSign: CGFloat = flowToActive ? 1 : -1
-                let rightSign: CGFloat = flowToActive ? -1 : 1
                 // Sparks run the WHOLE flow at full strength, then fade over the
                 // tail — so they never blink out mid-merge at either end.
                 let tailFade = elapsed <= duration
                     ? 1.0 : max(0.0, 1.0 - (elapsed - duration) / Self.sparkTail)
                 ZStack {
                     shape.stroke(idle, style: rs)
-                    // Active fill rivering from the ends, carrying the river's
-                    // own-colour glow (borrowed from the spark loader).
-                    shape.trim(from: 0, to: leftTo).stroke(active, style: rs)
-                        .shadow(color: active.opacity(0.6), radius: 2.5)
-                        .shadow(color: active.opacity(0.4), radius: 6)
-                    shape.trim(from: rightFrom, to: 1).stroke(active, style: rs)
-                        .shadow(color: active.opacity(0.6), radius: 2.5)
-                        .shadow(color: active.opacity(0.4), radius: 6)
+                    // Active fill rivering from the ends as the layered molten
+                    // vein, carrying the gold→red bloom.
+                    moltenVein(shape, from: 0, to: leftTo, deep: deep, mid: mid, core: core,
+                               glowInner: glowInner, glowOuter: glowOuter)
+                    moltenVein(shape, from: rightFrom, to: 1, deep: deep, mid: mid, core: core,
+                               glowInner: glowInner, glowOuter: glowOuter)
                     if p < 1 {
                         let flick = 0.55 + 0.45 * sin(ctx.date.timeIntervalSinceReferenceDate * 34)
                         railFront(shape, at: leftTo, flick: flick)
@@ -431,32 +441,48 @@ struct NotchStatusLine: View {
                     // as Shapes (NOT a Canvas) so sparks on the rail's bottom
                     // edge — which sits a hair below the bar — aren't clipped.
                     if tailFade > 0.01 {
-                        let sparkColor = Color(red: 1.0, green: 0.95, blue: 0.82)
-                        let fronts = [(param: leftTo, sign: leftSign),
-                                      (param: rightFrom, sign: rightSign)]
+                        let sparkColor = hot
                         let bands = 4
                         ForEach(0 ..< bands, id: \.self) { band in
-                            RailSparkLayer(outline: shape, fronts: fronts,
-                                           t: ctx.date.timeIntervalSinceReferenceDate,
+                            RailSparkLayer(outline: shape, flowToActive: flowToActive,
+                                           elapsed: elapsed, duration: duration,
                                            band: band, bandCount: bands)
                                 .stroke(sparkColor.opacity(tailFade * (Double(band) + 0.5) / Double(bands)),
-                                        style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                                        style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
                                 .blendMode(.plusLighter)
                         }
                     }
                 }
             }
-        } else {
-            // Settled — NO clock. idle base, plus the full active stroke (with a
-            // resting own-colour glow) once the rail has flowed to active.
+        } else if flowToActive {
+            // Settled but ACTIVE — the static layered molten vein + bloom. No
+            // clock here: the travelling white comets now live on the crates.
             ZStack {
                 shape.stroke(idle, style: rs)
-                if flowToActive {
-                    shape.stroke(active, style: rs)
-                        .shadow(color: active.opacity(0.6), radius: 2.5)
-                        .shadow(color: active.opacity(0.4), radius: 6)
-                }
+                moltenVein(shape, from: 0, to: 1, deep: deep, mid: mid, core: core,
+                           glowInner: glowInner, glowOuter: glowOuter)
             }
+        } else {
+            // Idle — pure gray base, no clock.
+            shape.stroke(idle, style: rs)
+        }
+    }
+
+    /// One run of the molten vein over a trim range: a deep-red base (carrying
+    /// the bloom), a hot-orange body, and a thin gold-white core on top.
+    @ViewBuilder
+    private func moltenVein(_ shape: NotchOutlineShape, from: CGFloat, to: CGFloat,
+                            deep: Color, mid: Color, core: Color,
+                            glowInner: Color, glowOuter: Color) -> some View {
+        if to > from {
+            let seg = shape.trim(from: from, to: to)
+            seg.stroke(deep, style: StrokeStyle(lineWidth: 3.6, lineCap: .round))
+                .shadow(color: glowOuter.opacity(0.55), radius: 7)
+                .shadow(color: glowInner.opacity(0.6), radius: 3)
+            seg.stroke(mid, style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
+            seg.stroke(core, style: StrokeStyle(lineWidth: 0.9, lineCap: .round))
+                .blendMode(.plusLighter)
+                .opacity(0.85)
         }
     }
 
@@ -491,31 +517,53 @@ struct NotchStatusLine: View {
 /// the degenerate path ends, so a front sitting at an end still sparks.
 private struct RailSparkLayer: Shape {
     let outline: NotchOutlineShape
-    let fronts: [(param: CGFloat, sign: CGFloat)]
-    let t: Double
+    let flowToActive: Bool
+    let elapsed: Double
+    let duration: Double
     let band: Int
     let bandCount: Int
+
+    /// Where a front sits at flow-progress `p` (0…1). side 0 = the front growing
+    /// from param 0; side 1 = the front growing from param 1.
+    private func frontParam(side: Int, p: Double) -> CGFloat {
+        let half = CGFloat(p) * 0.5
+        return side == 0 ? (flowToActive ? half : 0.5 - half)
+                         : (flowToActive ? 1 - half : 0.5 + half)
+    }
 
     func path(in rect: CGRect) -> Path {
         let src = outline.path(in: rect)
         var out = Path()
-        let cycle = 0.34
-        let perFront = 6
-        let maxDist: CGFloat = 9, len: CGFloat = 3.5   // shorter streaks, trimmed tails
-        for front in fronts {
-            let cp = min(0.97, max(0.03, front.param))
-            let pt = railPointOn(src, at: cp)
-            let tan = railTangent(src, at: cp)
-            let back = CGVector(dx: -front.sign * tan.dx, dy: -front.sign * tan.dy)
+        let cycle = 0.40          // spark lifetime — wider so emits are less frequent
+        let perFront = 2          // fewer concurrent sparks (~2x bigger gaps between emits)
+        let maxFly: CGFloat = 12  // how far a spark drifts from its birth point
+        let len: CGFloat = 2.0    // tiny, thin streaks
+        for side in 0 ..< 2 {
+            // Param direction the front travels — sparks fly OPPOSITE it.
+            let sign: CGFloat = (side == 0) ? (flowToActive ? 1 : -1)
+                                            : (flowToActive ? -1 : 1)
             for i in 0 ..< perFront {
-                let phase = ((t / cycle) + Double(i) / Double(perFront))
+                // Each spark has a phase 0→1 over its life; staggered per slot
+                // and offset between the two fronts so they don't pulse together.
+                let phase = ((elapsed / cycle) + Double(i) / Double(perFront) + Double(side) * 0.5)
                     .truncatingRemainder(dividingBy: 1)
-                let life = max(0, 1 - phase)
+                let life = 1 - phase
                 guard min(bandCount - 1, Int(life * Double(bandCount))) == band else { continue }
-                let dist = CGFloat(phase) * maxDist
+                // BIRTH-anchored: the spark was emitted `age` ago, where the
+                // front WAS then — it then flies off that fixed point while the
+                // front keeps advancing, so it detaches and trails away.
+                let age = phase * cycle
+                let birthElapsed = elapsed - age
+                guard birthElapsed >= 0 else { continue }
+                let pBirth = min(1.0, max(0.0, birthElapsed / duration))
+                let cp = min(0.97, max(0.03, frontParam(side: side, p: pBirth)))
+                let pt = railPointOn(src, at: cp)
+                let back = railTangent(src, at: cp)
+                let trail = CGVector(dx: -sign * back.dx, dy: -sign * back.dy)
+                let fly = CGFloat(phase) * maxFly
                 for sgn in [CGFloat(1), -1] {
-                    let dir = rotateVec(back, by: sgn * 0.7)
-                    let base = CGPoint(x: pt.x + dir.dx * dist, y: pt.y + dir.dy * dist)
+                    let dir = rotateVec(trail, by: sgn * 0.7)
+                    let base = CGPoint(x: pt.x + dir.dx * fly, y: pt.y + dir.dy * fly)
                     let tip = CGPoint(x: base.x + dir.dx * len, y: base.y + dir.dy * len)
                     out.move(to: base)
                     out.addLine(to: tip)
@@ -970,30 +1018,28 @@ private struct CrateView: View {
     /// blooms and the ends taper out through amber → deep orange. Rides the
     /// status line directly above the crate as it travels.
     private func railGlow(at center: CGFloat, halfWidth w: CGFloat) -> some View {
-        let deep  = Color(red: 1.0, green: 0.50, blue: 0.14)   // deep orange — the soft edges
-        let amber = Color(red: 1.0, green: 0.72, blue: 0.26)   // river-spark amber — mid
-        let gold  = Color(red: 1.0, green: 0.88, blue: 0.52)   // pale gold — inner
-        // Each layer is narrower + brighter than the last; stacked with
-        // plusLighter they sum to white-hot in the middle and fade to a dim
-        // orange at the ends (the layers drop out one by one outward). An empty
-        // trim range just renders nothing, so no guard is needed.
+        // A cool-WHITE comet marking the crate on the rail — pops against the
+        // warm magma vein. Concentric layers stacked with plusLighter sum to a
+        // white-hot core inside a soft white halo. An empty trim range renders
+        // nothing, so no guard is needed.
+        let warm = Color(red: 1.0, green: 0.96, blue: 0.88)   // faint warm-white mid
         func seg(_ hw: CGFloat) -> (CGFloat, CGFloat) {
             (max(0, center - hw), min(1, center + hw))
         }
-        let l0 = seg(w), l1 = seg(w * 0.66), l2 = seg(w * 0.40), l3 = seg(w * 0.16)
+        let l0 = seg(w), l1 = seg(w * 0.6), l2 = seg(w * 0.30), l3 = seg(w * 0.12)
         return ZStack {
             shape.trim(from: l0.0, to: l0.1)
-                .stroke(deep.opacity(0.42), style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
-                .shadow(color: deep.opacity(0.8), radius: 5)
+                .stroke(Color.white.opacity(0.26), style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
+                .shadow(color: Color.white.opacity(0.75), radius: 5)
                 .blendMode(.plusLighter)
             shape.trim(from: l1.0, to: l1.1)
-                .stroke(amber.opacity(0.80), style: StrokeStyle(lineWidth: 3.0, lineCap: .round))
+                .stroke(warm.opacity(0.6), style: StrokeStyle(lineWidth: 2.8, lineCap: .round))
                 .blendMode(.plusLighter)
             shape.trim(from: l2.0, to: l2.1)
-                .stroke(gold.opacity(0.95), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
                 .blendMode(.plusLighter)
             shape.trim(from: l3.0, to: l3.1)
-                .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+                .stroke(.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
                 .blendMode(.plusLighter)
         }
         .allowsHitTesting(false)
@@ -1016,6 +1062,8 @@ private struct CrateView: View {
                 Image(decorative: img, scale: 1)
                     .resizable()
                     .interpolation(.high)
+                    .saturation(0)        // steel-gray cargo — cool vs the warm rail
+                    .brightness(0.08)
             } else {
                 RoundedRectangle(cornerRadius: 1.4).fill(crate.tint)
             }
@@ -1263,6 +1311,96 @@ struct SiphonDroplet: View {
                 withAnimation(.easeOut(duration: 0.25)) { visible = false }
             }
         }
+    }
+}
+
+/// White-hot sparks thrown off the siphon comet as it flies — so the bullet
+/// reads like a lit fuse igniting the far wing. Runs its own brief clock that
+/// mirrors the comet's eased sweep (the comet uses an implicit animation, so its
+/// in-flight position isn't observable; we re-derive it here). Sparks brighten
+/// as the comet nears its target.
+struct CometSparks: View {
+    let trigger: Int
+    let start: CGFloat
+    let end: CGFloat
+    let outline: NotchOutlineShape
+
+    @State private var fireTime: Date? = nil
+    private static let dur: Double = 0.9
+
+    var body: some View {
+        Group {
+            if let ft = fireTime {
+                TimelineView(.animation) { ctx in
+                    let elapsed = ctx.date.timeIntervalSince(ft)
+                    let raw = min(1.0, max(0.0, elapsed / Self.dur))
+                    let eased = raw * raw * (3 - 2 * raw)        // smoothstep ≈ easeInOut
+                    let param = start + (end - start) * CGFloat(eased)
+                    let sign: CGFloat = end >= start ? 1 : -1
+                    let intensity = 0.35 + 0.65 * eased          // hotter near the target
+                    let spark = Color(red: 1.0, green: 0.96, blue: 0.86)
+                    let bands = 3
+                    ZStack {
+                        ForEach(0 ..< bands, id: \.self) { band in
+                            CometSparkLayer(outline: outline, param: param, sign: sign,
+                                            t: ctx.date.timeIntervalSinceReferenceDate,
+                                            band: band, bandCount: bands)
+                                .stroke(spark.opacity(intensity * (Double(band) + 0.5) / Double(bands)),
+                                        style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
+                                .blendMode(.plusLighter)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+        }
+        .onChange(of: trigger) { _, v in
+            guard v > 0 else { return }
+            fireTime = Date()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.dur + 0.2))
+                fireTime = nil
+            }
+        }
+    }
+}
+
+/// One opacity band of the comet's spark spray — short white-hot streaks thrown
+/// back-and-out from the comet's current rail position. A Shape (not a Canvas)
+/// so it never clips on the rail's bottom edge.
+private struct CometSparkLayer: Shape {
+    let outline: NotchOutlineShape
+    let param: CGFloat
+    let sign: CGFloat        // comet's param-travel direction; sparks trail opposite
+    let t: Double
+    let band: Int
+    let bandCount: Int
+
+    func path(in rect: CGRect) -> Path {
+        let src = outline.path(in: rect)
+        let cp = min(0.985, max(0.015, param))
+        let pt = railPointOn(src, at: cp)
+        let tan = railTangent(src, at: cp)
+        let back = CGVector(dx: -sign * tan.dx, dy: -sign * tan.dy)
+        var out = Path()
+        let perSpot = 4
+        let cycle = 0.16
+        let maxFly: CGFloat = 9, len: CGFloat = 2.4
+        for i in 0 ..< perSpot {
+            let phase = ((t / cycle) + Double(i) / Double(perSpot))
+                .truncatingRemainder(dividingBy: 1)
+            let life = 1 - phase
+            guard min(bandCount - 1, Int(life * Double(bandCount))) == band else { continue }
+            let fly = CGFloat(phase) * maxFly
+            for s in [CGFloat(1), -1] {
+                let dir = rotateVec(back, by: s * 0.8)
+                let base = CGPoint(x: pt.x + dir.dx * fly, y: pt.y + dir.dy * fly)
+                let tip = CGPoint(x: base.x + dir.dx * len, y: base.y + dir.dy * len)
+                out.move(to: base)
+                out.addLine(to: tip)
+            }
+        }
+        return out
     }
 }
 
@@ -2410,6 +2548,277 @@ private struct FireWebView: NSViewRepresentable {
       animation-iteration-count: infinite;
       animation-fill-mode: both;
     }
+    """#
+}
+
+/// The Uiverse glowing-ring loader (HTML + CSS by mrhyddenn): a rotating
+/// red→blue→green gradient ring with a heavy multi-layer blur bloom and a dark
+/// hub. Markup + CSS verbatim, run in a transparent WKWebView. TEMP swap in the
+/// working badge.
+struct GlowRingLoader: View {
+    private static let render: CGFloat = 130   // ring is 50px; room for the blur bloom
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            GlowRingWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct GlowRingWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 130, height: 130))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:130px;height:130px}
+    body{display:flex;align-items:center;justify-content:center}
+    \(css)
+    </style></head><body>
+    <div class="loader"><span></span><span></span><span></span><span></span></div>
+    </body></html>
+    """
+
+    /// The CSS exactly as authored (Uiverse.io / mrhyddenn).
+    private static let css = #"""
+    .loader {
+      position: relative;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: linear-gradient(#ee280e, #15a0f7, #6ed15a);
+      animation: animate7712 1.2s linear infinite;
+    }
+    @keyframes animate7712 {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .loader span {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: linear-gradient(#ee280e, #15a0f7, #5ad15a);
+    }
+    .loader:after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      background: #333;
+      border: solid #333 10px;
+      border-radius: 50%;
+    }
+    .loader span:nth-child(1) { filter: blur(5px); }
+    .loader span:nth-child(2) { filter: blur(10px); }
+    .loader span:nth-child(3) { filter: blur(25px); }
+    .loader span:nth-child(4) { filter: blur(50px); }
+    """#
+}
+
+/// The Uiverse turntable loader (HTML + CSS by TheAbieza): a spinning vinyl
+/// record (cream label + centre) on a sage-green body with a tonearm. Has a
+/// SOLID background, so it reads as a small card, not a transparent overlay.
+/// Markup + CSS verbatim, run in a WKWebView. TEMP swap in the working badge.
+struct TurntableLoader: View {
+    private static let render: CGFloat = 190   // body is 175px; room for the drop shadow
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            TurntableWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct TurntableWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 190, height: 190))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent OUTSIDE the card
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:190px;height:190px}
+    body{display:flex;align-items:center;justify-content:center}
+    \(css)
+    </style></head><body>
+    <div class="container">
+      <div class="plate"><div class="black"><div class="border"><div class="white"><div class="center"></div></div></div></div></div>
+      <div class="player"><div class="rect"></div><div class="circ"></div></div>
+    </div>
+    </body></html>
+    """
+
+    /// The CSS exactly as authored (Uiverse.io / TheAbieza).
+    private static let css = #"""
+    .container {
+      width: 175px;
+      height: 175px;
+      background-color: #ABC4AA;
+      border-radius: 10px;
+      position: relative;
+      box-shadow: 5px 5px 0 0 #675D50;
+    }
+    .plate {
+      width: fit-content;
+    }
+    .plate .black,
+    .plate .white,
+    .plate .center,
+    .plate .border {
+      border-radius: 100%;
+    }
+    .container,
+    .plate .black,
+    .plate .white,
+    .plate .border {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .plate .black {
+      width: 150px;
+      height: 150px;
+      background-color: #675D50;
+      animation: rotation 2s infinite linear;
+    }
+    @keyframes rotation {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(359deg); }
+    }
+    .plate .white {
+      width: 70px;
+      height: 70px;
+      background-color: #F3DEBA;
+    }
+    .plate .center {
+      width: 20px;
+      height: 20px;
+      background-color: #675D50;
+    }
+    .plate .border {
+      width: 111px;
+      height: 111px;
+      border-top: 3px solid #F3DEBA;
+      border-bottom: 3px solid #F3DEBA;
+      border-left: 3px solid #675D50;
+      border-right: 3px solid #675D50;
+    }
+    .player {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      width: fit-content;
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      margin-bottom: 8px;
+      margin-right: 8px;
+      rotate: -45deg;
+    }
+    .player .circ {
+      width: 25px;
+      height: 25px;
+      background-color: #F3DEBA;
+      border-radius: 100%;
+      z-index: 1;
+    }
+    .player .rect {
+      width: 10px;
+      height: 55px;
+      background-color: #F3DEBA;
+      position: absolute;
+      bottom: 0;
+      margin-bottom: 5px;
+    }
+    """#
+}
+
+/// The Uiverse gooey-metaball preloader (SVG by Nawsome): white blobs orbiting
+/// inside a ring, merging via an SVG "goo" filter (Gaussian blur + colour
+/// matrix). Pure SVG + SMIL animation, which WebKit runs natively; rendered in a
+/// transparent WKWebView. TEMP swap in the working badge.
+struct GooLoader: View {
+    private static let render: CGFloat = 180   // svg is 170px; a little margin
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            GooWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct GooWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 180, height: 180))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:180px;height:180px}
+    body{display:flex;align-items:center;justify-content:center}
+    .svg_preloader{width:170px;height:170px}
+    </style></head><body>
+    \(svg)
+    </body></html>
+    """
+
+    /// The SVG exactly as authored (Uiverse.io / Nawsome).
+    private static let svg = #"""
+    <svg class="svg_preloader" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 248 248" style="enable-background:new 0 0 248 248;" xml:space="preserve">
+    <filter id="goo">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"></feGaussianBlur>
+          <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 60 -20"></feColorMatrix>
+    </filter>
+    <circle stroke="#fff" fill="none" stroke-width="3" cx="124" cy="124" r="120"></circle>
+    <g id="shape" filter="url(#goo)">
+        <circle stroke="#fff" fill="none" stroke-width="10" cx="124" cy="124" r="105"></circle>
+        <circle fill="#fff" cx="0" cy="0" r="36" transform="translate(124 124)">
+            <animateTransform attributeName="transform" type="scale" additive="sum" values="1.3;0.55;0.55;1.3" keyTimes="0;0.4;0.6;1" dur="2s" repeatCount="indefinite"></animateTransform>
+        </circle>
+        <circle fill="#fff" cx="0" cy="0" r="22">
+            <animateMotion path="M124.1,124l-14.9-14.9c-22.3-22.3-2.5-60.3,28.4-54.4c13.3,2.6,26.1,9,36.4,19.4
+            c10.1,10.1,16.5,22.4,19.2,35.4c6.5,31.3-31.7,51.9-54.3,29.3L124.1,124z" dur="2s" repeatCount="indefinite"></animateMotion>
+        </circle>
+        <circle fill="#fff" cx="0" cy="0" r="22">
+            <animateMotion path="M124.1,124l15.2,15.2c22.2,22.2,2.5,60-28.3,54.2c-13.5-2.5-26.4-9-36.8-19.4c-8.9-8.9-14.9-19.5-18-30.7
+            c-9.1-32.5,31.4-55.7,55.2-31.8L124.1,124z" dur="2s" repeatCount="indefinite"></animateMotion>
+        </circle>
+    </g>
+    </svg>
     """#
 }
 
