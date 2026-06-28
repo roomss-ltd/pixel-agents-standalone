@@ -270,8 +270,6 @@ struct SessionDockView: View {
     /// Headroom reserved above the strip while a toast is live, so the muzzle
     /// smoke + card have room to erupt upward (the panel grows up).
     private static let deckHeadroom: CGFloat = 120
-    /// How far above the muzzle the toast card parks (centre offset).
-    private static let cardRise: CGFloat = 88
 
     // MARK: Cannon / toast state
     //
@@ -280,21 +278,14 @@ struct SessionDockView: View {
     // (so the panel grows upward), launches a tracer from the firing
     // square, and pops the toast card on impact.
 
-    /// The card currently parked above the strip (nil = none).
-    @State private var toast: DockToast?
-    /// Card visibility gate. Set true on tracer impact so the card "lands"
-    /// rather than appearing instantly; the layout slot exists the whole
-    /// time `toast != nil` so the tracer has somewhere to fly into.
-    @State private var cardShown = false
-    /// One-shot white wash on the card the moment the tracer lands.
-    @State private var cardFlash = false
+    /// The notification STACK — newest at index 0 (the front). A burst stacks
+    /// (newest in front, older slides back + dims) instead of overriding; each
+    /// card auto-dismisses after a few seconds.
+    @State private var toasts: [DockToast] = []
     /// In-flight tracers (usually one). Removed once they reach the card.
     @State private var shots: [CannonShot] = []
-    /// Pending auto-dismiss, cancelled if a fresh event arrives first.
-    @State private var dismissWork: DispatchWorkItem?
-    /// Bumped on every event so a delayed launch can tell it's been
-    /// superseded by a newer one during the pre-shot delay.
-    @State private var fireGen = 0
+    /// How many cards show before the rest collapse into a "+N" chip.
+    private static let maxStack = 3
     /// Bumped on every notification to make the revolver FIRE (cylinder click
     /// + muzzle flash). The gun is now the single muzzle every toast comes out
     /// of, so this — not the in-flight count — is the authoritative "fire".
@@ -346,8 +337,8 @@ struct SessionDockView: View {
             if dock.collapsed {
                 // Collapsed: no revolver on screen to fire from — fall back to
                 // a plain card riding the trailing edge.
-                if toast != nil { collapsedToastCard }
-            } else if toast != nil {
+                if !toasts.isEmpty { collapsedToastCard }
+            } else if !toasts.isEmpty {
                 Color.clear.frame(width: DockToastCard.width, height: Self.deckHeadroom)
             }
             strip(sessions)
@@ -361,9 +352,9 @@ struct SessionDockView: View {
                 ZStack {
                     // Smoke rises from the GUN — the spent round's exhaust
                     // collects at the muzzle for the whole notification.
-                    if let toast, let m = muzzle {
-                        SmokePuff(origin: m, restartKey: toast.id)
-                            .id(toast.id)
+                    if let front = toasts.first, let m = muzzle {
+                        SmokePuff(origin: m, restartKey: front.id)
+                            .id(front.id)
                     }
                     // The gun fires the round UP toward the notification — the
                     // bullet leaves the muzzle and the card pops where it lands.
@@ -371,7 +362,7 @@ struct SessionDockView: View {
                         if let m = muzzle {
                             CannonProjectile(
                                 start: m,
-                                target: cardLanding(muzzle: m, panelWidth: geo.size.width),
+                                target: cardLanding(panelWidth: geo.size.width),
                                 accent: shot.accent
                             )
                         }
@@ -391,15 +382,10 @@ struct SessionDockView: View {
         // Card layer (interactive): the toast floats up out of the muzzle
         // smoke. Kept in its own overlay so it stays tappable while the FX
         // layer above ignores hits.
-        .overlayPreferenceValue(SquareCenterKey.self) { centers in
+        .overlay {
             GeometryReader { geo in
-                if !dock.collapsed, let toast, let anchor = centers[dockMuzzleAnchorID] {
-                    let m = geo[anchor]
-                    DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
-                        .opacity(cardShown ? 1 : 0)
-                        .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottom)
-                        .position(x: cardCenterX(muzzleX: m.x, panelWidth: geo.size.width),
-                                  y: m.y - Self.cardRise)
+                if !dock.collapsed, !toasts.isEmpty {
+                    notificationStack(panelWidth: geo.size.width)
                 }
             }
         }
@@ -420,21 +406,51 @@ struct SessionDockView: View {
         .animation(.easeOut(duration: 0.20), value: dock.collapsed)
     }
 
-    /// Card centre X when floating above the muzzle: rise off the muzzle and
-    /// lean right (the card is far wider than the gun), clamped inside the
-    /// panel so it never spills past either edge.
-    private func cardCenterX(muzzleX: CGFloat, panelWidth: CGFloat) -> CGFloat {
-        let w = DockToastCard.width
-        let ideal = muzzleX + w / 2 - 24
-        return min(max(ideal, w / 2), panelWidth - w / 2)
+    /// The notification anchor — a FIXED spot at the panel's top-right (the panel
+    /// is glued to the screen edge), so the cards never shift with session count.
+    private func cardAnchorX(panelWidth: CGFloat) -> CGFloat {
+        panelWidth - DockToastCard.width / 2 - 12
+    }
+    private func cardAnchorY() -> CGFloat {
+        // Front card near the top, with room above for the stack to peek.
+        10 + CGFloat(Self.maxStack - 1) * 7 + DockToastCard.height / 2
     }
 
-    /// Where the bullet from the muzzle should land: the card's bottom-centre,
-    /// so the round "delivers" the card and it unfolds upward from there (the
-    /// card's scale anchor is its bottom edge).
-    private func cardLanding(muzzle m: CGPoint, panelWidth: CGFloat) -> CGPoint {
-        CGPoint(x: cardCenterX(muzzleX: m.x, panelWidth: panelWidth),
-                y: m.y - Self.cardRise + DockToastCard.height / 2)
+    /// Where the bullet should land — the front card's centre. The gun fires a
+    /// tracer up-and-right from the muzzle to this fixed anchor.
+    private func cardLanding(panelWidth: CGFloat) -> CGPoint {
+        CGPoint(x: cardAnchorX(panelWidth: panelWidth), y: cardAnchorY())
+    }
+
+    /// The notification stack: newest in front; older cards slide back (up),
+    /// shrink and dim. Beyond `maxStack`, a "+N" chip rides the back.
+    @ViewBuilder
+    private func notificationStack(panelWidth: CGFloat) -> some View {
+        ZStack {
+            ForEach(Array(toasts.prefix(Self.maxStack).enumerated()), id: \.element.id) { idx, t in
+                let depth = CGFloat(idx)
+                DockToastCard(toast: t, onTap: { tapToast(t) })
+                    .scaleEffect(1 - depth * 0.05, anchor: .top)
+                    .offset(y: -depth * 7)
+                    .opacity(1 - Double(idx) * 0.30)
+                    .allowsHitTesting(idx == 0)
+                    .zIndex(Double(Self.maxStack - idx))
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.7, anchor: .bottom).combined(with: .opacity),
+                        removal: .opacity))
+            }
+            if toasts.count > Self.maxStack {
+                Text("+\(toasts.count - Self.maxStack)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.black.opacity(0.65)))
+                    .offset(y: -CGFloat(Self.maxStack) * 7 - 5)
+                    .zIndex(100)
+            }
+        }
+        .position(x: cardAnchorX(panelWidth: panelWidth), y: cardAnchorY())
     }
 
     /// The strip itself — the always-present horizontal handle + squares,
@@ -473,12 +489,10 @@ struct SessionDockView: View {
             containerShape
                 .fill(Color.black.opacity(0.85))
                 .overlay(
-                    // Border on TOP + LEFT + BOTTOM only — the right side is
-                    // glued to the screen edge, so it stays open. Soft light
-                    // gray; the inset keeps the full stroke inside the
-                    // content-sized panel bounds (an edge stroke would clip).
-                    DockEdgeBorder(radius: 14, inset: 0.75)
-                        .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
+                    // Border on TOP + LEFT + BOTTOM only (right is glued to the
+                    // screen edge). A "heating element": calm gray at rest, then
+                    // riding the magma ramp + breathing faster with the load.
+                    ForgeBorder(active: inFlight)
                 )
         )
         // Room for the flare "horns" to extend beyond the box without the
@@ -490,10 +504,9 @@ struct SessionDockView: View {
     /// erupt from, so the card just rides the trailing edge above the handle.
     @ViewBuilder
     private var collapsedToastCard: some View {
-        if let toast {
-            DockToastCard(toast: toast, flash: cardFlash, onTap: { tapToast(toast) })
-                .opacity(cardShown ? 1 : 0)
-                .scaleEffect(cardShown ? 1 : 0.7, anchor: .bottomTrailing)
+        if let toast = toasts.first {
+            DockToastCard(toast: toast, onTap: { tapToast(toast) })
+                .transition(.scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity))
                 .padding(.bottom, Self.gap)
         }
     }
@@ -504,11 +517,9 @@ struct SessionDockView: View {
     /// on the same beat as the notch gunshot, then fires the cannon — unless a
     /// newer event has superseded this one in the meantime.
     private func fire(_ payload: DockEventPayload) {
-        dismissWork?.cancel()
-        fireGen += 1
-        let gen = fireGen
+        // Each event fires its own cannon into the stack — no superseding guard,
+        // so a burst stacks instead of overriding.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.shootDelay) {
-            guard gen == fireGen else { return }
             launchCannon(payload)
         }
     }
@@ -536,42 +547,30 @@ struct SessionDockView: View {
             headline: Self.headline(for: payload.variant),
             accent: accent
         )
-        cardShown = false
-        cardFlash = false
-        toast = next
-        // Fire the gun — cylinder click + muzzle flash. Every notification,
-        // whatever its variant, comes out of this one muzzle.
+        // Fire the gun — cylinder click + muzzle flash — and push the new card to
+        // the FRONT of the stack (older ones slide back). A hard cap guards memory.
         revolverFire += 1
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+            toasts.insert(next, at: 0)
+            if toasts.count > 8 { toasts.removeLast() }
+        }
 
         if !dock.collapsed {
-            // The finishing square fires a tracer UP into the muzzle (the
-            // square's own state-change bounce already supplies the recoil);
-            // the smoke billows from the gun and the card lifts out of it.
+            // The finishing square fires a tracer UP into the muzzle; the smoke
+            // billows from the gun and the card lifts out of it.
             let shot = CannonShot(sessionId: payload.sessionId, accent: accent)
             shots = [shot]
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-                guard toast?.id == next.id else { return }
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.58)) { cardShown = true }
-                cardFlash = true
-                withAnimation(.easeOut(duration: 0.5)) { cardFlash = false }
-            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
                 shots.removeAll { $0.id == shot.id }
             }
-        } else {
-            // Collapsed: no squares to fire from — just present the card.
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { cardShown = true }
         }
 
-        let work = DispatchWorkItem {
-            guard toast?.id == next.id else { return }
-            withAnimation(.easeOut(duration: 0.25)) { cardShown = false }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
-                if toast?.id == next.id { toast = nil }
+        // Auto-dismiss this card after a few seconds (oldest clears first).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                toasts.removeAll { $0.id == next.id }
             }
         }
-        dismissWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2, execute: work)
     }
 
     /// Card tap — jump to the originating terminal tab and dismiss, mirroring
@@ -581,10 +580,8 @@ struct SessionDockView: View {
         if let s = engine.displaySessions.first(where: { $0.id == t.sessionId }) {
             engine.focus(s)
         }
-        dismissWork?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) { cardShown = false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            if toast?.id == t.id { toast = nil }
+        withAnimation(.easeOut(duration: 0.2)) {
+            toasts.removeAll { $0.id == t.id }
         }
     }
 
@@ -775,6 +772,60 @@ struct SessionDockView: View {
     }
 }
 
+/// Shared magma "heat ramp" for the dock — maps the number of in-flight agents
+/// to a colour from idle-ember up to white-hot, so the border, revolver and
+/// squares all read the same load temperature.
+enum DockMagma {
+    // A real THERMAL ramp — cold metal heating up. Cold steel-blue when barely
+    // loaded (a clean step from the gray idle, no muddy orange), warming through
+    // amber to the gold / white-hot the eye likes as the chambers fill.
+    private static let stops: [(h: Double, r: Double, g: Double, b: Double)] = [
+        (0.00, 0.30, 0.36, 0.46),   // cold steel-blue — clean "cold metal"
+        (0.38, 0.47, 0.50, 0.53),   // cool neutral
+        (0.62, 0.82, 0.60, 0.32),   // warming
+        (0.80, 1.00, 0.73, 0.22),   // gold (the liked end)
+        (1.00, 1.00, 0.94, 0.80),   // white-hot (the liked end)
+    ]
+
+    /// In-flight count → heat 0…1 (ramps up fast, eases toward 1).
+    static func heat(active: Int) -> Double {
+        guard active > 0 else { return 0 }
+        return min(1.0, 1.0 - pow(0.66, Double(active)))   // gentler — 1→.34, 2→.56, 3→.71, …
+    }
+
+    static func color(_ heat: Double) -> Color {
+        let h = min(1, max(0, heat))
+        var lo = stops[0], hi = stops[stops.count - 1]
+        for i in 1 ..< stops.count where stops[i].h >= h {
+            hi = stops[i]; lo = stops[i - 1]; break
+        }
+        let span = max(1e-6, hi.h - lo.h)
+        let f = (h - lo.h) / span
+        return Color(red: lo.r + (hi.r - lo.r) * f,
+                     green: lo.g + (hi.g - lo.g) * f,
+                     blue: lo.b + (hi.b - lo.b) * f)
+    }
+}
+
+/// The dock's 3-sided border as a heating element: calm white-gray when nothing
+/// is in flight, else riding the magma ramp and breathing faster under load.
+private struct ForgeBorder: View {
+    let active: Int
+    var body: some View {
+        // STATIC heat — no clock. Colour + glow rise with the load but only
+        // re-render when the session count changes, so it costs nothing at rest
+        // or while steady. (The breathing version was the battery culprit.)
+        let heat = DockMagma.heat(active: active)
+        let idle = active == 0
+        let color = idle ? Color.white.opacity(0.5) : DockMagma.color(heat)
+        // Thin, fixed-width line + a TIGHT glow. Heat drives brightness, NOT
+        // thickness, so the line stays clean (no fat band) as sessions stack.
+        return DockEdgeBorder(radius: 14, inset: 0.75)
+            .stroke(color, lineWidth: 1.5)
+            .shadow(color: idle ? .clear : color.opacity(0.35 + 0.45 * heat), radius: idle ? 0 : 2.5)
+    }
+}
+
 private struct SessionSquare: View {
     let size: CGFloat
     let initials: String      // 2-char name token, e.g. "mb"
@@ -834,26 +885,53 @@ private struct SessionSquare: View {
             : (subdued ? (hover ? 0.70 : 0.34) : (hover ? 1.0 : 0.95))
         return Button(action: onTap) {
             VStack(spacing: 0) {
-                // The tab NUMBER is the hero — it's your Zellij jump key.
-                Text(number)
-                    .font(.system(size: size * 0.46, weight: .heavy, design: .rounded))
+                // The tab NUMBER is the hero — it's your Zellij jump key. A
+                // monospaced face (dispatch-board / stamped-serial) reads far
+                // less toy-like than rounded; the tight dark emboss makes it look
+                // pressed INTO the square instead of floating on it.
+                numberView
                     .foregroundStyle(.white)
-                    .monospacedDigit()
-                // Name token — a small confirmation label under the number.
+                    .shadow(color: .black.opacity(0.55), radius: 0.5, y: 1)
+                // Name token — a small stamped LABEL under the number.
                 Text(initials)
-                    .font(.system(size: size * 0.26, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .font(.system(size: size * 0.23, weight: .bold, design: .monospaced))
+                    .tracking(1.0)
+                    .foregroundStyle(.white.opacity(0.62))
+                    .shadow(color: .black.opacity(0.45), radius: 0.5, y: 0.5)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             .frame(width: size, height: size)
             .background(
                 RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                    .fill(stateColor.opacity(fillOpacity))
+                    .fill(LinearGradient(
+                        colors: [stateColor.opacity(fillOpacity * 1.35),
+                                 stateColor.opacity(fillOpacity * 0.72)],
+                        startPoint: .top, endPoint: .bottom))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
                     .stroke(stateColor.opacity(borderOpacity), lineWidth: strongEdge ? 1.0 : 0.8)
+            )
+            // Keycap shading — a bright lip along the TOP edge (fading down) and a
+            // soft dark seat along the BOTTOM, so the square reads as a physical
+            // key pressed into the panel rather than a flat chip.
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                    .stroke(LinearGradient(
+                        colors: [.white.opacity(0.5), .white.opacity(0.0)],
+                        startPoint: .top, endPoint: .center),
+                        lineWidth: 1)
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                    .stroke(LinearGradient(
+                        colors: [.clear, .black.opacity(0.40)],
+                        startPoint: .center, endPoint: .bottom),
+                        lineWidth: 1)
+                    .allowsHitTesting(false)
             )
             // State-change flash — a bright wash that decays away.
             .overlay(
@@ -875,6 +953,8 @@ private struct SessionSquare: View {
                     .blendMode(.plusLighter)
                     .allowsHitTesting(false)
             )
+            // Grounding shadow — the key sits ON the panel surface.
+            .shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
             // Lit squares carry a resting halo so they pop; quiet ones glow
             // only on hover.
             .shadow(
@@ -914,6 +994,27 @@ private struct SessionSquare: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The tab number as the hero. For a multi-pane tab ("6.1") the tab is big
+    /// and the pane rides as a small superscript ("6¹") — compact, fits cleanly,
+    /// and each pane still keeps its own square/state.
+    @ViewBuilder
+    private var numberView: some View {
+        let hero = Font.system(size: size * 0.42, weight: .heavy, design: .monospaced)
+        if let dot = number.firstIndex(of: ".") {
+            let tab = String(number[..<dot])
+            let pane = String(number[number.index(after: dot)...])
+            HStack(alignment: .top, spacing: 0.5) {
+                Text(tab).font(hero).monospacedDigit()
+                Text(pane)
+                    .font(.system(size: size * 0.26, weight: .heavy, design: .monospaced))
+                    .monospacedDigit()
+                    .opacity(0.85)
+            }
+        } else {
+            Text(number).font(hero).monospacedDigit()
         }
     }
 
@@ -1008,8 +1109,8 @@ private struct SquareCenterKey: PreferenceKey {
 /// sits under it (tinted by the variant), and a dim tab-number rides the right.
 private struct DockToastCard: View {
     static let width: CGFloat = 250
-    static let height: CGFloat = 50
-    private static let radius: CGFloat = 13
+    static let height: CGFloat = 40
+    private static let radius: CGFloat = 11
 
     /// The bullet artwork (diagonal cartridge PNG), loaded once from Downloads.
     private static let bulletImage: NSImage? = {
@@ -1019,54 +1120,52 @@ private struct DockToastCard: View {
     }()
 
     let toast: DockToast
-    let flash: Bool
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 10) {
+            HStack(spacing: 7) {
                 bullet
-                VStack(alignment: .leading, spacing: 2) {
-                    // Title = the tab / agent name, in its natural case.
-                    Text(toast.project)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    // Short status line — clean system font, variant-tinted.
-                    Text(toast.headline)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(toast.accent)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                // One line: project · status … tab. Reads the same at any width.
+                Text(toast.project)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text("·")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.3))
+                Text(toast.headline)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(toast.accent)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 6)
-                // Dim tab number, so you know which tab without clutter.
                 Text(toast.taskId)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.45))
                     .monospacedDigit()
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 11)
             .frame(width: Self.width, height: Self.height)
+            // Keycap material to match the squares: top-lit gradient, a bright top
+            // bevel, an accent-tinted border + glow, and a grounding shadow.
             .background(
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .fill(Color(white: 0.10).opacity(0.96))
+                    .fill(LinearGradient(colors: [Color(white: 0.17), Color(white: 0.09)],
+                                         startPoint: .top, endPoint: .bottom))
             )
             .overlay(
-                // Faint neutral border — no neon glow.
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(toast.accent.opacity(0.45), lineWidth: 1)
             )
             .overlay(
-                // Soft impact wash the moment the bullet lands.
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .fill(.white)
-                    .opacity(flash ? 0.28 : 0)
+                    .stroke(LinearGradient(colors: [.white.opacity(0.4), .white.opacity(0.0)],
+                                           startPoint: .top, endPoint: .center), lineWidth: 1)
                     .blendMode(.plusLighter)
-                    .allowsHitTesting(false)
             )
             .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
+            .shadow(color: toast.accent.opacity(0.22), radius: 5)
         }
         .buttonStyle(.plain)
     }
@@ -1078,9 +1177,9 @@ private struct DockToastCard: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(width: 30, height: 30)
+                .frame(width: 24, height: 24)
         } else {
-            Color.clear.frame(width: 34, height: 34)
+            Color.clear.frame(width: 24, height: 24)
         }
     }
 }
@@ -1300,6 +1399,7 @@ private struct RevolverCylinder: View {
         let c = CGPoint(x: d / 2, y: d / 2)
         let ringR = cylD * 0.29      // bore-centre ring (measured from the PNG)
         let boreR = cylD * 0.122     // bore radius
+        let heat = DockMagma.heat(active: inFlight)   // forge load → magma colour
 
         return Button(action: spin) {
             ZStack {
@@ -1310,14 +1410,37 @@ private struct RevolverCylinder: View {
                     // transparent bores let them show through when loaded.
                     ForEach(0 ..< 6, id: \.self) { i in
                         if loaded[i] {
-                            brassRound(r: boreR)
-                                .position(pos(i, center: c, r: ringR))
+                            ZStack {
+                                // Hot-round magma glow — each chambered round
+                                // burns the load colour.
+                                Circle()
+                                    .fill(DockMagma.color(heat))
+                                    .frame(width: boreR * 2, height: boreR * 2)
+                                    .blur(radius: boreR * 0.55)
+                                    .opacity(0.45 + 0.55 * heat)
+                                    .blendMode(.plusLighter)
+                                brassRound(r: boreR)
+                            }
+                            .position(pos(i, center: c, r: ringR))
                         }
                     }
                     cylinderBody(d: cylD)
                 }
                 .frame(width: d, height: d)
                 .rotationEffect(.degrees(angle))
+                .shadow(color: DockMagma.color(heat).opacity(heat * 0.7), radius: cylD * 0.12 * heat)
+
+                // Central heat glow — a STATIC core that brightens with the load
+                // (no clock; renders once per count change).
+                if heat > 0.01 {
+                    Circle()
+                        .fill(DockMagma.color(heat))
+                        .frame(width: cylD * 0.20, height: cylD * 0.20)
+                        .blur(radius: cylD * 0.07)
+                        .opacity(heat * 0.7)
+                        .blendMode(.plusLighter)
+                        .position(c)
+                }
 
                 // Muzzle flash at the FIXED barrel (12 o'clock).
                 muzzleFlash(d: cylD).position(x: c.x, y: c.y - ringR)
