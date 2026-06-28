@@ -561,22 +561,24 @@ struct ExpandedView: View {
         }
     }
 
-    /// Subscription usage meters (5-hour + weekly windows) from RateLimitMonitor
-    /// — a thin status strip above the footer.
+    /// Subscription usage (5-hour + weekly) from RateLimitMonitor — two aligned
+    /// rows: tag · bar · percent · when it resets (relative + the actual day/time).
     private var rateLimitMeters: some View {
-        HStack(spacing: 16) {
-            rateMeter("5H", rateLimits.fiveHour)
-            rateMeter("7D", rateLimits.weekly)
+        VStack(spacing: 7) {
+            rateRow("5H", "5-HOUR", rateLimits.fiveHour)
+            rateRow("7D", "WEEKLY", rateLimits.weekly)
         }
     }
 
-    private func rateMeter(_ label: String, _ window: RateLimitMonitor.Window?) -> some View {
+    private func rateRow(_ tag: String, _ name: String, _ window: RateLimitMonitor.Window?) -> some View {
         let frac = max(0, min(1, (window?.utilization ?? 0) / 100.0))
         let known = window != nil
-        return HStack(spacing: 7) {
-            Text(label)
-                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+        return HStack(spacing: 10) {
+            Text(name)
+                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                .tracking(0.5)
                 .foregroundStyle(Theme.textDim)
+                .frame(width: 48, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.07))
@@ -584,14 +586,18 @@ struct ExpandedView: View {
                         .frame(width: max(0, geo.size.width * frac))
                 }
             }
-            .frame(height: 4)
+            .frame(height: 5)
             Text(known ? "\(Int((frac * 100).rounded()))%" : "—")
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(known ? Theme.textDim : Color.white.opacity(0.18))
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(known ? Theme.textStrong : Color.white.opacity(0.2))
                 .monospacedDigit()
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 38, alignment: .trailing)
+            Text(Self.resetText(window?.resetsAt))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.36))
+                .frame(width: 150, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity)
+        .help(Self.resetHelp(tag, window?.resetsAt))
     }
 
     /// Usage ramp: green (plenty left) → amber → red (near the cap).
@@ -602,6 +608,42 @@ struct ExpandedView: View {
             Color(red: x.r + (y.r - x.r) * u, green: x.g + (y.g - x.g) * u, blue: x.b + (y.b - x.b) * u)
         }
         return f < 0.5 ? lerp(g, a, f / 0.5) : lerp(a, r, (f - 0.5) / 0.5)
+    }
+
+    /// Relative "in 14m" / "in 2h14m" / "in 3d4h" — or "now".
+    private static func relativeReset(_ date: Date) -> String {
+        let secs = Int(date.timeIntervalSinceNow)
+        if secs <= 0 { return "now" }
+        let m = secs / 60
+        if m < 60 { return "in \(m)m" }
+        let h = m / 60
+        if h < 24 { let r = m % 60; return r > 0 ? "in \(h)h\(r)m" : "in \(h)h" }
+        let d = h / 24, r = h % 24
+        return r > 0 ? "in \(d)d\(r)h" : "in \(d)d"
+    }
+
+    /// Relative + the actual day/time, e.g. "in 3d4h · Wed 4:15 PM" (today shows
+    /// just the time). Refreshes each poll / re-render (no live ticking timer).
+    private static func resetText(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        let time = date.formatted(date: .omitted, time: .shortened)
+        let cal = Calendar.current
+        let when: String
+        if cal.isDateInToday(date) {
+            when = "Today \(time)"
+        } else if cal.isDateInTomorrow(date) {
+            when = "Tomorrow \(time)"
+        } else {
+            when = "\(date.formatted(.dateTime.weekday(.abbreviated))) \(time)"
+        }
+        return "\(relativeReset(date)) · \(when)"
+    }
+
+    /// Tooltip: the full absolute reset date/time.
+    private static func resetHelp(_ tag: String, _ date: Date?) -> String {
+        let window = tag == "5H" ? "5-hour" : "weekly"
+        guard let date else { return "\(window) limit usage" }
+        return "\(window) limit resets \(date.formatted(date: .complete, time: .shortened))"
     }
 
     /// Footer "⋯" menu — quick access to app-level actions
