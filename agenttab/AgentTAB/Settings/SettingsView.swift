@@ -15,6 +15,8 @@ struct SettingsView: View {
 
 struct GeneralSettings: View {
     @AppStorage("AgentTAB.openAtLogin") var openAtLogin = false
+    @State private var hooksInstalled = HookInstaller.hooksInstalled
+    @State private var hookError: String?
 
     var body: some View {
         Form {
@@ -22,12 +24,26 @@ struct GeneralSettings: View {
                 .onChange(of: openAtLogin) { _, on in
                     if on { LoginItem.register() } else { LoginItem.unregister() }
                 }
-            Section("Mode") {
-                Text(EnvironmentProbe.detect().isDropInCandidate
-                     ? "Drop-in (read-only)"
-                     : "Managed hooks")
+            Section("Session tracking") {
+                Toggle("Precise tracking (Claude Code hooks)", isOn: $hooksInstalled)
+                    .onChange(of: hooksInstalled) { _, on in
+                        do {
+                            if on { try HookInstaller.install() }
+                            else   { try HookInstaller.uninstall() }
+                            hookError = nil
+                        } catch {
+                            hookError = error.localizedDescription
+                            hooksInstalled = HookInstaller.hooksInstalled   // snap back to the truth
+                        }
+                    }
+                Text("ON: registers a tiny hook in ~/.claude/settings.json so AgentTAB gets exact tool / permission events — accurate state for every tool. OFF: read-only transcript fallback (can mis-flag long tools like `make` as “waiting”). Fully reversible.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let hookError {
+                    Text(hookError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .padding()

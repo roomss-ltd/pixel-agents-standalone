@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let tokenTracker = TokenTracker()
     let rateLimits = RateLimitMonitor.shared
     private var onboardingWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var trackerCancellable: AnyCancellable?
     private var autoHideCancellable: AnyCancellable?
 
@@ -185,6 +186,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
+        // The SwiftUI `Settings { SettingsView() }` scene can't be opened from a
+        // status-bar menu item in an LSUIElement app (no standard app menu to
+        // auto-wire it). Host SettingsView in a real window instead — same pattern
+        // as the onboarding window. Reused if already open.
+        if let w = settingsWindow {
+            w.makeKeyAndOrderFront(nil)
+            return
+        }
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        w.title = "AgentTAB Settings"
+        w.contentView = NSHostingView(rootView: SettingsView())
+        w.center()
+        w.isReleasedWhenClosed = false
+        settingsWindow = w
+        w.makeKeyAndOrderFront(nil)
     }
 
     @objc private func restart() {
