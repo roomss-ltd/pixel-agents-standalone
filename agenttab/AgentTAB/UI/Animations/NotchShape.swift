@@ -478,13 +478,17 @@ struct NotchStatusLine: View {
                             glowInner: Color, glowOuter: Color) -> some View {
         if to > from {
             let seg = shape.trim(from: from, to: to)
-            seg.stroke(deep, style: StrokeStyle(lineWidth: 3.6, lineCap: .round))
+            // MOLTEN, not neon: a wider deep-red base so the line's edges read as
+            // cooling lava, a THINNER bright body so it doesn't flatten into a
+            // uniform orange, and a brighter white-hot core for the hot peak — so
+            // the eye sees tonal range (red → orange → white) instead of one hue.
+            seg.stroke(deep, style: StrokeStyle(lineWidth: 4.2, lineCap: .round))
                 .shadow(color: glowOuter.opacity(0.55), radius: 7)
-                .shadow(color: glowInner.opacity(0.6), radius: 3)
-            seg.stroke(mid, style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
-            seg.stroke(core, style: StrokeStyle(lineWidth: 0.9, lineCap: .round))
+                .shadow(color: glowInner.opacity(0.55), radius: 3)
+            seg.stroke(mid, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            seg.stroke(core, style: StrokeStyle(lineWidth: 1.0, lineCap: .round))
                 .blendMode(.plusLighter)
-                .opacity(0.85)
+                .opacity(1.0)
         }
     }
 
@@ -671,7 +675,6 @@ enum ShootAsset {
     /// Both GIFs ship with native alpha (no white to key) and face LEFT, so the
     /// crossing view flips them when travelling left→right. The square jet reads
     /// cleanly; the slim one drags a contrail.
-    static let airplane: [Frame] = loadNamed("Airplane flying.gif", keyed: false)
     /// Static SVG jet (dark teal body + orange exhaust). Rasterised once.
     static let contrailPlane: [Frame] = loadStatic("Airplane.svg")
     /// Wooden crate box (SVG) — replaces the drawn crate, still hung by OUR
@@ -859,31 +862,57 @@ struct RailFreight: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
-        .onChange(of: working > 0) { _, active in
-            if active { startSpawning() } else { stopSpawning() }
+        // Density tracks the ACTIVE-session count: restart the spawner whenever
+        // it changes so the cadence + load size re-scale. Fewer sessions working
+        // → fewer, smaller loads; none working → nothing rides the rail.
+        .onChange(of: working) { _, w in
+            stopSpawning()
+            if w > 0 { startSpawning(working: w) }
         }
-        // PREVIEW: spawn even at rest so the new freight art is verifiable
-        // without an active agent. Revert to `if working > 0 { startSpawning() }`.
-        .onAppear { startSpawning() }
+        .onAppear { if working > 0 { startSpawning(working: working) } }
         .onDisappear { stopSpawning() }
     }
 
-    private func startSpawning() {
+    private func startSpawning(working w: Int) {
         guard spawner == nil else { return }
+        let intensity = min(w, 6)            // cap so a big fleet never floods the rail
         spawner = Task { @MainActor in
             while !Task.isCancelled {
-                // PREVIEW cadence — frequent so the new freight art is easy to
-                // verify. Revert to `Double.random(in: 7.0 ... 15.0)`.
-                try? await Task.sleep(for: .seconds(Double.random(in: 2.0 ... 4.0)))
+                // Cadence scales with the active-session count — sparse with one
+                // session, busier as more agents work.
+                let lo = max(3.5, 11.0 - 1.3 * Double(intensity))
+                let hi = max(7.0, 19.0 - 1.9 * Double(intensity))
+                try? await Task.sleep(for: .seconds(Double.random(in: lo ... hi)))
                 if Task.isCancelled { return }
                 let dir = Bool.random()
                 let dur = Double.random(in: 3.6 ... 5.4)        // slower, smoother glide
                 let tint = Self.tints.randomElement() ?? .orange
+                let maxBoxes = min(6, 1 + intensity)            // small loads at low count
+                let allowTrain = w >= 3                         // trains/big loads only when busy
+
+                func container() -> Crate {
+                    let idx = ShootAsset.containerImages.isEmpty
+                        ? nil : Int.random(in: 0 ..< ShootAsset.containerImages.count)
+                    return Crate(leftToRight: dir, tint: tint, duration: dur,
+                                 boxes: 1, style: .wide, containerIndex: idx)
+                }
+
+                if !allowTrain {
+                    // Light load (1–2 sessions): a small chain or a lone container.
+                    if Int.random(in: 0 ..< 100) < 55 {
+                        crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
+                                            boxes: Int.random(in: 2 ... maxBoxes), style: Self.randomStyle()))
+                    } else {
+                        crates.append(container())
+                    }
+                    continue
+                }
+
                 switch Int.random(in: 0 ..< 100) {
                 case 0 ..< 40:
-                    // Chained load — 2–4 boxes linked, moving as one.
+                    // Chained load — moving as one.
                     crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: Int.random(in: 2 ... 4), style: Self.randomStyle()))
+                                        boxes: Int.random(in: 2 ... min(4, maxBoxes)), style: Self.randomStyle()))
                 case 40 ..< 62:
                     // Loose train — separate CHAINED groups (each 2+ crates),
                     // generously spaced so even a wide group fully clears before
@@ -891,7 +920,7 @@ struct RailFreight: View {
                     let groups = Int.random(in: 2 ... 3)
                     for i in 0 ..< groups {
                         if Task.isCancelled { return }
-                        let boxes = Int.random(in: 2 ... 4)
+                        let boxes = Int.random(in: 2 ... min(4, maxBoxes))
                         crates.append(Crate(leftToRight: dir,
                                             tint: Self.tints.randomElement() ?? .orange,
                                             duration: dur, boxes: boxes, style: Self.randomStyle()))
@@ -901,16 +930,11 @@ struct RailFreight: View {
                         }
                     }
                 case 62 ..< 82:
-                    // Big chained load — 4–6 boxes linked.
+                    // Big chained load — only when really busy.
                     crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: Int.random(in: 4 ... 6), style: Self.randomStyle()))
+                                        boxes: Int.random(in: 4 ... maxBoxes), style: Self.randomStyle()))
                 default:
-                    // A single shipping container, travelling solo on its OWN
-                    // built-in crane (one of the container PNGs at random).
-                    let idx = ShootAsset.containerImages.isEmpty
-                        ? nil : Int.random(in: 0 ..< ShootAsset.containerImages.count)
-                    crates.append(Crate(leftToRight: dir, tint: tint, duration: dur,
-                                        boxes: 1, style: .wide, containerIndex: idx))
+                    crates.append(container())
                 }
             }
         }
@@ -1110,7 +1134,6 @@ struct RailAircraft: View {
     /// so both share a value — flip a plane's flag if it ever flies tail-first.
     private static var catalog: [(frames: [ShootAsset.Frame], height: CGFloat, facesLeft: Bool)] {
         [
-            (ShootAsset.airplane, 31.5, false),     // square jet
             (ShootAsset.contrailPlane, 32, false),  // SVG jet + exhaust
         ].filter { !$0.frames.isEmpty }
     }
@@ -1127,24 +1150,28 @@ struct RailAircraft: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .allowsHitTesting(false)
-        .onChange(of: working > 0) { _, active in
-            if active { startSpawning() } else { stopSpawning() }
+        // Same density rule as the freight: restart on the active-session count
+        // so the (rare) plane cadence eases with it.
+        .onChange(of: working) { _, w in
+            stopSpawning()
+            if w > 0 { startSpawning(working: w) }
         }
-        // PREVIEW: spawn even at rest so the look can be verified without an
-        // active agent. Revert to `if working > 0 { startSpawning() }`.
-        .onAppear { startSpawning() }
+        .onAppear { if working > 0 { startSpawning(working: working) } }
         .onDisappear { stopSpawning() }
     }
 
-    private func startSpawning() {
+    private func startSpawning(working w: Int) {
         guard spawner == nil else { return }
         let catalog = Self.catalog
         guard !catalog.isEmpty else { return }
+        let intensity = min(w, 6)
         spawner = Task { @MainActor in
             while !Task.isCancelled {
-                // PREVIEW cadence — frequent so the look is easy to verify.
-                // Revert to `Double.random(in: 12.0 ... 26.0)`.
-                try? await Task.sleep(for: .seconds(Double.random(in: 1.6 ... 3.2)))
+                // Planes stay a RARE flourish; their cadence still eases with the
+                // active-session count (very rare with one session).
+                let lo = max(10.0, 26.0 - 2.6 * Double(intensity))
+                let hi = max(20.0, 46.0 - 3.4 * Double(intensity))
+                try? await Task.sleep(for: .seconds(Double.random(in: lo ... hi)))
                 if Task.isCancelled { return }
                 let pick = catalog.randomElement()!
                 planes.append(Plane(
