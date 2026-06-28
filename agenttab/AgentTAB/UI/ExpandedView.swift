@@ -261,9 +261,9 @@ struct ExpandedView: View {
     private func compactRightBadge(size: CGFloat) -> some View {
         Group {
             if inProgressCount > 0 {
-                HamsterWheelLoader()
-                    .frame(width: size * 1.25, height: size * 1.25)   // square wheel
-                    .offset(x: -1)   // nudged a touch left in the wing
+                FireLoader()   // TEMP: swapped in for HamsterWheelLoader()
+                    .frame(width: size * 1.8, height: size * 1.8)
+                    .offset(x: -6.5, y: 2)
             } else {
                 BearLoader()
                     .frame(width: size * 1.2, height: size * 1.38)

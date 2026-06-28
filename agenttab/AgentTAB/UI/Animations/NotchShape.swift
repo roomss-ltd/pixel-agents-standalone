@@ -242,6 +242,10 @@ struct NotchStatusLine: View {
     @State private var railFlowGen = 0
     /// Length of the river-flow animation; also how long `railAnimating` holds.
     private static let flowDuration: Double = 0.9
+    /// After the flow completes, sparks keep spraying off the settled fronts for
+    /// this long, then fade out — so the sparkle covers the whole merge/unmerge
+    /// (both ends, both directions) plus a short tail.
+    private static let sparkTail: TimeInterval = 0.5
 
     var body: some View {
         let total = idle + working
@@ -378,7 +382,7 @@ struct NotchStatusLine: View {
         railFlowGen += 1
         let gen = railFlowGen
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Self.flowDuration + 0.05))
+            try? await Task.sleep(for: .seconds(Self.flowDuration + Self.sparkTail + 0.1))
             if gen == railFlowGen { railAnimating = false }
         }
     }
@@ -395,28 +399,62 @@ struct NotchStatusLine: View {
         if railAnimating {
             // Flowing — drive the moving fronts at display rate for ~0.9s.
             TimelineView(.animation) { ctx in
-                let p = min(1.0, max(0.0, ctx.date.timeIntervalSince(flowStart) / duration))
+                let elapsed = ctx.date.timeIntervalSince(flowStart)
+                let p = min(1.0, max(0.0, elapsed / duration))
                 let half = CGFloat(p) * 0.5
                 let leftTo = flowToActive ? half : (0.5 - half)
                 let rightFrom = flowToActive ? (1 - half) : (0.5 + half)
+                // Param direction each front travels (merge → in toward centre,
+                // unmerge → out toward the ends). Sparks trail opposite this.
+                let leftSign: CGFloat = flowToActive ? 1 : -1
+                let rightSign: CGFloat = flowToActive ? -1 : 1
+                // Sparks run the WHOLE flow at full strength, then fade over the
+                // tail — so they never blink out mid-merge at either end.
+                let tailFade = elapsed <= duration
+                    ? 1.0 : max(0.0, 1.0 - (elapsed - duration) / Self.sparkTail)
                 ZStack {
                     shape.stroke(idle, style: rs)
+                    // Active fill rivering from the ends, carrying the river's
+                    // own-colour glow (borrowed from the spark loader).
                     shape.trim(from: 0, to: leftTo).stroke(active, style: rs)
+                        .shadow(color: active.opacity(0.6), radius: 2.5)
+                        .shadow(color: active.opacity(0.4), radius: 6)
                     shape.trim(from: rightFrom, to: 1).stroke(active, style: rs)
+                        .shadow(color: active.opacity(0.6), radius: 2.5)
+                        .shadow(color: active.opacity(0.4), radius: 6)
                     if p < 1 {
                         let flick = 0.55 + 0.45 * sin(ctx.date.timeIntervalSinceReferenceDate * 34)
                         railFront(shape, at: leftTo, flick: flick)
                         railFront(shape, at: rightFrom, flick: flick)
                     }
+                    // Both fronts, both directions, full duration + tail. Drawn
+                    // as Shapes (NOT a Canvas) so sparks on the rail's bottom
+                    // edge — which sits a hair below the bar — aren't clipped.
+                    if tailFade > 0.01 {
+                        let sparkColor = Color(red: 1.0, green: 0.95, blue: 0.82)
+                        let fronts = [(param: leftTo, sign: leftSign),
+                                      (param: rightFrom, sign: rightSign)]
+                        let bands = 4
+                        ForEach(0 ..< bands, id: \.self) { band in
+                            RailSparkLayer(outline: shape, fronts: fronts,
+                                           t: ctx.date.timeIntervalSinceReferenceDate,
+                                           band: band, bandCount: bands)
+                                .stroke(sparkColor.opacity(tailFade * (Double(band) + 0.5) / Double(bands)),
+                                        style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                                .blendMode(.plusLighter)
+                        }
+                    }
                 }
             }
         } else {
-            // Settled — NO clock. Pixel-identical to the p==1 frame: idle base,
-            // plus the full active stroke when the rail has flowed to active.
+            // Settled — NO clock. idle base, plus the full active stroke (with a
+            // resting own-colour glow) once the rail has flowed to active.
             ZStack {
                 shape.stroke(idle, style: rs)
                 if flowToActive {
                     shape.stroke(active, style: rs)
+                        .shadow(color: active.opacity(0.6), radius: 2.5)
+                        .shadow(color: active.opacity(0.4), radius: 6)
                 }
             }
         }
@@ -440,6 +478,75 @@ struct NotchStatusLine: View {
                 .opacity(flick)
         }
     }
+
+}
+
+/// One opacity band of the river-front sparks, drawn as a Shape so it does NOT
+/// clip to the bar's frame — a Canvas would, and the rail's bottom edge sits a
+/// hair below the bar, which is where the fronts spend most of the flow. The
+/// caller layers several bands at matching opacities for a faded twinkle.
+///
+/// Sparks fly back-and-out (opposite each front's travel) on a fast sub-cycle.
+/// Both fronts emit in both directions; only the geometry sample is clamped off
+/// the degenerate path ends, so a front sitting at an end still sparks.
+private struct RailSparkLayer: Shape {
+    let outline: NotchOutlineShape
+    let fronts: [(param: CGFloat, sign: CGFloat)]
+    let t: Double
+    let band: Int
+    let bandCount: Int
+
+    func path(in rect: CGRect) -> Path {
+        let src = outline.path(in: rect)
+        var out = Path()
+        let cycle = 0.34
+        let perFront = 6
+        let maxDist: CGFloat = 9, len: CGFloat = 3.5   // shorter streaks, trimmed tails
+        for front in fronts {
+            let cp = min(0.97, max(0.03, front.param))
+            let pt = railPointOn(src, at: cp)
+            let tan = railTangent(src, at: cp)
+            let back = CGVector(dx: -front.sign * tan.dx, dy: -front.sign * tan.dy)
+            for i in 0 ..< perFront {
+                let phase = ((t / cycle) + Double(i) / Double(perFront))
+                    .truncatingRemainder(dividingBy: 1)
+                let life = max(0, 1 - phase)
+                guard min(bandCount - 1, Int(life * Double(bandCount))) == band else { continue }
+                let dist = CGFloat(phase) * maxDist
+                for sgn in [CGFloat(1), -1] {
+                    let dir = rotateVec(back, by: sgn * 0.7)
+                    let base = CGPoint(x: pt.x + dir.dx * dist, y: pt.y + dir.dy * dist)
+                    let tip = CGPoint(x: base.x + dir.dx * len, y: base.y + dir.dy * len)
+                    out.move(to: base)
+                    out.addLine(to: tip)
+                }
+            }
+        }
+        return out
+    }
+}
+
+/// Pixel point on a path at normalized-arc-length `t`.
+private func railPointOn(_ path: Path, at t: CGFloat) -> CGPoint {
+    let eps: CGFloat = 0.0015
+    let seg = path.trimmedPath(from: max(0, t - eps), to: min(1, t + eps))
+    let r = seg.boundingRect
+    return CGPoint(x: r.midX, y: r.midY)
+}
+
+/// Unit tangent (increasing-parameter direction) on a path at `t`.
+private func railTangent(_ path: Path, at t: CGFloat) -> CGVector {
+    let d: CGFloat = 0.004
+    let a = railPointOn(path, at: max(0, t - d))
+    let b = railPointOn(path, at: min(1, t + d))
+    let dx = b.x - a.x, dy = b.y - a.y
+    let m = max(0.0001, hypot(dx, dy))
+    return CGVector(dx: dx / m, dy: dy / m)
+}
+
+private func rotateVec(_ v: CGVector, by a: CGFloat) -> CGVector {
+    let c = cos(a), s = sin(a)
+    return CGVector(dx: v.dx * c - v.dy * s, dy: v.dx * s + v.dy * c)
 }
 
 /// Plays the white-keyed GIF frames on their own clock via `TimelineView`.
@@ -1810,6 +1917,498 @@ private struct HamsterWebView: NSViewRepresentable {
     @keyframes spoke {
       from { transform: rotate(0); }
       to { transform: rotate(-1turn); }
+    }
+    """#
+}
+
+/// The Uiverse "svg-frame" loader (CSS by Nawsome). The original ships an SVG
+/// whose element IDs the CSS animates; that markup wasn't provided, so the
+/// geometry here is authored to match (concentric polygons with the same IDs,
+/// yellow on #out3/#center1 per the CSS). The CSS itself is verbatim. TEMP swap
+/// in place of `HamsterWheelLoader` — drop in the real <svg> to make it exact.
+struct SvgFrameLoader: View {
+    private static let render: CGFloat = 344   // the CSS's svg size; scaled to fit
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            SvgFrameWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct SvgFrameWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 344, height: 344))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:344px;height:344px}
+    body{display:flex;align-items:center;justify-content:center}
+    \(css)
+    /* spin each animated layer around the true SVG centre */
+    .svg-frame svg #out2,.svg-frame svg #out3,.svg-frame svg #inner1,
+    .svg-frame svg #inner3,.svg-frame svg #center,.svg-frame svg #center1{transform-box:view-box}
+    </style></head><body>
+    <div class="svg-frame">
+      <svg viewBox="0 0 344 344" style="--i:1;--j:1">
+        <polygon id="out2" points="172,22 302,97 302,247 172,322 42,247 42,97" stroke="#fff" stroke-width="3"/>
+        <polygon id="out3" points="297,172 235,280 110,280 47,172 110,64 235,64" stroke-width="4"/>
+        <polygon id="inner1" points="172,74 270,172 172,270 74,172" stroke="#fff" stroke-width="3"/>
+        <polygon id="inner3" points="172,100 234,136 234,208 172,244 110,208 110,136" stroke="#fff" stroke-width="3"/>
+        <polygon id="center" points="172,126 218,172 172,218 126,172" stroke="#fff" stroke-width="3"/>
+        <polygon id="center1" points="200,172 186,196 158,196 144,172 158,148 186,148"/>
+      </svg>
+    </div>
+    </body></html>
+    """
+
+    /// The CSS exactly as authored (Uiverse.io / Nawsome).
+    private static let css = #"""
+    .svg-frame {
+      position: relative;
+      width: 300px;
+      height: 300px;
+      transform-style: preserve-3d;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .svg-frame svg {
+      position: absolute;
+      transition: .5s;
+      z-index: calc(1 - (0.2 * var(--j)));
+      transform-origin: center;
+      width: 344px;
+      height: 344px;
+      fill: none;
+    }
+    .svg-frame:hover svg {
+      transform: rotate(-80deg) skew(30deg) translateX(calc(45px * var(--i))) translateY(calc(-35px * var(--i)));
+    }
+    .svg-frame svg #center {
+      transition: .5s;
+      transform-origin: center;
+    }
+    .svg-frame:hover svg #center {
+      transform: rotate(-30deg) translateX(45px) translateY(-3px);
+    }
+    #out2 {
+      animation: rotate16 7s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+    #out3 {
+      animation: rotate16 3s ease-in-out infinite alternate;
+      transform-origin: center;
+      stroke: #ff0;
+    }
+    #inner3,
+    #inner1 {
+      animation: rotate16 4s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+    #center1 {
+      fill: #ff0;
+      animation: rotate16 2s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+    @keyframes rotate16 {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+    """#
+}
+
+/// The Uiverse "orbit" loader (CSS by mrhyddenn): two counter-spinning arcs
+/// (gold + lime) each trailing a glowing dot. Pure CSS + divs (standard markup),
+/// run verbatim in a transparent WKWebView. TEMP swap in the working badge.
+struct OrbitLoader: View {
+    private static let render: CGFloat = 120   // loader is 60px; extra room for the glow
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            OrbitWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct OrbitWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:120px;height:120px}
+    body{display:flex;align-items:center;justify-content:center}
+    \(css)
+    </style></head><body>
+    <div class="loader">
+      <div class="face"><div class="circle"></div></div>
+      <div class="face"><div class="circle"></div></div>
+    </div>
+    </body></html>
+    """
+
+    /// The CSS exactly as authored (Uiverse.io / mrhyddenn).
+    private static let css = #"""
+    .loader {
+      width: 6em;
+      height: 6em;
+      font-size: 10px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .loader .face {
+      position: absolute;
+      border-radius: 50%;
+      border-style: solid;
+      animation: animate023845 3s linear infinite;
+    }
+    .loader .face:nth-child(1) {
+      width: 100%;
+      height: 100%;
+      color: gold;
+      border-color: currentColor transparent transparent currentColor;
+      border-width: 0.2em 0.2em 0em 0em;
+      --deg: -45deg;
+      animation-direction: normal;
+    }
+    .loader .face:nth-child(2) {
+      width: 70%;
+      height: 70%;
+      color: lime;
+      border-color: currentColor currentColor transparent transparent;
+      border-width: 0.2em 0em 0em 0.2em;
+      --deg: -135deg;
+      animation-direction: reverse;
+    }
+    .loader .face .circle {
+      position: absolute;
+      width: 50%;
+      height: 0.1em;
+      top: 50%;
+      left: 50%;
+      background-color: transparent;
+      transform: rotate(var(--deg));
+      transform-origin: left;
+    }
+    .loader .face .circle::before {
+      position: absolute;
+      top: -0.5em;
+      right: -0.5em;
+      content: '';
+      width: 1em;
+      height: 1em;
+      background-color: currentColor;
+      border-radius: 50%;
+      box-shadow: 0 0 2em,
+                    0 0 4em,
+                    0 0 6em,
+                    0 0 8em,
+                    0 0 10em,
+                    0 0 0 0.5em rgba(255, 255, 0, 0.1);
+    }
+    @keyframes animate023845 {
+      to {
+        transform: rotate(1turn);
+      }
+    }
+    """#
+}
+
+/// The Uiverse "sitNSpin" 3D loader (CSS by Nawsome): two swoosh planes counter-
+/// rotating in 3D perspective. The shape is a base64 SVG, recoloured from black
+/// to gray (#9ca3af) so it reads on the dark notch. CSS verbatim otherwise, run
+/// in a transparent WKWebView. TEMP swap in the working badge.
+struct SitSpinLoader: View {
+    private static let render: CGFloat = 200   // spinner is 10em≈160px; room for the 3D tilt
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            SitSpinWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct SitSpinWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:200px;height:200px}
+    body{display:flex;align-items:center;justify-content:center}
+    .spinner{position:relative}
+    \(css)
+    </style></head><body>
+    <div class="spinner"></div>
+    </body></html>
+    """
+
+    /// The CSS as authored (Uiverse.io / Nawsome), with the SVG fill recoloured
+    /// from #000000 to gray (#9ca3af).
+    private static let css = #"""
+    .spinner:before {
+      transform: rotateX(60deg) rotateY(45deg) rotateZ(45deg);
+      animation: 750ms rotateBefore infinite linear reverse;
+    }
+    .spinner:after {
+      transform: rotateX(240deg) rotateY(45deg) rotateZ(45deg);
+      animation: 750ms rotateAfter infinite linear;
+    }
+    .spinner:before,
+    .spinner:after {
+      box-sizing: border-box;
+      content: '';
+      display: block;
+      position: absolute;
+      margin-top: -5em;
+      margin-left: -5em;
+      width: 10em;
+      height: 10em;
+      transform-style: preserve-3d;
+      transform-origin: 50%;
+      transform: rotateY(50%);
+      perspective-origin: 50% 50%;
+      perspective: 340px;
+      background-size: 10em 10em;
+      background-image: url(data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+Cjxzdmcgd2lkdGg9IjI2NnB4IiBoZWlnaHQ9IjI5N3B4IiB2aWV3Qm94PSIwIDAgMjY2IDI5NyIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB4bWxuczpza2V0Y2g9Imh0dHA6Ly93d3cuYm9oZW1pYW5jb2RpbmcuY29tL3NrZXRjaC9ucyI+CiAgICA8dGl0bGU+c3Bpbm5lcjwvdGl0bGU+CiAgICA8ZGVzY3JpcHRpb24+Q3JlYXRlZCB3aXRoIFNrZXRjaCAoaHR0cDovL3d3dy5ib2hlbWlhbmNvZGluZy5jb20vc2tldGNoKTwvZGVzY3JpcHRpb24+CiAgICA8ZGVmcz48L2RlZnM+CiAgICA8ZyBpZD0iUGFnZS0xIiBzdHJva2U9Im5vbmUiIHN0cm9rZS13aWR0aD0iMSIgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBza2V0Y2g6dHlwZT0iTVNQYWdlIj4KICAgICAgICA8cGF0aCBkPSJNMTcxLjUwNzgxMywzLjI1MDAwMDM4IEMyMjYuMjA4MTgzLDEyLjg1NzcxMTEgMjk3LjExMjcyMiw3MS40OTEyODIzIDI1MC44OTU1OTksMTA4LjQxMDE1NSBDMjE2LjU4MjAyNCwxMzUuODIwMzEgMTg2LjUyODQwNSw5Ny4wNjI0OTY0IDE1Ni44MDA3NzQsODUuNzczNDM0NiBDMTI3LjA3MzE0Myw3NC40ODQzNzIxIDc2Ljg4ODQ2MzIsODQuMjE2MTQ2MiA2MC4xMjg5MDY1LDEwOC40MTAxNTMgQy0xNS45ODA0Njg1LDIxOC4yODEyNDcgMTQ1LjI3NzM0NCwyOTYuNjY3OTY4IDE0NS4yNzczNDQsMjk2LjY2Nzk2OCBDMTQ1LjI3NzM0NCwyOTYuNjY3OTY4IC0yNS40NDkyMTg3LDI1Ny4yNDIxOTggMy4zOTg0Mzc1LDEwOC40MTAxNTUgQzE2LjMwNzA2NjEsNDEuODExNDE3NCA4NC43Mjc1ODI5LC0xMS45OTIyOTg1IDE3MS41MDc4MTMsMy4yNTAwMDAzOCBaIiBpZD0iUGF0aC0xIiBmaWxsPSIjOWNhM2FmIiBza2V0Y2g6dHlwZT0iTVNTaGFwZUdyb3VwIj48L3BhdGg+CiAgICA8L2c+Cjwvc3ZnPg==);
+    }
+    @keyframes rotateBefore {
+      from {
+        transform: rotateX(60deg) rotateY(45deg) rotateZ(0deg);
+      }
+      to {
+        transform: rotateX(60deg) rotateY(45deg) rotateZ(-360deg);
+      }
+    }
+    @keyframes rotateAfter {
+      from {
+        transform: rotateX(240deg) rotateY(45deg) rotateZ(0deg);
+      }
+      to {
+        transform: rotateX(240deg) rotateY(45deg) rotateZ(360deg);
+      }
+    }
+    """#
+}
+
+/// The Uiverse flame loader (HTML + CSS by Admin12121): a flickering orange fire
+/// with rising ember particles. Markup + CSS verbatim, run in a transparent
+/// WKWebView. TEMP swap in the working badge — fits the gun/"still hot" theme.
+struct FireLoader: View {
+    private static let render: CGFloat = 150   // the flame is 100px; room for shadow + embers
+
+    var body: some View {
+        GeometryReader { geo in
+            let target = max(8, min(geo.size.width, geo.size.height))
+            FireWebView()
+                .frame(width: Self.render, height: Self.render)
+                .scaleEffect(target / Self.render)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct FireWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 150, height: 150))
+        wv.setValue(false, forKey: "drawsBackground")   // transparent
+        wv.loadHTMLString(Self.document, baseURL: nil)
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    private static let document = """
+    <!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:150px;height:150px;position:relative}
+    \(css)
+    </style></head><body>
+    <div class="fire">
+      <div class="fire-left"><div class="main-fire"></div><div class="particle-fire"></div></div>
+      <div class="fire-center"><div class="main-fire"></div><div class="particle-fire"></div></div>
+      <div class="fire-right"><div class="main-fire"></div><div class="particle-fire"></div></div>
+      <div class="fire-bottom"><div class="main-fire"></div></div>
+    </div>
+    </body></html>
+    """
+
+    /// The CSS exactly as authored (Uiverse.io / Admin12121).
+    private static let css = #"""
+    @keyframes scaleUpDown {
+      0%, 100% { transform: scaleY(1) scaleX(1); }
+      50%, 90% { transform: scaleY(1.1); }
+      75% { transform: scaleY(0.95); }
+      80% { transform: scaleX(0.95); }
+    }
+    @keyframes shake {
+      0%, 100% { transform: skewX(0) scale(1); }
+      50% { transform: skewX(5deg) scale(0.9); }
+    }
+    @keyframes particleUp {
+      0% { opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; top: -100%; transform: scale(0.5); }
+    }
+    @keyframes glow {
+      0%, 100% { background-color: #ef5a00; }
+      50% { background-color: #ff7800; }
+    }
+    .fire {
+      position: absolute;
+      top: calc(50% - 50px);
+      left: calc(50% - 50px);
+      width: 100px;
+      height: 100px;
+      background-color: transparent;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .fire-center {
+      position: absolute;
+      height: 100%;
+      width: 100%;
+      animation: scaleUpDown 3s ease-out;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    .fire-center .main-fire {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background-image: radial-gradient(farthest-corner at 10px 0, #d43300 0%, #ef5a00 95%);
+      transform: scaleX(0.8) rotate(45deg);
+      border-radius: 0 40% 60% 40%;
+      filter: drop-shadow(0 0 10px #d43322);
+    }
+    .fire-center .particle-fire {
+      position: absolute;
+      top: 60%;
+      left: 45%;
+      width: 10px;
+      height: 10px;
+      background-color: #ef5a00;
+      border-radius: 50%;
+      filter: drop-shadow(0 0 10px #d43322);
+      animation: particleUp 2s ease-out 0;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    .fire-right {
+      height: 100%;
+      width: 100%;
+      position: absolute;
+      animation: shake 2s ease-out 0;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    .fire-right .main-fire {
+      position: absolute;
+      top: 15%;
+      right: -25%;
+      width: 80%;
+      height: 80%;
+      background-color: #ef5a00;
+      transform: scaleX(0.8) rotate(45deg);
+      border-radius: 0 40% 60% 40%;
+      filter: drop-shadow(0 0 10px #d43322);
+    }
+    .fire-right .particle-fire {
+      position: absolute;
+      top: 45%;
+      left: 50%;
+      width: 15px;
+      height: 15px;
+      background-color: #ef5a00;
+      transform: scaleX(0.8) rotate(45deg);
+      border-radius: 50%;
+      filter: drop-shadow(0 0 10px #d43322);
+      animation: particleUp 2s ease-out 0;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    .fire-left {
+      position: absolute;
+      height: 100%;
+      width: 100%;
+      animation: shake 3s ease-out 0;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    .fire-left .main-fire {
+      position: absolute;
+      top: 15%;
+      left: -20%;
+      width: 80%;
+      height: 80%;
+      background-color: #ef5a00;
+      transform: scaleX(0.8) rotate(45deg);
+      border-radius: 0 40% 60% 40%;
+      filter: drop-shadow(0 0 10px #d43322);
+    }
+    .fire-left .particle-fire {
+      position: absolute;
+      top: 10%;
+      left: 20%;
+      width: 10%;
+      height: 10%;
+      background-color: #ef5a00;
+      border-radius: 50%;
+      filter: drop-shadow(0 0 10px #d43322);
+      animation: particleUp 3s infinite ease-out 0;
+      animation-fill-mode: both;
+    }
+    .fire-bottom .main-fire {
+      position: absolute;
+      top: 30%;
+      left: 20%;
+      width: 75%;
+      height: 75%;
+      background-color: #ff7800;
+      transform: scaleX(0.8) rotate(45deg);
+      border-radius: 0 40% 100% 40%;
+      filter: blur(10px);
+      animation: glow 2s ease-out 0;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
     }
     """#
 }
