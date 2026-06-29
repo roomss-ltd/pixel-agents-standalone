@@ -336,13 +336,13 @@ struct NotchStatusLine: View {
                 shootTint = Color(white: 0.85)
             }
 
-            let sound = starting ? SoundFX.reload : SoundFX.shot
+            let sound = SoundFX.reload   // finish report fires from the engine now
 
             // No GIF available → fire the bullet + sound immediately, no pose.
             let poseFrames = starting ? ShootAsset.funnel : ShootAsset.frames
             guard !poseFrames.isEmpty else {
                 siphonID += 1
-                SoundFX.play(sound)
+                if starting { SoundFX.play(sound) }   // finish report fires from the engine
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(800))
                     if starting { FireStoker.shared.stoke() }
@@ -361,12 +361,11 @@ struct NotchStatusLine: View {
                 activeShooter = shooterOnLeft ? .right : .both
             }
             // Start sound (reload) fires immediately on prompt send — no delay.
-            // Finish sound (shot) stays synced to the comet firing below.
+            // The FINISH report is fired by the engine (priority-tiered), not here.
             if starting { SoundFX.play(sound) }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(Self.shootDelay))
                 siphonID += 1        // FIRE — comet sweeps the rail...
-                if !starting { SoundFX.play(sound) }  // ...in sync with the SFX.
                 try? await Task.sleep(for: .milliseconds(200))
                 withAnimation(.easeOut(duration: 0.3)) {
                     showShoot = false
@@ -2342,37 +2341,63 @@ enum WallpaperColor {
     }
 }
 
-/// Gunshot SFX for the siphon — `gun-reload.mp3` when a session starts work,
-/// `gun-shot.mp3` when one finishes. Loaded once from ~/Downloads.
+/// Gunshot SFX for the siphon. Each voice carries the UserDefaults key + default
+/// level (0…1) behind its Settings → Sounds slider; final volume = master × level.
 enum SoundFX {
-    static let reload = make("gun-reload.mp3", volume: 0.5)
-    static let shot = make("gun-shot.mp3", volume: 1.0)
-    /// Played when a session starts waiting on the user (needs input).
-    static let waiting = make("awp-shot.mp3", volume: 1.0)
-    /// The "flick the cylinder" widget — the revolver spins to a stop.
-    static let spin = make("revolver-spin.mp3", volume: 1.0)
+    struct Voice {
+        let player: AVAudioPlayer?
+        let key: String          // full UserDefaults key for this voice's level
+        let defaultLevel: Double // 0…1, used until the user moves the slider
+    }
 
-    /// `volume` is 0.0–1.0 (fraction of the file's full level).
-    private static func make(_ filename: String, volume: Float = 1.0) -> AVAudioPlayer? {
-        guard let url = BundledAsset.url(filename, in: "sounds") else { return nil }
-        let player = try? AVAudioPlayer(contentsOf: url)
-        player?.volume = volume
+    static let reload  = make("gun-reload.mp3",     key: "start",          defaultLevel: 0.5)
+    static let shot    = make("gun-shot.mp3",       key: "finish",         defaultLevel: 1.0)
+    /// High/Urgent completions get the heavier shotgun blast — you hear the
+    /// tier finish without reading the card.
+    static let shotgun = make("shotgun-shot.mp3",   key: "finishElevated", defaultLevel: 1.0)
+    /// Played when a session starts waiting on the user (needs input). A heavy
+    /// gunshot now — meatier than the old AWP crack.
+    static let waiting = make("heavy-gun-shot.mp3", key: "waiting",        defaultLevel: 1.0)
+    /// The "flick the cylinder" widget — the revolver spins to a stop.
+    static let spin    = make("revolver-spin.mp3",  key: "spin",           defaultLevel: 1.0)
+
+    /// Master output level key (a single 0…1 scale over every voice).
+    static let masterKey = "AgentTAB.sounds.vol.master"
+
+    private static func make(_ filename: String, key: String, defaultLevel: Double) -> Voice {
+        let player = BundledAsset.url(filename, in: "sounds").flatMap { try? AVAudioPlayer(contentsOf: $0) }
         player?.prepareToPlay()
-        return player
+        return Voice(player: player, key: "AgentTAB.sounds.vol.\(key)", defaultLevel: defaultLevel)
     }
 
     /// Restart from the top so rapid transitions always re-fire the sound.
-    /// Honors the global "Notification sounds" switch — EVERY sound in the app
-    /// funnels through here, so this single guard is the master mute.
-    static func play(_ player: AVAudioPlayer?) {
-        guard soundsEnabled, let player else { return }
+    /// Honors the global "Notification sounds" switch — EVERY sound funnels
+    /// through here, so this single guard is the master mute.
+    static func play(_ voice: Voice) {
+        guard soundsEnabled else { return }
+        fire(voice)
+    }
+
+    /// Like `play`, but ignores the on/off switch — for Settings previews, so you
+    /// can tune levels by ear even with sounds toggled off.
+    static func preview(_ voice: Voice) { fire(voice) }
+
+    private static func fire(_ voice: Voice) {
+        guard let player = voice.player else { return }
+        player.volume = Float(masterLevel * level(of: voice))
         player.currentTime = 0
         player.play()
     }
 
+    /// The user's 0…1 slider value for a voice (its default until they touch it).
+    private static func level(of voice: Voice) -> Double {
+        UserDefaults.standard.object(forKey: voice.key) as? Double ?? voice.defaultLevel
+    }
+    private static var masterLevel: Double {
+        UserDefaults.standard.object(forKey: masterKey) as? Double ?? 1.0
+    }
+
     /// Absent key ⇒ ON, matching the `= true` AppStorage defaults elsewhere.
-    /// (`UserDefaults.bool(forKey:)` would default an unset key to `false`,
-    /// silently muting the app before the user ever opens Settings.)
     private static var soundsEnabled: Bool {
         UserDefaults.standard.object(forKey: "AgentTAB.sounds.enabled") as? Bool ?? true
     }

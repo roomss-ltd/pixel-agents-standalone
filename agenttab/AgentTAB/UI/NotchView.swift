@@ -113,6 +113,12 @@ struct NotchView: View {
             collapse()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            // NSMenu tracking is GLOBAL — it fires for EVERY NSMenu in the app,
+            // including foreign ones like the Settings window's "More" tab
+            // overflow. Our menus (the footer "⋯") can only be opened while the
+            // notch is ALREADY expanded, so a menu that begins tracking while
+            // we're compact belongs to another window and must not expand us.
+            guard isHovered || isPinned else { return }
             isMenuOpen = true
         }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in

@@ -236,8 +236,14 @@ final class SessionDockPanel: NSPanel {
     private func resize(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         contentSize = size
-        setContentSize(size)
-        anchorBottomRight()
+        guard let screen = currentScreen ?? NSScreen.main else { setContentSize(size); return }
+        // Update size AND the glued origin in ONE atomic setFrame so the right
+        // edge never jitters mid-resize (the old setContentSize-then-
+        // setFrameOrigin briefly desynced size and origin each frame). Borderless
+        // ⇒ frame rect == content rect, so the content size is the frame size.
+        let origin = NSPoint(x: screen.frame.maxX - size.width,
+                             y: screen.visibleFrame.minY + Self.edgeInset)
+        setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
     private func anchorBottomRight() {
@@ -313,13 +319,33 @@ struct SessionDockView: View {
     private static let square: CGFloat = 36
     private static let gap: CGFloat = 6
     private static let pad: CGFloat = 7
-    /// Squares per row before wrapping up into a new row. Fixed (not balanced)
-    /// so each tab keeps a stable position — muscle memory over symmetry.
-    private static let perRow: Int = 6
+    /// Column cap — the grid never grows wider than this; overflow grows ROWS,
+    /// not width. Each extra column adds `square + gap` (42pt).
+    private static let maxPerRow: Int = 8
+    /// At or below this count the strip stays a single row; above it, two rows.
+    private static let singleRowMax: Int = 6
+
+    /// Balance `count` squares into the FEWEST rows whose columns stay within
+    /// `maxPerRow` (≤6 → 1 row, 7…16 → 2 rows, 17…24 → 3, …), then split evenly
+    /// so no row is left with an orphan square. Returns rows + columns-per-row.
+    private static func gridLayout(count: Int) -> (rows: Int, cols: Int) {
+        guard count > 0 else { return (1, 1) }
+        let rows = max(count <= singleRowMax ? 1 : 2,
+                       Int(ceil(Double(count) / Double(maxPerRow))))
+        let cols = Int(ceil(Double(count) / Double(rows)))
+        return (rows, cols)
+    }
     /// Transparent headroom reserved above the strip so the muzzle smoke + the
     /// card (and its upward stack of older cards) have room above the drawer.
     /// Constant — see the body comment on why it must never toggle.
     private static let deckHeadroom: CGFloat = 120
+    /// Constant reserved window WIDTH — ≥ the widest the strip ever gets (8
+    /// columns + the revolver, a few rows tall). Holding it fixed means the dock
+    /// window never RESIZES its width on collapse/expand; the strip animates
+    /// inside a fixed-width window (pure SwiftUI, no throttled DockSizeKey →
+    /// setFrame stepping that made the slide choppy). The extra width is
+    /// transparent and already passes clicks through (hit-rect click-through).
+    private static let reservedWidth: CGFloat = 560
 
     // MARK: Cannon / toast state
     //
@@ -403,10 +429,11 @@ struct SessionDockView: View {
             // only when a toast existed) resized the dock window every time a
             // notification came and went — a DockSizeKey → resize() → re-anchor
             // feedback loop that made the drawer jitter. The space is transparent,
-            // so a constant window size is free. A touch wider than the card so it
-            // never clips against the right-glued edge when the strip is narrow
-            // (collapsed, or only a few sessions).
-            Color.clear.frame(width: DockToastCard.width + 28, height: Self.deckHeadroom)
+            // so a constant window size is free. We reserve the FULL expanded
+            // width (≥ the widest the strip ever gets) so the window's WIDTH never
+            // changes on collapse/expand — the strip just animates inside this
+            // fixed-width window (smooth SwiftUI, no window-resize stepping).
+            Color.clear.frame(width: Self.reservedWidth, height: Self.deckHeadroom)
             strip(sessions)
                 .background(GeometryReader { g in
                     Color.clear.preference(key: DockHitRectsKey.self,
@@ -472,7 +499,10 @@ struct SessionDockView: View {
             if new > old { inputPulse += 1 }
         }
         .animation(.easeOut(duration: 0.18), value: layoutToken(sessions))
-        .animation(.easeOut(duration: 0.20), value: dock.collapsed)
+        // Collapse/expand: a gentle, high-damping spring (no overshoot — the
+        // right edge is glued) reads far smoother than the old quick easeOut, and
+        // the window resize rides this same curve per-frame.
+        .animation(.spring(response: 0.42, dampingFraction: 0.92), value: dock.collapsed)
     }
 
     /// The notification anchor — pinned to the panel's right edge (glued to the
@@ -542,9 +572,7 @@ struct SessionDockView: View {
         let fiveHourFrac = max(0, min(1, (rateLimits.fiveHour?.utilization ?? 0) / 100.0))
         // The revolver scales with the number of square rows so it never looks
         // dwarfed by a tall two-row magazine: its frame tracks the grid height.
-        let rows = dock.collapsed
-            ? 1
-            : max(1, Int(ceil(Double(sessions.count) / Double(Self.perRow))))
+        let rows = dock.collapsed ? 1 : Self.gridLayout(count: sessions.count).rows
         let gridH = CGFloat(rows) * Self.square + CGFloat(rows - 1) * Self.gap
         let revSize = (gridH * 0.95 + 22) * 0.85   // 15% smaller than the grid-tracked size
         let revolver = RevolverCylinder(inFlight: inFlight, needsYou: needsYou,
@@ -728,8 +756,9 @@ struct SessionDockView: View {
         if sessions.isEmpty {
             emptySlot
         } else {
-            let rows = stride(from: 0, to: sessions.count, by: Self.perRow).map {
-                Array(sessions[$0 ..< min($0 + Self.perRow, sessions.count)])
+            let cols = Self.gridLayout(count: sessions.count).cols
+            let rows = stride(from: 0, to: sessions.count, by: cols).map {
+                Array(sessions[$0 ..< min($0 + cols, sessions.count)])
             }
             VStack(alignment: .leading, spacing: Self.gap) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in

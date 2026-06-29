@@ -883,7 +883,14 @@ final class ActivityEngine: ObservableObject {
             }
             lastDoneNotify[session.id] = Date()
             postDockEvent(for: session, variant: .success, message: "Finished successfully")
-            if soundsEnabled { soundPlayer.playDone() }
+            // Priority-tiered finish report, delayed to land with the cannon's
+            // comet (matches the dock/notch shootDelay = 0.5s). High/Urgent get
+            // the heavier shotgun so the tier is audible without reading the card.
+            // `SoundFX.play` self-gates on the Sounds toggle.
+            let elevatedFinish = session.priority.rawValue >= Priority.high.rawValue
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                SoundFX.play(elevatedFinish ? SoundFX.shotgun : SoundFX.shot)
+            }
         }
         AgentLog.notify.notice("fired session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public)")
     }
