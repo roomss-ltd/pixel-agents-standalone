@@ -562,8 +562,19 @@ struct SessionDockView: View {
         // chevron (smaller footprint, chevron reads centered).
         .padding(.horizontal, dock.collapsed ? 5 : Self.pad)
         .background(
-            containerShape
-                .fill(Color.black.opacity(0.85))
+            ZStack {
+                // The dock window is transparent, so the 15%-see-through interior
+                // would otherwise let the desktop bleed in — brown wash on a white
+                // backdrop, dark on a dark one. An opaque base hugging the panel
+                // (the neon border stays the outer edge) anchors it on dark for any
+                // backdrop, and a soft shadow gives a clean falloff instead of a
+                // hard slab — the dark-furnace look everywhere.
+                containerShape
+                    .fill(Color.black)
+                    .shadow(color: .black.opacity(0.55), radius: 5)
+
+                containerShape
+                    .fill(Color.black.opacity(0.85))
                 // Warm ember wash — the interior reads as coals glowing inside a
                 // dark furnace rather than a cold black box, tying it to the magma
                 // frame. Rises from the bottom (heat rising) and brightens with the
@@ -599,6 +610,7 @@ struct SessionDockView: View {
                 // bottom-right end inward. Each heats (orange → white-hot) as it
                 // approaches its cap.
                 .overlay(RateLimitGauges(weekly: weeklyFrac, fiveHour: fiveHourFrac))
+            }
         )
         // Room for the flare "horns" (vertical) AND the border's left-corner
         // bloom (leading) to extend beyond the box without the content-sized,

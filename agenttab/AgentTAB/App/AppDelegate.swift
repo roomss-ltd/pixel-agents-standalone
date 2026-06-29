@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached(priority: .utility) {
             _ = ShootAsset.smoke; _ = ShootAsset.frames; _ = ShootAsset.target
             _ = ShootAsset.bullets; _ = ShootAsset.funnel
-            _ = ShootAsset.containerImages; _ = ShootAsset.railProps
+            _ = ShootAsset.containerImages
             _ = ShootAsset.crateImage; _ = ShootAsset.mineCartImage
             _ = ShootAsset.oilImage; _ = ShootAsset.barrel1Image
             _ = ShootAsset.barrelImage; _ = ShootAsset.airship; _ = ShootAsset.airship1

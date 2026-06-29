@@ -718,10 +718,9 @@ enum ShootAsset {
     /// cables + posts); they ride solo, no extra crane from us.
     static let containerImages: [CGImage] = ["container-1.png", "container-2.png"]
         .compactMap { loadNamed($0, keyed: false).first?.image }
-    /// Forge-railway cargo that rides the rail SOLO (own footprint, no harness):
-    /// just the molten-metal ladle now (barrels/oil moved to chained loads).
-    static let railProps: [CGImage] = ["molten-ladle.png"]
-        .compactMap { loadNamed($0, keyed: false).first?.image }
+    /// Forge-railway cargo that rides the rail SOLO. The molten-metal ladle was
+    /// retired; shipping containers now cover the solo-load slot.
+    static let railProps: [CGImage] = []
     /// Boxes for chained, HARNESSED loads.
     static let mineCartImage: CGImage? = loadStatic("mine-cart.png", pixelHeight: 128).first?.image
     static let oilImage: CGImage? = loadStatic("oil-drum.png", pixelHeight: 128).first?.image       // oil group
@@ -1046,12 +1045,7 @@ struct RailFreight: View {
                 let dur = Double.random(in: 3.6 ... 5.4)        // slower, smoother glide
                 let tint = Self.tints.randomElement() ?? .orange
                 func container() -> Crate {
-                    // Solo loads: the molten ladle, or a shipping container.
-                    let props = ShootAsset.railProps
-                    if !props.isEmpty, Int.random(in: 0 ..< 100) < 55 {
-                        return Crate(leftToRight: dir, tint: tint, duration: dur,
-                                     boxes: 1, style: .wide, propIndex: Int.random(in: 0 ..< props.count))
-                    }
+                    // Solo load: a shipping container (own crane baked in).
                     let idx = ShootAsset.containerImages.isEmpty
                         ? nil : Int.random(in: 0 ..< ShootAsset.containerImages.count)
                     return Crate(leftToRight: dir, tint: tint, duration: dur,
