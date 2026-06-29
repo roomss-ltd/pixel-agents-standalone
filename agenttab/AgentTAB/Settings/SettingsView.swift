@@ -52,19 +52,24 @@ struct GeneralSettings: View {
 
 struct NotificationsSettings: View {
     @AppStorage("AgentTAB.toast.corner") var toastCorner: String = ToastCorner.bottomRight.rawValue
+    @AppStorage("AgentTAB.notifications.enabled") var notificationsEnabled: Bool = true
     @AppStorage("AgentTAB.sounds.enabled") var soundsEnabled: Bool = true
     @AppStorage("AgentTAB.sounds.waitingReminder") var waitingReminder: Bool = true
+    @AppStorage("AgentTAB.notch.waitingPulse") var waitingPulse: Bool = true
 
     var body: some View {
         Form {
+            Toggle("Show notifications", isOn: $notificationsEnabled)
             Picker("Toast position", selection: $toastCorner) {
                 Text("Top left").tag(ToastCorner.topLeft.rawValue)
                 Text("Top right").tag(ToastCorner.topRight.rawValue)
                 Text("Bottom left").tag(ToastCorner.bottomLeft.rawValue)
                 Text("Bottom right").tag(ToastCorner.bottomRight.rawValue)
             }
+            .disabled(!notificationsEnabled)
             Toggle("Notification sounds", isOn: $soundsEnabled)
             Toggle("Waiting reminder every 30s", isOn: $waitingReminder)
+            Toggle("Waiting pulse", isOn: $waitingPulse)
         }
         .padding()
     }

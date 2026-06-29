@@ -997,10 +997,16 @@ private struct FootBtn: View {
 // MARK: - Settings body
 
 private struct SettingsBody: View {
-    @State private var sounds = true
-    @State private var waitingReminders = true
-    @State private var waitingPulse = true
-    @State private var notifications = true
+    // Shared keys with the menu-bar Settings window, so both surfaces agree
+    // and survive relaunch. Each toggle is wired to real behavior:
+    //   sounds          → SoundFX.play() master mute
+    //   waitingReminders → ActivityEngine.checkUrgentReminders()
+    //   waitingPulse    → AttnGlyph glow
+    //   notifications   → ActivityEngine.postDockEvent() master switch
+    @AppStorage("AgentTAB.sounds.enabled") private var sounds = true
+    @AppStorage("AgentTAB.sounds.waitingReminder") private var waitingReminders = true
+    @AppStorage("AgentTAB.notch.waitingPulse") private var waitingPulse = true
+    @AppStorage("AgentTAB.notifications.enabled") private var notifications = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

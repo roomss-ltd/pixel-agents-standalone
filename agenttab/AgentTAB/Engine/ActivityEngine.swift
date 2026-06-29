@@ -379,6 +379,8 @@ final class ActivityEngine: ObservableObject {
 
     @AppStorage("AgentTAB.toast.corner") private var toastCornerRaw: String = ToastCorner.bottomRight.rawValue
     @AppStorage("AgentTAB.sounds.enabled") private var soundsEnabled: Bool = true
+    @AppStorage("AgentTAB.sounds.waitingReminder") private var waitingRemindersEnabled: Bool = true
+    @AppStorage("AgentTAB.notifications.enabled") private var notificationsEnabled: Bool = true
 
     private var toastCorner: ToastCorner {
         ToastCorner(rawValue: toastCornerRaw) ?? .bottomRight
@@ -477,6 +479,7 @@ final class ActivityEngine: ObservableObject {
     /// cap is hit, or the window from the finish has elapsed, the
     /// session goes quiet for good (until it runs and finishes again).
     private func checkUrgentReminders() {
+        guard waitingRemindersEnabled else { return }   // "Waiting reminder every 30s" toggle
         let now = Date()
 
         let qualifying = sessions.filter { s -> Bool in
@@ -520,6 +523,7 @@ final class ActivityEngine: ObservableObject {
     /// lands as a tap-to-jump card above the strip. Posted on the main
     /// thread (the engine is `@MainActor`) as `.agentTabSessionEvent`.
     private func postDockEvent(for session: Session, variant: DockToastVariant, message: String) {
+        guard notificationsEnabled else { return }   // "Show notifications" master switch
         // TEMP (verification): every shell that fires, with the session it came
         // from — so we can tell two-sessions-each-firing from one-session-twice.
         AgentLog.notify.notice("DOCK-EVENT session=\(session.claudeSessionId, privacy: .public) label=\(self.displayLabel(for: session), privacy: .public) variant=\(String(describing: variant), privacy: .public) jsonl=\(self.sessionsByJsonlURL.first(where: { $0.value == session.id })?.key.lastPathComponent ?? "-", privacy: .public)")
@@ -677,6 +681,7 @@ final class ActivityEngine: ObservableObject {
         case "SessionStart":
             session.activity = .initState
         case "UserPromptSubmit":
+            cancelDoneSettle(id)          // the main woke (new prompt / injected sub-agent result) — kill any premature finish
             session.activity = .thinking
             session.currentTool = nil
             session.delegatingDepth = 0   // new turn — no sub-agents outstanding
@@ -687,6 +692,7 @@ final class ActivityEngine: ObservableObject {
                 // Main agent is delegating to a sub-agent. Bracket the run so
                 // its internal tool hooks (same session_id, no sidechain flag)
                 // can't churn the main activity. Shown as the Task tool itself.
+                cancelDoneSettle(id)        // main is alive and orchestrating — not finished
                 session.delegatingDepth += 1
                 session.activity = .tool(name)
                 session.currentTool = name
@@ -699,6 +705,7 @@ final class ActivityEngine: ObservableObject {
                 // the sub-agent badge). Skip the store/notify entirely.
                 return
             } else {
+                cancelDoneSettle(id)        // main running its own tool — not finishing
                 session.activity = .tool(name)
                 session.currentTool = name
                 // Synthetic tool ID for hook-tracked tools (parser uses real IDs from JSONL).
@@ -749,9 +756,21 @@ final class ActivityEngine: ObservableObject {
                 sessions[index] = session
                 return
             }
-            session.activity = .done
             session.delegatingDepth = 0
             session.awaitingSubagentsAfterStop = false
+            if delegatedRecently(id) {
+                // A sub-agent finished moments ago. Its result routinely re-prompts
+                // the main, which wakes and finishes AGAIN — so committing `.done`
+                // now fires a premature finish at the sub-agent boundary (the
+                // "sub-agents send notifications" bug). Hold via the done-settle:
+                // a wake cancels it, so only a stable finish notifies, once.
+                session.activity = .thinking
+                session.lastUpdate = Date()
+                sessions[index] = session
+                scheduleDoneSettle(id: id)
+                return
+            }
+            session.activity = .done
             // Lingers as .done; the .idle decay timer is M5's responsibility.
         case "ManualInterrupt":
             // Hard stop — the user interrupted, which cancels the in-flight
@@ -762,18 +781,23 @@ final class ActivityEngine: ObservableObject {
         case "SubagentStop":
             // A sub-agent finished. This — not PostToolUse(Agent) — is the
             // reliable close bracket for one delegated unit, so it owns the
-            // decrement. When the LAST one closes we either resume the main
-            // (it's still going) or, if the main already Stopped, fire the
-            // single true completion.
+            // decrement. A sub-agent finishing must NEVER fire the finish shell
+            // directly: a backgrounded result routinely re-prompts the main,
+            // which wakes and finishes again. Control returns to the main; if it
+            // had already Stopped, the finish is HELD via the done-settle so a
+            // wake collapses the premature one into a single true completion.
             guard session.delegatingDepth > 0 else { return }   // spurious / already settled
             session.delegatingDepth -= 1
+            lastSubagentSeqAdvance[id] = Date()                 // mark active delegation (hook-side)
             if session.delegatingDepth == 0 {
+                session.activity = .thinking                    // control returns to the main
+                session.currentTool = nil
                 if session.awaitingSubagentsAfterStop {
-                    session.activity = .done                    // ← the one finish shell
                     session.awaitingSubagentsAfterStop = false
-                } else {
-                    session.activity = .thinking                // control returns to the main
-                    session.currentTool = nil
+                    session.lastUpdate = Date()
+                    sessions[index] = session
+                    scheduleDoneSettle(id: id)                  // hold the finish; a wake cancels it
+                    return
                 }
             }
             // depth still > 0 → other sub-agents running; stay delegating.
@@ -884,6 +908,22 @@ final class ActivityEngine: ObservableObject {
         }
         doneSettle[id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.doneSettleWindow, execute: work)
+    }
+
+    /// Cancel a pending done-settle: the session showed life (a wake, a new
+    /// prompt, the main running its own tool), so it isn't finished after all.
+    private func cancelDoneSettle(_ id: UUID) {
+        doneSettle[id]?.cancel()
+        doneSettle[id] = nil
+    }
+
+    /// True when a sub-agent finished for this session within the recency
+    /// window — i.e. a `.done` right now is part of an orchestration and may be
+    /// a premature finish that a wake will supersede. Stamped by both the hook
+    /// `SubagentStop` and the Zellij `subagentDoneSeq` paths.
+    private func delegatedRecently(_ id: UUID) -> Bool {
+        guard let t = lastSubagentSeqAdvance[id] else { return false }
+        return Date().timeIntervalSince(t) < Self.delegationRecencyWindow
     }
 
     /// Returns true when the source's own timestamp has moved forward

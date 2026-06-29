@@ -2368,10 +2368,19 @@ enum SoundFX {
     }
 
     /// Restart from the top so rapid transitions always re-fire the sound.
+    /// Honors the global "Notification sounds" switch — EVERY sound in the app
+    /// funnels through here, so this single guard is the master mute.
     static func play(_ player: AVAudioPlayer?) {
-        guard let player else { return }
+        guard soundsEnabled, let player else { return }
         player.currentTime = 0
         player.play()
+    }
+
+    /// Absent key ⇒ ON, matching the `= true` AppStorage defaults elsewhere.
+    /// (`UserDefaults.bool(forKey:)` would default an unset key to `false`,
+    /// silently muting the app before the user ever opens Settings.)
+    private static var soundsEnabled: Bool {
+        UserDefaults.standard.object(forKey: "AgentTAB.sounds.enabled") as? Bool ?? true
     }
 }
 

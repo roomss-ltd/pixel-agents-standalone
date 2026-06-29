@@ -6,13 +6,15 @@ import SwiftUI
 
 struct AttnGlyph: View {
     var size: CGFloat = 18
+    @AppStorage("AgentTAB.notch.waitingPulse") private var pulseEnabled = true
 
     var body: some View {
         // Decorative pulse — low fps + freezes when the app is quiet.
         DecorativeTimeline(fps: 15) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let phase = (t.truncatingRemainder(dividingBy: 1.4)) / 1.4
-            let glow = abs(sin(phase * .pi))   // 0 → 1 → 0 across the cycle
+            // "Waiting pulse" off ⇒ hold the glow at 0 (static triangle, no breathing).
+            let glow = pulseEnabled ? abs(sin(phase * .pi)) : 0   // 0 → 1 → 0 across the cycle
 
             ZStack {
                 WarnGlyph()
