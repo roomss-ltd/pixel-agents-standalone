@@ -335,6 +335,13 @@ struct SessionDockView: View {
         let cols = Int(ceil(Double(count) / Double(rows)))
         return (rows, cols)
     }
+
+    /// The revolver's rendered diameter for a given visible row count — it tracks
+    /// the grid height so it never looks dwarfed by a tall magazine.
+    private static func revolverSize(forRows rows: Int) -> CGFloat {
+        let gridH = CGFloat(rows) * square + CGFloat(rows - 1) * gap
+        return (gridH * 0.95 + 22) * 0.85   // 15% smaller than the grid-tracked size
+    }
     /// Transparent headroom reserved above the strip so the muzzle smoke + the
     /// card (and its upward stack of older cards) have room above the drawer.
     /// Constant — see the body comment on why it must never toggle.
@@ -570,13 +577,21 @@ struct SessionDockView: View {
         // PROTOTYPE: rate-limit gauges. Fractions 0…1 of each window consumed.
         let weeklyFrac = max(0, min(1, (rateLimits.weekly?.utilization ?? 0) / 100.0))
         let fiveHourFrac = max(0, min(1, (rateLimits.fiveHour?.utilization ?? 0) / 100.0))
-        // The revolver scales with the number of square rows so it never looks
-        // dwarfed by a tall two-row magazine: its frame tracks the grid height.
-        let rows = dock.collapsed ? 1 : Self.gridLayout(count: sessions.count).rows
-        let gridH = CGFloat(rows) * Self.square + CGFloat(rows - 1) * Self.gap
-        let revSize = (gridH * 0.95 + 22) * 0.85   // 15% smaller than the grid-tracked size
+        // The revolver scales with the row count so it never looks dwarfed by a
+        // tall magazine. CRUCIAL for a smooth collapse: render it ONCE at the
+        // EXPANDED (max) size and GPU-scale to the current size, rather than
+        // feeding an animating `size` — the cylinder derives all 6 round
+        // positions + blurs + shadows from `size`, so animating it re-lays-out
+        // and re-blurs the whole thing every frame (the choppiness at two rows).
+        // scaleEffect is a cheap transform; the frame keeps the strip's layout
+        // footprint correct so the grid still positions right.
+        let expandedRows = Self.gridLayout(count: sessions.count).rows
+        let refRev = Self.revolverSize(forRows: expandedRows)                  // fixed render size
+        let curRev = Self.revolverSize(forRows: dock.collapsed ? 1 : expandedRows)
         let revolver = RevolverCylinder(inFlight: inFlight, needsYou: needsYou,
-                                        firePulse: revolverFire, size: revSize)
+                                        firePulse: revolverFire, size: refRev)
+            .scaleEffect(refRev > 0 ? curRev / refRev : 1, anchor: .center)
+            .frame(width: curRev, height: curRev)
         // No chevron in either state (⌃⌥⌘V toggles). Collapsed shows just the
         // revolver; expanded adds the squares.
         return HStack(spacing: Self.gap) {
@@ -1161,12 +1176,12 @@ private struct RateLimitGauges: View {
                 gauge(line, from: 0, to: topTo, util: fiveHour)
                 gauge(line, from: botFrom, to: 1, util: weekly)
                 // Separator tick where molten meets cold — the current-fill mark.
-                if fiveHour > 0.001, let p = junction(path, at: topTo) {
-                    tick.position(p)
-                }
-                if weekly > 0.001, let p = junction(path, at: botFrom) {
-                    tick.position(p)
-                }
+                // Oriented PERPENDICULAR to the border at that point: vertical on
+                // the horizontal edges, rotating through the corner to horizontal
+                // once the fill climbs onto the vertical left edge — so it always
+                // crosses the line as a separator, never lies flat along it.
+                if fiveHour > 0.001 { orientedTick(path, at: topTo) }
+                if weekly > 0.001 { orientedTick(path, at: botFrom) }
             }
         }
         .allowsHitTesting(false)
@@ -1186,6 +1201,26 @@ private struct RateLimitGauges: View {
     /// arc-length uniform, so we sample the trimmed path's end point).
     private func junction(_ path: Path, at t: CGFloat) -> CGPoint? {
         path.trimmedPath(from: 0, to: max(0.0001, min(1, t))).currentPoint
+    }
+
+    /// Place `tick` at fill fraction `t`, rotated to sit perpendicular to the
+    /// border's local direction — so it flips vertical → horizontal across the
+    /// corner instead of lying flat along the vertical edge.
+    @ViewBuilder
+    private func orientedTick(_ path: Path, at t: CGFloat) -> some View {
+        if let p = junction(path, at: t) {
+            tick
+                .rotationEffect(.radians(Double(tangentAngle(path, at: t))))
+                .position(p)
+        }
+    }
+
+    /// Tangent angle of the border at trim fraction `t`, from two nearby samples.
+    private func tangentAngle(_ path: Path, at t: CGFloat) -> CGFloat {
+        let eps: CGFloat = 0.01
+        guard let a = junction(path, at: max(0.0001, t - eps)),
+              let b = junction(path, at: min(1, t + eps)) else { return 0 }
+        return atan2(b.y - a.y, b.x - a.x)
     }
 
     @ViewBuilder
