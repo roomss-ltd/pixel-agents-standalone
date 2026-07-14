@@ -56,6 +56,25 @@ final class JSONLWatcher {
         fileSources.removeAll()
     }
 
+    /// Forget a file so the next directory scan re-announces it through
+    /// `onSessionDiscovered`.
+    ///
+    /// The engine drops a Session when its Zellij pane disappears or the agent
+    /// sends `SessionEnd`. Without this, the watcher would still hold a live
+    /// source for that file, so it would never re-announce it — and any line
+    /// the file gained afterwards would route to a Session that no longer
+    /// exists and be silently discarded, permanently.
+    ///
+    /// The byte offset is deliberately kept: we resume where we left off
+    /// instead of replaying the whole transcript.
+    func release(fileURL: URL) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.fileSources[fileURL]?.cancel()
+            self.fileSources.removeValue(forKey: fileURL)
+        }
+    }
+
     private func scanProjectsDirectory() {
         guard let projects = try? FileManager.default.contentsOfDirectory(
             at: projectsDir, includingPropertiesForKeys: nil) else { return }

@@ -18,6 +18,21 @@ struct Session: Identifiable, Equatable {
     var activeToolNames: [String: String]    // toolId -> toolName
     var subagentTools: [String: Set<String>]
     var lastUpdate: Date
+    /// Last moment we had *proof* the agent was alive: a hook event it fired,
+    /// or a line it appended to its own transcript. Nil until such proof
+    /// arrives.
+    ///
+    /// Distinct from `lastUpdate`, which is a display anchor that also moves
+    /// on second-hand reports. The Zellij plugin re-publishes every pane's
+    /// activity every 5s whether or not the agent behind it still exists, so
+    /// "Zellij says Tool" is not evidence of life — only agent-authored
+    /// writes are. The staleness sweep keys on this field.
+    var lastEvidence: Date?
+    /// When the agent's current run began, recovered from the Zellij plugin's
+    /// `run_id`. The plugin mints a fresh run id on every `UserPromptSubmit`,
+    /// so this is the moment the turn now being reported started — which puts
+    /// a ceiling on how long that turn can plausibly still be running.
+    var runStartedAt: Date?
     var terminalKind: TerminalKind
     /// True when this session was surfaced from a stale jsonl file at
     /// startup (not actively producing output in this run). Historical
@@ -41,6 +56,8 @@ struct Session: Identifiable, Equatable {
         self.activeToolNames = [:]
         self.subagentTools = [:]
         self.lastUpdate = Date()
+        self.lastEvidence = nil
+        self.runStartedAt = nil
         self.terminalKind = .generic(nil)
         self.isHistorical = false
         self.priority = .default

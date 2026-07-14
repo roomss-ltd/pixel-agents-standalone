@@ -10,10 +10,12 @@ struct EnvironmentProbe {
     enum PluginState { case none, configured, producingStatusFiles }
     enum HookState { case none, legacyClaudeTabStatus, agentTAB, mixed }
 
-    static func detect() -> EnvironmentProbe {
+    static func detect(
+        statusDir: URL = ZellijStatusReader.defaultStatusDir
+    ) -> EnvironmentProbe {
         return EnvironmentProbe(
             zellijState: detectZellij(),
-            pluginState: detectPlugin(),
+            pluginState: detectPlugin(statusDir: statusDir),
             hookState: detectHooks()
         )
     }
@@ -38,13 +40,12 @@ struct EnvironmentProbe {
         return psProcess.terminationStatus == 0 ? .running : .installed
     }
 
-    private static func detectPlugin() -> PluginState {
+    private static func detectPlugin(statusDir: URL) -> PluginState {
         let configPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/zellij/config.kdl")
         let configured = (try? String(contentsOf: configPath))?
             .contains("claude-tab-status.wasm") ?? false
 
-        let statusDir = URL(fileURLWithPath: "/tmp/claude-tab-status")
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: statusDir, includingPropertiesForKeys: [.contentModificationDateKey]),
               !files.isEmpty else {

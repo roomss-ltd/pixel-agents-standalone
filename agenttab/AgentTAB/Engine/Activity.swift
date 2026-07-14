@@ -20,4 +20,20 @@ extension Activity {
         case .idle:      return 0
         }
     }
+
+    /// States that only make sense while the agent is alive and moving.
+    /// The engine's staleness sweep ages these out when nothing has proven
+    /// the agent is still there — an agent that is killed, crashes, or is
+    /// Ctrl-C'd never sends `Stop`/`SessionEnd`, so without a sweep it stays
+    /// pinned here forever and the tab reads as "processing" indefinitely.
+    ///
+    /// `.waiting` is deliberately NOT transient: a permission prompt
+    /// legitimately sits on screen for hours while the user is away, and
+    /// ageing it out would hide a tab that genuinely needs attention.
+    var isTransient: Bool {
+        switch self {
+        case .initState, .thinking, .tool: return true
+        case .waiting, .done, .idle:       return false
+        }
+    }
 }

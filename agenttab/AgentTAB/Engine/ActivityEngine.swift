@@ -54,9 +54,17 @@ final class ActivityEngine: ObservableObject {
     func displayLabel(for session: Session) -> String {
         switch session.terminalKind {
         case .zellij(let info):
+            // Peers are panes sharing a tab *within the same Zellij session*.
+            // Tab numbers are per-session, so two Zellij sessions both have a
+            // tab 2 — grouping on `tabIndex` alone makes them look like two
+            // panes of one tab and labels them "2.1" / "2.2". Worse, the peer
+            // set changes as rows come and go, so a stable tab visibly flips
+            // between "2" and "2.1".
             let peers = displaySessions
                 .compactMap { s -> ZellijInfo? in
-                    if case .zellij(let i) = s.terminalKind, i.tabIndex == info.tabIndex {
+                    if case .zellij(let i) = s.terminalKind,
+                       i.tabIndex == info.tabIndex,
+                       i.zellijSession == info.zellijSession {
                         return i
                     }
                     return nil
@@ -224,6 +232,31 @@ final class ActivityEngine: ObservableObject {
     /// when the pane disappears from the status files.
     private var sessionsByZellijPaneId: [Int: UUID] = [:]
 
+    /// The Claude session id buried in a Zellij `run_id`.
+    ///
+    /// The plugin mints run ids as `"{session_id}:{pane_id}:{unix}:{seq}"`
+    /// (see `next_run_id` in claude-tab-status/src/event_handler.rs), so only
+    /// the leading component is the id that the JSONL filename and the hook
+    /// payload's `session_id` both use. Treating the whole composite as the
+    /// session id means `sessionsByClaudeId[runId]` can never match a
+    /// JSONL-discovered session: the agent ends up with TWO Session rows, and
+    /// hook events resolve to the JSONL one — which `displaySessions` hides
+    /// whenever Zellij is active. Every real-time signal we have (permission
+    /// requests, Stop) would land on a row nobody can see.
+    nonisolated static func claudeSessionId(fromRunId runId: String) -> String? {
+        let head = runId.prefix { $0 != ":" }
+        return head.isEmpty ? nil : String(head)
+    }
+
+    /// When the run began, from the third component of the plugin's `run_id`.
+    /// A fresh id is minted on every `UserPromptSubmit`, so this is the start
+    /// of the turn the pane is currently reporting.
+    nonisolated static func runStart(fromRunId runId: String) -> Date? {
+        let parts = runId.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count >= 3, let unix = TimeInterval(parts[2]), unix > 0 else { return nil }
+        return Date(timeIntervalSince1970: unix)
+    }
+
     // MARK: - Notification gates (Phase 0)
 
     /// Identifies what triggered a state-change consideration. Used to
@@ -314,7 +347,43 @@ final class ActivityEngine: ObservableObject {
         map[newId] = value
         storedPriorities = map
     }
+    // MARK: - Staleness sweep
+
+    /// How long a session may sit in a transient state (`.initState`,
+    /// `.thinking`, `.tool`) with nothing proving the agent is still alive
+    /// before we stop calling it active.
+    ///
+    /// This only ever fires when a terminal signal was LOST. A normal finish
+    /// sends `Stop` and flips to `.done` immediately; this is the backstop for
+    /// agents that are killed, crash, or are Ctrl-C'd, which never send
+    /// anything. 15 minutes clears comfortably above the longest legitimate
+    /// silence — Claude's Bash tool caps at 10 minutes, and a long thinking
+    /// turn writes nothing to the transcript while it streams.
+    static let transientStaleTimeout: TimeInterval = 15 * 60
+
+    /// Ceiling on how long a single agent turn can plausibly still be running.
+    /// Used with `Session.runStartedAt` to convict panes whose transcript has
+    /// already been rotated away, where there is no other clock to judge them by.
+    static let maxPlausibleRunDuration: TimeInterval = 24 * 3600
+
+    /// Beyond this, a state change is history, not news — no toast. Replaying
+    /// a transcript at launch, or first-scanning a Zellij pane that finished
+    /// hours ago, both walk a session into `.done`; without this the user gets
+    /// a burst of "Finished successfully" for work that ended long before
+    /// AgentTAB was even running.
+    private static let staleEventCutoff: TimeInterval = 120
+
+    private var staleSweepTimer: AnyCancellable?
+
+    /// paneId → the activity Zellij is currently reporting, and when it first
+    /// reported it. The plugin republishes every pane every 5s regardless of
+    /// whether the agent behind it still exists, so a repeat of the same
+    /// status is not new information — only a *change* is. Used as the
+    /// evidence of last resort for panes we can't match to a transcript.
+    private var zellijActivityFirstSeen: [Int: (activity: Activity, at: Date)] = [:]
+
     private let parser = TranscriptParser()
+    private let transcripts: TranscriptLocator
     private let permissionTimer = PermissionTimer()
     private let jsonlWatcher: JSONLWatcher
     private var hookSocket: HookSocketListener?
@@ -330,9 +399,14 @@ final class ActivityEngine: ObservableObject {
         ToastCorner(rawValue: toastCornerRaw) ?? .bottomRight
     }
 
+    private let zellijStatusDir: URL
+
     init(projectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects")) {
+            .appendingPathComponent(".claude/projects"),
+         zellijStatusDir: URL = ZellijStatusReader.defaultStatusDir) {
         self.jsonlWatcher = JSONLWatcher(projectsDir: projectsDir)
+        self.transcripts = TranscriptLocator(projectsDir: projectsDir)
+        self.zellijStatusDir = zellijStatusDir
     }
 
     func start() {
@@ -360,10 +434,10 @@ final class ActivityEngine: ObservableObject {
             }
         }
 
-        let probe = EnvironmentProbe.detect()
+        let probe = EnvironmentProbe.detect(statusDir: zellijStatusDir)
         if probe.pluginState == .producingStatusFiles {
             zellijDetected = true
-            zellijReader = ZellijStatusReader()
+            zellijReader = ZellijStatusReader(statusDir: zellijStatusDir)
             zellijReader?.onUpdate = { [weak self] fileMap in
                 Task { @MainActor in self?.applyZellijStatus(fileMap) }
             }
@@ -372,6 +446,154 @@ final class ActivityEngine: ObservableObject {
         }
 
         startUrgentReminderTimer()
+        startStaleSweepTimer()
+    }
+
+    // MARK: - Staleness sweep
+
+    private func startStaleSweepTimer() {
+        staleSweepTimer = Timer.publish(every: 5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.sweepStaleSessions() }
+    }
+
+    /// Demote sessions that claim to be working but have gone silent past
+    /// `transientStaleTimeout`.
+    ///
+    /// Every event source we have is edge-triggered and lossy: hooks stop
+    /// arriving when a process is killed rather than exiting, and the Zellij
+    /// plugin only decays `Done → Idle` — it never ages out `Thinking`/`Tool`,
+    /// so a pane whose agent died a month ago is still published as active
+    /// every 5 seconds. Without a level-triggered sweep those states are
+    /// one-way doors and the notch shows work that stopped long ago.
+    ///
+    /// Demotion is `.idle`, never `.done`, and fires no toast: we did not
+    /// observe a completion, we lost track of the agent. Saying "Finished
+    /// successfully" for a session that was killed would be a lie.
+    func sweepStaleSessions(now: Date = Date()) {
+        for index in sessions.indices {
+            let session = sessions[index]
+            guard session.activity.isTransient, !session.isHistorical else { continue }
+
+            let evidence = lastEvidence(for: session, now: now)
+            let silence = now.timeIntervalSince(evidence)
+            guard silence >= Self.transientStaleTimeout else { continue }
+
+            let oldActivity = session.activity
+            sessions[index].activity = .idle
+            sessions[index].currentTool = nil
+            sessions[index].activeToolIds.removeAll()
+            sessions[index].activeToolNames.removeAll()
+            sessions[index].subagentTools.removeAll()
+            // Anchor the row at the last moment the agent could be proven
+            // alive, not at the moment we noticed — that way it buckets into
+            // RECENTLY / OLDER FINISHED by when it actually stopped.
+            sessions[index].lastUpdate = evidence
+            permissionTimer.cancel(for: session.claudeSessionId)
+
+            AgentLog.engine.info("transition watchdog session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→idle silent=\(Int(silence))s")
+        }
+    }
+
+    /// True when a claim that the agent is working isn't backed by any proof
+    /// that it still exists.
+    ///
+    /// The Zellij plugin republishes every pane's last known activity every 5
+    /// seconds for as long as the pane is open — so for a ghost it asserts
+    /// "Thinking" forever. Re-asserting an unbacked claim is not new evidence,
+    /// and adopting it would undo the sweep on the very next tick: the row
+    /// would flip idle → tool → idle → tool every 5 seconds instead of
+    /// settling. Both the sweep and the apply path have to ask this same
+    /// question, or they fight each other.
+    private func isUnbackedClaim(_ activity: Activity, for session: Session, now: Date) -> Bool {
+        guard activity.isTransient else { return false }
+
+        if now.timeIntervalSince(lastEvidence(for: session, now: now)) >= Self.transientStaleTimeout {
+            return true
+        }
+
+        // No proof of life has EVER reached us for this session — nothing on the
+        // hook socket, and no transcript anywhere on disk (Claude rotates those
+        // away once a session is long dead) — and the turn it claims to still be
+        // running was started more than a day ago. Nothing runs for a day.
+        //
+        // This is what convicts the oldest ghosts on sight. Without it they'd
+        // have to serve out the full silence window on every app launch, because
+        // the only clock available for a pane with no transcript starts when
+        // AgentTAB first meets it — so restarting the app would hand each corpse
+        // a fresh 15 minutes of looking busy.
+        //
+        // A live Codex agent also has no Claude transcript, which is why this
+        // needs the run-start clause too: Codex mints a new run id on every
+        // prompt, so a working one can never be a day into its current turn.
+        if session.lastEvidence == nil,
+           let started = session.runStartedAt,
+           now.timeIntervalSince(started) >= Self.maxPlausibleRunDuration,
+           transcripts.lastWrite(forSessionId: session.claudeSessionId, now: now) == nil {
+            return true
+        }
+
+        return false
+    }
+
+    /// The most recent moment we can *prove* this agent was alive.
+    ///
+    /// Only agent-authored writes count as proof: hook events it fired, lines
+    /// it appended to its transcript. A Zellij status file republishing the
+    /// same activity every 5s proves nothing — that is exactly how a dead pane
+    /// masquerades as a live one.
+    private func lastEvidence(for session: Session, now: Date) -> Date {
+        var proof = session.lastEvidence
+
+        // The transcript's mtime is the strongest signal available, and the
+        // only one that survives an AgentTAB restart: Claude appends to it as
+        // it works, so its age is the agent's silence.
+        if let write = transcripts.lastWrite(forSessionId: session.claudeSessionId, now: now) {
+            proof = max(proof ?? .distantPast, write)
+        }
+        if let proof { return proof }
+
+        // Nothing agent-authored to go on — a Zellij pane we've never matched
+        // to a transcript. Fall back to when it first reported the activity
+        // it's currently reporting; a repeat is not new information.
+        if case .zellij(let info) = session.terminalKind,
+           let seen = zellijActivityFirstSeen[info.paneId],
+           seen.activity == session.activity {
+            return seen.at
+        }
+        return session.lastUpdate
+    }
+
+    // MARK: - Session removal
+
+    /// Drop a session and every index that points at it.
+    ///
+    /// Leaving a `sessionsByJsonlURL` entry aimed at a removed UUID silently
+    /// black-holes that file: `applyLine` resolves the dead id, bails, and the
+    /// watcher never re-announces the file because it still holds a source for
+    /// it — so the session can never come back. Releasing the file in the
+    /// watcher lets a live transcript re-register itself on the next scan.
+    private func removeSession(id: UUID) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let session = sessions[index]
+        sessions.remove(at: index)
+
+        if case .zellij(let info) = session.terminalKind {
+            sessionsByZellijPaneId.removeValue(forKey: info.paneId)
+            zellijActivityFirstSeen.removeValue(forKey: info.paneId)
+            warnedElapsedParseFailure.remove(info.paneId)
+        }
+        for (url, owner) in sessionsByJsonlURL where owner == id {
+            sessionsByJsonlURL.removeValue(forKey: url)
+            jsonlWatcher.release(fileURL: url)
+        }
+        sessionsByClaudeId = sessionsByClaudeId.filter { $0.value != id }
+        lastSourceTimestamp.removeValue(forKey: id)
+        lastNotifiedTransition.removeValue(forKey: id)
+        lastNotifiedAt.removeValue(forKey: id)
+        urgentReminders.removeValue(forKey: id)
+        lastHookEvent.removeValue(forKey: session.claudeSessionId)
+        permissionTimer.cancel(for: session.claudeSessionId)
     }
 
     // MARK: - Urgent-finished reminder loop
@@ -538,15 +760,41 @@ final class ActivityEngine: ObservableObject {
         notifySessionStateChange(session, oldActivity: oldActivity, source: .jsonl(jsonlURL))
     }
 
+    /// Resolve the Session a hook belongs to. The Claude session id is the
+    /// primary key, but a hook can arrive before the transcript file exists
+    /// (`SessionStart` always does) — in which case the pane id it carries
+    /// still routes it to the right Zellij row.
+    private func sessionId(forHook payload: HookPayload) -> UUID? {
+        if let id = sessionsByClaudeId[payload.sessionId] { return id }
+        if let pane = payload.paneId, let id = sessionsByZellijPaneId[pane] { return id }
+        return nil
+    }
+
     private func applyHook(_ payload: HookPayload) {
-        guard let id = sessionsByClaudeId[payload.sessionId],
+        guard let id = sessionId(forHook: payload),
               let index = sessions.firstIndex(where: { $0.id == id }) else {
-            // Hook fired before JSONL discovered this session — buffer or wait.
-            // For v1, drop. The next hook event after JSONL discovery will land cleanly.
+            // Neither the session id nor the pane id matches anything we know
+            // about yet. The next hook event after discovery lands cleanly.
             return
         }
         let oldActivity = sessions[index].activity
         var session = sessions[index]
+
+        // A hook is the agent speaking for itself, in real time: proof of life.
+        session.lastEvidence = Date()
+
+        // The pane id is authoritative for identity. If this row was created
+        // from Zellij data alone it is still keyed by a synthetic id, so adopt
+        // the real Claude session id the moment the agent tells us what it is
+        // — that's what links this row to its transcript.
+        if session.claudeSessionId != payload.sessionId,
+           session.claudeSessionId.hasPrefix("zellij-pane-") {
+            let oldId = session.claudeSessionId
+            sessionsByClaudeId.removeValue(forKey: oldId)
+            session.claudeSessionId = payload.sessionId
+            sessionsByClaudeId[payload.sessionId] = id
+            migratePriorityKey(from: oldId, to: payload.sessionId)
+        }
 
         switch payload.hookEvent {
         case "SessionStart":
@@ -577,9 +825,8 @@ final class ActivityEngine: ObservableObject {
             session.activity = .done
             // Lingers as .done; the .idle decay timer is M5's responsibility.
         case "SessionEnd":
-            sessions.remove(at: index)
-            sessionsByJsonlURL = sessionsByJsonlURL.filter { $0.value != id }
-            sessionsByClaudeId.removeValue(forKey: payload.sessionId)
+            sessions[index] = session
+            removeSession(id: id)
             return
         default:
             break
@@ -587,7 +834,7 @@ final class ActivityEngine: ObservableObject {
 
         session.lastUpdate = Date()
         sessions[index] = session
-        lastHookEvent[payload.sessionId] = Date()
+        lastHookEvent[session.claudeSessionId] = Date()
         if oldActivity != session.activity {
             AgentLog.engine.info("transition hook session=\(session.claudeSessionId, privacy: .public) \(oldActivity.logTag, privacy: .public)→\(session.activity.logTag, privacy: .public) event=\(payload.hookEvent, privacy: .public)")
         }
@@ -627,8 +874,21 @@ final class ActivityEngine: ObservableObject {
         default: return
         }
 
-        // Phase 0.5 — dedupe identical (from, to) within 30s.
         let now = Date()
+
+        // Never toast for something we're learning about after the fact.
+        // `lastUpdate` is when the transition actually happened — a replayed
+        // transcript line carries its own timestamp, and a Zellij `Done`
+        // carries the plugin's elapsed time — so a session first seen at
+        // launch, hours after it finished, stays silent instead of firing
+        // "Finished successfully" for ancient history.
+        let age = now.timeIntervalSince(session.lastUpdate)
+        if age > Self.staleEventCutoff {
+            AgentLog.notify.info("drop session=\(session.claudeSessionId, privacy: .public) reason=stale-event age=\(Int(age))s")
+            return
+        }
+
+        // Phase 0.5 — dedupe identical (from, to) within 30s.
         if let last = lastNotifiedTransition[session.id],
            last.from == oldActivity,
            last.to == session.activity,
@@ -760,6 +1020,22 @@ final class ActivityEngine: ObservableObject {
         )
         let zellijActivity = mapZellijActivity(z)
 
+        // The plugin republishes every pane every 5s whether or not anything
+        // is still running behind it, so only a *change* in what it reports
+        // carries information. Remember when each pane's current claim started
+        // — for panes we can't match to a transcript, that timestamp is the
+        // only thing standing between a month-dead ghost and a permanent
+        // "processing" badge.
+        if zellijActivityFirstSeen[z.paneId]?.activity != zellijActivity {
+            zellijActivityFirstSeen[z.paneId] = (zellijActivity, Date())
+        }
+
+        // Only the leading component of the plugin's composite `run_id` is the
+        // Claude session id — the same string the transcript filename and the
+        // hook payloads use. Everything downstream keys on it.
+        let resolvedClaudeId = z.runId.flatMap(Self.claudeSessionId(fromRunId:))
+        let runStartedAt = z.runId.flatMap(Self.runStart(fromRunId:))
+
         // Phase 0.3 — for finished states, the plugin sends the elapsed
         // time as `5s ago` / `44m ago` / `169h ago` in `detail`. When
         // parsing succeeds we reconstruct `lastUpdate = now - elapsed`.
@@ -781,7 +1057,8 @@ final class ActivityEngine: ObservableObject {
             applyZellijUpdate(at: index, info: info,
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
-                              runId: z.runId,
+                              runStartedAt: runStartedAt,
+                              runId: resolvedClaudeId,
                               cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
             return
@@ -793,21 +1070,22 @@ final class ActivityEngine: ObservableObject {
         // JSONL row (lastUpdate=mtime, often "now-ish") would race the
         // Zellij row (lastUpdate=now-elapsed) and finish state would
         // bucket wrong.
-        if let runId = z.runId,
-           let id = sessionsByClaudeId[runId],
+        if let claudeId = resolvedClaudeId,
+           let id = sessionsByClaudeId[claudeId],
            let index = sessions.firstIndex(where: { $0.id == id }) {
             sessionsByZellijPaneId[z.paneId] = id
             applyZellijUpdate(at: index, info: info,
                               activity: zellijActivity,
                               lastUpdate: zellijLastUpdate,
-                              runId: runId,
+                              runStartedAt: runStartedAt,
+                              runId: claudeId,
                               cwd: z.cwd,
                               fileUpdatedAt: fileUpdatedAt)
             return
         }
 
         // 3) Truly new — create from Zellij data alone.
-        let claudeId = z.runId ?? "zellij-pane-\(z.paneId)"
+        let claudeId = resolvedClaudeId ?? "zellij-pane-\(z.paneId)"
         let projectName = z.tabName.isEmpty ? "Tab \(z.tabNum)" : z.tabName
         var session = Session(
             claudeSessionId: claudeId,
@@ -819,14 +1097,25 @@ final class ActivityEngine: ObservableObject {
         )
         session.terminalKind = .zellij(info)
         session.activity = zellijActivity
+        session.runStartedAt = runStartedAt
         session.priority = storedPriority(for: claudeId)
         // New session has no prior `lastUpdate` to preserve — fall back
         // to `now` when elapsed parsing failed.
         session.lastUpdate = zellijLastUpdate ?? Date()
+
+        // A pane can be a ghost before we've ever seen it: the plugin outlives
+        // the agent, so at launch we routinely meet panes that have been
+        // publishing "Thinking" since their agent died days ago. If the
+        // transcript already proves that, don't let the row flash as busy for
+        // the few seconds until the first sweep — it was never busy.
+        if isUnbackedClaim(zellijActivity, for: session, now: Date()) {
+            session.activity = .idle
+            session.lastUpdate = lastEvidence(for: session, now: Date())
+        }
         sessions.append(session)
         sessionsByZellijPaneId[z.paneId] = session.id
-        if let runId = z.runId {
-            sessionsByClaudeId[runId] = session.id
+        if let resolvedClaudeId {
+            sessionsByClaudeId[resolvedClaudeId] = session.id
         }
         AgentLog.zellij.info("discovered pane=\(z.paneId) tab=\(z.tabNum) name=\(z.tabName, privacy: .public) activity=\(z.activity, privacy: .public) elapsed=\(z.detail ?? "?", privacy: .public) session=\(sessionName, privacy: .public)")
     }
@@ -836,6 +1125,7 @@ final class ActivityEngine: ObservableObject {
         info: ZellijInfo,
         activity: Activity,
         lastUpdate: Date?,
+        runStartedAt: Date?,
         runId: String?,
         cwd: String?,
         fileUpdatedAt: Date
@@ -846,6 +1136,9 @@ final class ActivityEngine: ObservableObject {
         let oldActivity = sessions[index].activity
         sessions[index].terminalKind = .zellij(info)
         sessions[index].isHistorical = false
+        if let runStartedAt {
+            sessions[index].runStartedAt = runStartedAt
+        }
 
         // Learn / refresh the worktree path from the plugin's `cwd`.
         // Only overwrite with a non-empty value so a transient missing
@@ -880,11 +1173,31 @@ final class ActivityEngine: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == targetId }) else { return }
         let claudeId = sessions[index].claudeSessionId
         let hookActive = (lastHookEvent[claudeId].map { Date().timeIntervalSince($0) < 10 } ?? false)
+        let activityChanged = sessions[index].activity != activity
+        // The plugin has no way to know its agent died — it only decays
+        // `Done → Idle`, and only evicts a pane that closes. So a pane whose
+        // agent was killed keeps being published as busy indefinitely. Ignore
+        // the claim outright rather than adopting it and letting the sweep
+        // undo it a moment later.
+        if !hookActive, isUnbackedClaim(activity, for: sessions[index], now: Date()) {
+            AgentLog.zellij.debug("ignoring unbacked \(activity.logTag, privacy: .public) claim for pane=\(info.paneId)")
+            return
+        }
         if !hookActive {
             sessions[index].activity = activity
             // Phase 0.3 — nil means "preserve existing lastUpdate".
             if let lastUpdate {
                 sessions[index].lastUpdate = lastUpdate
+            } else if activityChanged {
+                // The plugin only puts an elapsed time in `detail` for the
+                // finished states; `Waiting` and the active ones carry a tool
+                // name or nothing. But a *change* in what a live status file
+                // reports is itself a real-time event, so now is the correct
+                // anchor. Without this the row would inherit `lastUpdate` from
+                // its previous finish — minutes or hours in the past — and a
+                // genuine "waiting for approval" toast would be dropped as
+                // stale news.
+                sessions[index].lastUpdate = Date()
             }
         }
         if oldActivity != sessions[index].activity {
@@ -923,9 +1236,17 @@ final class ActivityEngine: ObservableObject {
         if sessions[tgtIdx].projectPath.isEmpty {
             sessions[tgtIdx].projectPath = dup.projectPath
         }
+        // The duplicate is the JSONL-fed row, so it holds the transcript-derived
+        // proof of life. Losing it here would leave the surviving row looking
+        // silent and get it swept as stale.
+        if let dupEvidence = dup.lastEvidence {
+            sessions[tgtIdx].lastEvidence = max(sessions[tgtIdx].lastEvidence ?? .distantPast, dupEvidence)
+        }
 
         // Reroute any JSONL urls that pointed at the duplicate so
-        // future lines land on the visible zellij row.
+        // future lines land on the visible zellij row. Note this is a
+        // re-point, not a release: the file is still live and must keep
+        // its watcher.
         for (url, id) in sessionsByJsonlURL where id == dupId {
             sessionsByJsonlURL[url] = targetId
         }
@@ -934,6 +1255,10 @@ final class ActivityEngine: ObservableObject {
         if sessionsByClaudeId[dupClaudeId] == dupId {
             sessionsByClaudeId.removeValue(forKey: dupClaudeId)
         }
+        lastSourceTimestamp.removeValue(forKey: dupId)
+        lastNotifiedTransition.removeValue(forKey: dupId)
+        lastNotifiedAt.removeValue(forKey: dupId)
+        urgentReminders.removeValue(forKey: dupId)
         sessions.remove(at: dupIdx)
 
         AgentLog.engine.info("merged duplicate session into zellij row claudeId=\(dupClaudeId, privacy: .public)")
@@ -1013,20 +1338,15 @@ final class ActivityEngine: ObservableObject {
     }
 
     private func pruneStaleZellijSessions(seenPaneIds: Set<Int>) {
-        let stale: [Int] = sessions.indices.compactMap { idx -> Int? in
-            if case .zellij(let info) = sessions[idx].terminalKind,
+        let stale: [UUID] = sessions.compactMap { session -> UUID? in
+            if case .zellij(let info) = session.terminalKind,
                !seenPaneIds.contains(info.paneId) {
-                return idx
+                return session.id
             }
             return nil
         }
-        for idx in stale.reversed() {
-            let session = sessions[idx]
-            if case .zellij(let info) = session.terminalKind {
-                sessionsByZellijPaneId.removeValue(forKey: info.paneId)
-            }
-            sessionsByClaudeId.removeValue(forKey: session.claudeSessionId)
-            sessions.remove(at: idx)
+        for id in stale {
+            removeSession(id: id)
         }
     }
 }
