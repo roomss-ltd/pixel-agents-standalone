@@ -73,8 +73,9 @@ The install script will:
 The patched Zellij fork lives at `zellij-patched/` and is pinned by this repo as a submodule:
 
 - Source: `git@github.com:roomss-ltd/zellij-patched.git`
-- Patch commit: `296fc3a Preserve tab position on rename`
-- Required behavior: `RenameTab(N)` resolves `N` by one-based visual tab position, which lets `claude-tab-status` rename the correct tab without the old bootstrap probe workaround.
+- Patch commit: `8e24963f Preserve scrollback and user-owned tab names`
+- Tab titles are user-owned: `claude-tab-status` never renames tabs. Agent activity icons remain in the Hammerspoon overlay and status JSON only.
+- Codex runs with `--no-alt-screen` inside Zellij, preserving scrollback; merge `dotfiles/codex/config.toml.snippet` into `~/.codex/config.toml` for the same behavior outside the wrapper.
 
 ### Existing Zellij users
 
@@ -113,7 +114,7 @@ For Opus 4.7 or any other installing agent, use this order exactly:
 6. Run `./dotfiles/install.sh`.
 7. Reload Hammerspoon.
 8. Start a new Zellij session and grant the `claude-tab-status` plugin permissions.
-9. Open Claude Code in a Zellij tab and confirm tab names update and the Hammerspoon widget appears.
+9. Open Claude Code in a Zellij tab and confirm the Hammerspoon widget updates without changing the tab title.
 
 ### Post-install
 
@@ -159,6 +160,7 @@ dotfiles/
   zsh/.zshrc                      # Oh My Zsh + p10k + plugins config (template)
   zsh/.p10k.zsh                   # Powerlevel10k prompt theme (nerdfont-v3 mode)
   ghostty/config                  # Catppuccin Mocha theme, Monaco font, macOS option-as-alt
+  codex/config.toml.snippet       # Zellij-safe Codex scrollback and terminal-title settings
   zellij/config.kdl               # Keybinds, mocha-custom theme, plugin loading
   zellij/layouts/default.kdl      # zjstatus bar with Catppuccin Mocha palette
   claude/settings-hooks.json      # Claude Code hooks template for claude-tab-status

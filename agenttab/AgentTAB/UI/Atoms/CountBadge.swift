@@ -18,8 +18,12 @@ struct CountBadge: View {
         HStack(spacing: 5) {
             leadingGlyph
             Text("\(count)")
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(.system(size: countFontSize, weight: .semibold))
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .allowsTightening(true)
+                .layoutPriority(1)
         }
         .padding(.leading, 6)
         .padding(.trailing, 7)
@@ -33,6 +37,12 @@ struct CountBadge: View {
                 .stroke(edgeColor, lineWidth: 0.5)
         )
         .foregroundStyle(fgColor)
+    }
+
+    private var countFontSize: CGFloat {
+        if count >= 100 { return 9.5 }
+        if count >= 10 { return 10.5 }
+        return 11.5
     }
 
     @ViewBuilder

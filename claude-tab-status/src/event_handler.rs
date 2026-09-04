@@ -34,11 +34,7 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     // Sent by the overlay's long-press handler. Distinct from SessionEnd so
     // legitimate session restarts within the same pane still work.
     if event == "Dismiss" {
-        if let Some(session) = state.sessions.remove(&payload.pane_id) {
-            if let Some(&tab_index) = state.pane_to_tab.get(&session.pane_id) {
-                tab_manager::update_tab_name(state, tab_index);
-            }
-        }
+        state.sessions.remove(&payload.pane_id);
         state.dismissed_until.insert(
             payload.pane_id,
             unix_now() + crate::state::DISMISS_BLOCK_SECS,
@@ -50,7 +46,6 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     if event == "ManualInterrupt" {
         let now = unix_now();
         let payload_run_id = payload.run_id.as_deref().unwrap_or("");
-        let mut tab_to_update = None;
         let mut changed = false;
 
         if let Some(session) = state.sessions.get_mut(&payload.pane_id) {
@@ -60,13 +55,9 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
                     changed = true;
                 }
                 session.last_event_ts = now;
-                tab_to_update = state.pane_to_tab.get(&session.pane_id).copied();
             }
         }
 
-        if let Some(tab_index) = tab_to_update {
-            tab_manager::update_tab_name(state, tab_index);
-        }
         if changed {
             status_writer::write_status_file(state);
         }
@@ -80,13 +71,9 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         }
     }
 
-    // SessionEnd → remove session, restore tab name.
+    // SessionEnd → remove session from the status overlay.
     if event == "SessionEnd" {
-        if let Some(session) = state.sessions.remove(&payload.pane_id) {
-            if let Some(&tab_index) = state.pane_to_tab.get(&session.pane_id) {
-                tab_manager::update_tab_name(state, tab_index);
-            }
-        }
+        state.sessions.remove(&payload.pane_id);
         status_writer::write_status_file(state);
         return;
     }
@@ -160,11 +147,6 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     // sent a hook event before PaneUpdate arrived.
     if !state.pane_to_tab.contains_key(&payload.pane_id) {
         tab_manager::rebuild_pane_map(state);
-    }
-
-    // Update only the affected tab — not all tabs.
-    if let Some(&tab_index) = state.pane_to_tab.get(&payload.pane_id) {
-        tab_manager::update_tab_name(state, tab_index);
     }
 
     // Write status file on activity transitions (real-time updates).

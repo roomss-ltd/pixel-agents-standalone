@@ -24,4 +24,4 @@ PAYLOAD=$(echo "$INPUT" | jq -c --arg pid "$ZELLIJ_PANE_ID" '
 [ -z "$PAYLOAD" ] && exit 0
 
 # Send to plugin via zellij pipe, suppress all output and errors
-zellij pipe --name "claude-tab-status" -- "$PAYLOAD" 2>/dev/null >/dev/null || exit 0
+zellij pipe --name "agent-tab-status-v2" -- "$PAYLOAD" 2>/dev/null >/dev/null || exit 0

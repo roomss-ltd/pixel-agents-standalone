@@ -6,7 +6,16 @@
 #
 # Usage: alias codex='~/.config/zellij/plugins/codex-wrapper.sh'
 
-[ -z "$ZELLIJ_SESSION_NAME" ] || [ -z "$ZELLIJ_PANE_ID" ] && exec codex "$@"
+CODEX_BIN=$(type -P codex) || {
+  echo "codex-wrapper: codex executable not found" >&2
+  exit 127
+}
+
+[ -z "$ZELLIJ_SESSION_NAME" ] || [ -z "$ZELLIJ_PANE_ID" ] && exec "$CODEX_BIN" "$@"
+
+# Keep Codex in Zellij's primary screen buffer and stop it from competing with
+# the status plugin for terminal/tab titles.
+CODEX_ZELLIJ_ARGS=(--no-alt-screen -c 'tui.terminal_title=[]')
 
 HOOK="$HOME/.config/zellij/plugins/codex-zj-hook.sh"
 
@@ -18,25 +27,28 @@ emit_session_end() {
   }' | "$HOOK" 2>/dev/null || true
 }
 
-# Best-effort session id capture: Codex writes rollouts to ~/.codex/sessions/.
-# We snapshot the newest session file *after* codex starts, then replay its id
-# into the synthetic SessionEnd event.
-trap emit_session_end EXIT INT TERM
+# Best-effort session id capture: only consider rollout files created or touched
+# after this wrapper starts. The old glob did not descend through Codex's
+# year/month/day hierarchy and could clean up a different live session.
+SESSION_MARKER=$(mktemp "${TMPDIR:-/tmp}/codex-zellij-session.XXXXXX")
+cleanup() {
+  emit_session_end
+  rm -f "$SESSION_MARKER"
+}
+trap cleanup EXIT
 
-# Run codex in foreground; capture session id from the most recently created
-# rollout file once it appears.
-codex "$@" &
-CODEX_PID=$!
+# Codex must remain the foreground process so it retains the pane's TTY.
+"$CODEX_BIN" "${CODEX_ZELLIJ_ARGS[@]}" "$@"
+CODEX_EXIT=$?
 
-# Poll briefly for the new session file (Codex creates it on first turn).
-for _ in $(seq 1 30); do
-  sleep 0.5
-  NEWEST=$(ls -t "$HOME/.codex/sessions"/**/rollout-*.jsonl 2>/dev/null | head -1)
-  if [ -n "$NEWEST" ]; then
-    CODEX_SESSION_ID=$(jq -r 'select(.session_id) | .session_id' "$NEWEST" 2>/dev/null | head -1)
-    [ -n "$CODEX_SESSION_ID" ] && break
-  fi
-  kill -0 "$CODEX_PID" 2>/dev/null || break
-done
+# Resolve the session only after Codex exits. Running it in the background to
+# poll here detaches stdin and makes the TUI fail with "stdin is not a terminal".
+NEWEST=$(find "$HOME/.codex/sessions" -type f -name 'rollout-*.jsonl' -newer "$SESSION_MARKER" -print 2>/dev/null \
+  | while IFS= read -r file; do stat -f '%m %N' "$file"; done \
+  | sort -rn \
+  | sed -n '1s/^[0-9][0-9]* //p')
+if [ -n "$NEWEST" ]; then
+  CODEX_SESSION_ID=$(jq -r 'select(.session_id) | .session_id' "$NEWEST" 2>/dev/null | head -1)
+fi
 
-wait "$CODEX_PID"
+exit "$CODEX_EXIT"

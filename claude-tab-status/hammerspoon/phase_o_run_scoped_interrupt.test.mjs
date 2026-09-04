@@ -40,6 +40,6 @@ test("interrupt blocks only the current run_id and leaves new pane runs visible"
 
 test("run-scoped interrupt asks the live Zellij plugin to clear the tab working state", () => {
   assert.match(interruptBody, /local payload = hs\.json\.encode\(\{ hook_event = "ManualInterrupt", pane_id = pane_id, run_id = run_id \}\)/);
-  assert.match(interruptBody, /zellij -s %q pipe --name "claude-tab-status" -- %q/);
+  assert.match(interruptBody, /zellij -s %q pipe --name "agent-tab-status-v2" -- %q/);
   assert.match(interruptBody, /hs\.execute\(cmd, true\)/);
 });

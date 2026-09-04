@@ -240,7 +240,7 @@ test("Lua dismiss action mirrors canvas denylist zellij pipe and local JSON clea
   assert.match(source, /if run_id and run_id ~= "" then\s+addHiddenRun\(run_id\)/);
   assert.match(source, /else\s+addToDenylist\(zj_session, pane_id\)/);
   assert.match(source, /hook_event":"Dismiss"/);
-  assert.match(source, /zellij -s %q pipe --name "claude-tab-status"/);
+  assert.match(source, /zellij -s %q pipe --name "agent-tab-status-v2"/);
   assert.match(source, /hs\.execute\(cmd, true\)/);
   assert.match(source, /data\.sessions = kept/);
   assert.match(source, /data\.counts = recountSessions\(kept\)/);

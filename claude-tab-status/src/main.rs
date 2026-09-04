@@ -6,7 +6,7 @@ mod state;
 mod status_writer;
 mod tab_manager;
 
-use state::{BootstrapPhase, HookPayload, PluginState, TIMER_INTERVAL};
+use state::{HookPayload, PluginState, TIMER_INTERVAL};
 
 register_plugin!(PluginState);
 
@@ -37,33 +37,18 @@ impl ZellijPlugin for PluginState {
                 self.active_tab_index = new_active;
                 self.tabs = tabs;
 
-                // Bootstrap state machine. With patched Zellij, this only
-                // gates rename activity until initial tab state exists.
-                match &self.bootstrap {
-                    BootstrapPhase::NotStarted => {
-                        tab_manager::start_bootstrap(self);
-                    }
-                    BootstrapPhase::Complete => {}
-                }
-
-                // Always refresh base names — cheap O(tabs) comparison catches
-                // user-initiated tab renames.
-                tab_manager::refresh_base_names(self);
-
                 if structure_changed {
                     // Tabs added/removed: pane mapping is stale.
                     self.known_tab_count = self.tabs.len();
                     tab_manager::rebuild_pane_map(self);
-                    tab_manager::update_all_tab_names(self);
                 } else if tab_switched {
                     // User switched tabs — clear Done (✓) on the focused tab.
                     if let Some(idx) = new_active {
                         if event_handler::clear_done_on_tab(self, idx) {
-                            tab_manager::update_tab_name(self, idx);
+                            status_writer::write_status_file(self);
                         }
                     }
                 }
-                // Name-only TabUpdate (from our own rename_tab): do nothing.
 
                 false
             }
@@ -77,42 +62,19 @@ impl ZellijPlugin for PluginState {
                     // Panes added/removed: rebuild mapping.
                     self.known_pane_count = new_count;
                     tab_manager::rebuild_pane_map(self);
-                    tab_manager::update_all_tab_names(self);
                 }
                 // Pane focus changes, etc.: no work needed.
 
                 false
             }
             Event::ModeUpdate(mode_info) => {
-                let was_renaming = matches!(
-                    self.input_mode,
-                    InputMode::RenameTab | InputMode::RenamePane
-                );
-                self.input_mode = mode_info.mode;
                 if let Some(name) = mode_info.session_name {
                     self.zellij_session_name = name;
-                }
-
-                let now_renaming = matches!(
-                    self.input_mode,
-                    InputMode::RenameTab | InputMode::RenamePane
-                );
-
-                // If we deferred bootstrap because user was mid-rename, retry now.
-                if matches!(self.bootstrap, BootstrapPhase::NotStarted) && !now_renaming {
-                    tab_manager::start_bootstrap(self);
-                }
-
-                // Re-apply icons after user finishes renaming.
-                if was_renaming && !now_renaming {
-                    tab_manager::update_all_tab_names(self);
                 }
                 false
             }
             Event::Timer(_) => {
-                if event_handler::cleanup_stale_sessions(self) {
-                    tab_manager::update_all_tab_names(self);
-                }
+                event_handler::cleanup_stale_sessions(self);
                 // Always write status file on timer — keeps relative times fresh.
                 status_writer::write_status_file(self);
                 set_timeout(TIMER_INTERVAL);
@@ -124,7 +86,7 @@ impl ZellijPlugin for PluginState {
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
-        if pipe_message.name.as_str() != "claude-tab-status" {
+        if pipe_message.name.as_str() != "agent-tab-status-v2" {
             return false;
         }
 

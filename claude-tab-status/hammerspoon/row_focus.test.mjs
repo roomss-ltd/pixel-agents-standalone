@@ -23,6 +23,6 @@ test("Lua bridge accepts row.focus and pipes Focus hook event to the target Zell
   assert.match(webview, /hs\.application\.launchOrFocus\(TERMINAL_APP\)/);
   assert.match(webview, /local tabCmd = string\.format\('zellij -s %q action go-to-tab %d', zj_session, tab_num\)/);
   assert.match(webview, /local payload = string\.format\('\{"hook_event":"Focus","pane_id":%d\}', pane_id\)/);
-  assert.match(webview, /zellij -s %q pipe --name "claude-tab-status" -- %q/);
+  assert.match(webview, /zellij -s %q pipe --name "agent-tab-status-v2" -- %q/);
   assert.match(webview, /elseif body\.type == "row\.focus" then\s*focusSession\(body\._zj_session, body\.pane_id, body\.tab_num\)/);
 });

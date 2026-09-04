@@ -41,6 +41,44 @@ final class JSONLPipelineIntegrationTests: XCTestCase {
         try? FileManager.default.removeItem(at: statusDir)
     }
 
+    func testEmptyZellijSnapshotDoesNotExposeUnmatchedTranscriptHistory() async throws {
+        let projectsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agenttab-empty-zellij-\(UUID().uuidString)")
+        let projectDir = projectsDir.appendingPathComponent("-Users-test-Desktop-old-project")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let statusDir = try makeIsolatedStatusDir()
+        defer {
+            try? FileManager.default.removeItem(at: projectsDir)
+            try? FileManager.default.removeItem(at: statusDir)
+        }
+
+        try "{}\n".write(
+            to: projectDir.appendingPathComponent("historical-session.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let now = Int(Date().timeIntervalSince1970)
+        try "{\"sessions\":[],\"counts\":{\"active\":0,\"waiting\":0,\"done\":0},\"updated_at\":\(now)}"
+            .write(
+                to: statusDir.appendingPathComponent("empty-session.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let engine = await ActivityEngine(projectsDir: projectsDir, zellijStatusDir: statusDir)
+        await engine.start()
+        try await Task.sleep(for: .seconds(2))
+
+        await MainActor.run {
+            XCTAssertTrue(engine.zellijDetected)
+            XCTAssertEqual(engine.sessions.count, 1, "the transcript remains available internally")
+            XCTAssertTrue(
+                engine.displaySessions.isEmpty,
+                "an empty live Zellij snapshot must render an empty agent list"
+            )
+        }
+    }
+
     // MARK: - Zellij ghost panes
 
     /// The bug as it appears in the wild: a Zellij pane whose agent died weeks

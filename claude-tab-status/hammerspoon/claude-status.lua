@@ -947,7 +947,7 @@ local function dismissSessionAtY(mouseY)
     -- from re-creation for 30 min — surviving stuck-Init hook loops.
     if s.pane_id then
         local payload = string.format('{"hook_event":"Dismiss","pane_id":%d}', s.pane_id)
-        local cmd = string.format('zellij -s %q pipe --name "claude-tab-status" -- %q',
+        local cmd = string.format('zellij -s %q pipe --name "agent-tab-status-v2" -- %q',
             s._zj_session, payload)
         hs.execute(cmd, true)
     end

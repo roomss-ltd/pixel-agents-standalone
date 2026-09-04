@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
-use zellij_tile::prelude::InputMode;
 
 pub fn unix_now() -> u64 {
     SystemTime::now()
@@ -26,20 +25,6 @@ pub const DISMISS_BLOCK_SECS: u64 = 30 * 60;
 /// Timer tick interval (seconds).
 pub const TIMER_INTERVAL: f64 = 5.0;
 
-/// Known status icons — used to strip our own suffixes when detecting base names.
-pub const STATUS_ICONS: &[&str] = &["\u{25CF}", "\u{26A1}", "\u{23F8}", "\u{2713}"];
-// ●, ⚡, ⏸, ✓
-
-/// Bootstrap state machine — gates automatic renames until the first TabUpdate.
-/// With patched Zellij, `rename_tab(N)` resolves N by visual position, so no
-/// internal-key probing is needed.
-#[derive(Debug, Default)]
-pub enum BootstrapPhase {
-    #[default]
-    NotStarted,
-    Complete,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Activity {
     Init,
@@ -48,30 +33,6 @@ pub enum Activity {
     Waiting,
     Done,
     Idle,
-}
-
-impl Activity {
-    /// Priority for display (higher = takes precedence).
-    pub fn priority(&self) -> u8 {
-        match self {
-            Activity::Idle => 0,
-            Activity::Init => 1,
-            Activity::Done => 2,
-            Activity::Thinking => 3,
-            Activity::Tool(_) => 4,
-            Activity::Waiting => 5,
-        }
-    }
-
-    pub fn icon(&self) -> Option<&'static str> {
-        match self {
-            Activity::Thinking => Some("\u{25CF}"), // ●
-            Activity::Tool(_) => Some("\u{26A1}"),  // ⚡
-            Activity::Waiting => Some("\u{23F8}"),  // ⏸
-            Activity::Done => Some("\u{2713}"),     // ✓
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +68,6 @@ pub struct PluginState {
     pub sessions: BTreeMap<u32, SessionInfo>,
     /// pane_id → tab_index (lightweight — no tab name cloning)
     pub pane_to_tab: HashMap<u32, usize>,
-    /// tab_index → original name without status icons
-    pub tab_base_names: HashMap<usize, String>,
     /// Cached tab list from Zellij
     pub tabs: Vec<zellij_tile::prelude::TabInfo>,
     /// Cached pane manifest
@@ -119,8 +78,6 @@ pub struct PluginState {
     pub known_tab_count: usize,
     /// Tracked pane count for structural change detection
     pub known_pane_count: usize,
-    /// Current input mode — suppress renames during RenameTab/RenamePane
-    pub input_mode: InputMode,
     /// Zellij session name — used for status file naming
     pub zellij_session_name: String,
     /// Monotonic in-memory counter used to disambiguate agent runs that start
@@ -129,6 +86,4 @@ pub struct PluginState {
     /// pane_id → unix timestamp when block expires. Set by the "Dismiss" pipe
     /// event from the overlay; entries are cleaned in cleanup_stale_sessions.
     pub dismissed_until: HashMap<u32, u64>,
-    /// Bootstrap phase — gates rename activity until initial tab state exists.
-    pub bootstrap: BootstrapPhase,
 }

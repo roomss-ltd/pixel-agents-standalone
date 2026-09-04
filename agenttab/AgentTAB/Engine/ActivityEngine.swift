@@ -25,11 +25,10 @@ final class ActivityEngine: ObservableObject {
         }
     }
 
-    /// View-facing session list. When the Zellij plugin is active AND has
-    /// successfully matched at least one session, we trust its view of the
-    /// world and only surface Zellij-tagged sessions. Until the first match
-    /// lands (or if Zellij isn't running) we show everything the JSONL
-    /// watcher has discovered — the watcher already caps historical files.
+    /// View-facing session list. When the Zellij plugin is active, trust its
+    /// view of the world and only surface Zellij-tagged sessions. A valid empty
+    /// snapshot means there are no live agents; falling back to JSONL history
+    /// here floods a freshly restarted session with unrelated old agents.
     var displaySessions: [Session] {
         let denied = deniedPaneIds
         let withoutDenied = sessions.filter { s -> Bool in
@@ -42,7 +41,7 @@ final class ActivityEngine: ObservableObject {
         let zellijOnly = withoutDenied.filter {
             if case .zellij = $0.terminalKind { return true } else { return false }
         }
-        return zellijOnly.isEmpty ? withoutDenied : zellijOnly
+        return zellijOnly
     }
 
     /// Chip label for a session — mirrors the Hammerspoon webview's

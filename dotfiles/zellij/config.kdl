@@ -288,7 +288,7 @@ plugins {
 // eg. "file:/path/to/my-plugin.wasm"
 // eg. "https://example.com/my-plugin.wasm"
 load_plugins {
-    "file:__HOME__/.config/zellij/plugins/claude-tab-status.wasm"
+    "file:__HOME__/.config/zellij/plugins/claude-tab-status-v2.wasm"
 }
 web_client {
     font "monospace"

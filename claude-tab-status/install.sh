@@ -24,7 +24,7 @@ fi
 # 2. Copy artifacts
 echo "[2/6] Installing to $PLUGIN_DIR..."
 mkdir -p "$PLUGIN_DIR"
-cp "$WASM_FILE" "$PLUGIN_DIR/claude-tab-status.wasm"
+cp "$WASM_FILE" "$PLUGIN_DIR/claude-tab-status-v2.wasm"
 cp "$SCRIPT_DIR/scripts/claude-zj-hook.sh" "$HOOK_SCRIPT"
 cp "$SCRIPT_DIR/scripts/codex-zj-hook.sh" "$CODEX_HOOK_SCRIPT"
 cp "$SCRIPT_DIR/scripts/codex-wrapper.sh" "$CODEX_WRAPPER"
@@ -99,7 +99,7 @@ echo ""
 echo "Add this to your Zellij config (~/.config/zellij/config.kdl):"
 echo ""
 echo '  load_plugins {'
-echo "      \"file:$PLUGIN_DIR/claude-tab-status.wasm\""
+echo "      \"file:$PLUGIN_DIR/claude-tab-status-v2.wasm\""
 echo '  }'
 echo ""
 echo "Then restart Zellij. The plugin will ask for permissions on first load — press 'y' to grant."

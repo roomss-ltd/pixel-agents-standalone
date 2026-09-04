@@ -1,0 +1,11 @@
+# Merge this into ~/.codex/config.toml. It mirrors the useful live fields from
+# ~/.claude/statusline.sh using Codex's supported native status-line items.
+[tui]
+alternate_screen = "never"
+terminal_title = []
+status_line = ["model-with-reasoning", "project-name", "git-branch", "context-used", "context-window-size", "used-tokens"]
+status_line_use_colors = true
+
+[tui.keymap.global]
+# Zellij owns Ctrl+T in this setup.
+open_transcript = "alt-t"
