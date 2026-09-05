@@ -27,7 +27,7 @@ struct DotSpinnerLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.0   // total cycle (loaders.jsx:14, speed * 1.111)
 
@@ -56,7 +56,7 @@ struct QuantumLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let outerAngle = (t * 360 / 1.75).truncatingRemainder(dividingBy: 360)
             let innerAngle = -(t * 360 / 1.75).truncatingRemainder(dividingBy: 360)
@@ -88,7 +88,7 @@ struct TrioLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.3
 
@@ -118,7 +118,7 @@ struct ChaoticOrbitLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.5
             let p = (t / period).truncatingRemainder(dividingBy: 1)
@@ -156,7 +156,7 @@ struct GridLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let period: Double = 1.2
             let dot = size * 0.22
@@ -192,7 +192,7 @@ struct ReuleauxLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let rotation = (t * 360 / 1.5).truncatingRemainder(dividingBy: 360)
             ReuleauxShape()
@@ -246,7 +246,7 @@ struct ChangeLoader: View {
     var color: Color = Theme.Neon.blue
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let rotation = (t * 360 / 2.0).truncatingRemainder(dividingBy: 360)
             ZStack {
@@ -282,6 +282,7 @@ struct RotatingLoader: View {
     /// Loops drive their own monotone palettes, so this is ignored.
     var color: Color = Theme.Neon.blue
     var intervalSeconds: Double = Theme.Animations.loaderRotationSeconds
+    var running: Bool = true
 
     @State private var paletteIndex: Int = 0
 
@@ -300,16 +301,19 @@ struct RotatingLoader: View {
                       palette: palette,
                       coreOverride: palette.core,
                       glowOverride: palette.glow,
-                      size: size)
+                      size: size,
+                      running: running)
             .frame(width: size, height: size)
             .onAppear {
                 // Stagger so multiple RotatingLoaders mounted simultaneously
                 // don't pick the same starting palette.
                 paletteIndex = Int.random(in: 0..<PixelLoopPalette.allCases.count)
             }
-            .task {
+            .task(id: running) {
+                guard running else { return }
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
                     // Wrap in `withAnimation` so SwiftUI interpolates the
                     // `coreOverride` and `glowOverride` Color params on
                     // PixelLoopView between the old and new palette —

@@ -83,27 +83,38 @@ extension IdleSprite {
 struct IdleSpriteView: View {
     let sprite: IdleSprite
     var size: CGFloat
+    var running: Bool = true
 
     private let images: [CGImage]
 
-    init(sprite: IdleSprite, size: CGFloat) {
+    init(sprite: IdleSprite, size: CGFloat, running: Bool = true) {
         self.sprite = sprite
         self.size = size
+        self.running = running
         self.images = sprite.frameImages()
     }
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            if images.isEmpty {
-                Color.clear.frame(width: size, height: size)
-            } else {
-                let i = Int(t * sprite.fps) % images.count
-                Image(decorative: images[i], scale: 1.0)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: size, height: size)
+        if running {
+            TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
+                frame(at: context.date.timeIntervalSinceReferenceDate)
             }
+        } else {
+            frame(at: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func frame(at time: Double) -> some View {
+        if images.isEmpty {
+            Color.clear.frame(width: size, height: size)
+        } else {
+            let i = Int(time * sprite.fps) % images.count
+            Image(decorative: images[i], scale: 1.0)
+                .interpolation(.none)
+                .resizable()
+                .frame(width: size, height: size)
         }
     }
 }
@@ -114,6 +125,7 @@ struct IdleSpriteView: View {
 /// random one every `swapInterval` seconds. Replaces `CoffeeIdle`.
 struct IdleCreature: View {
     var size: CGFloat = 18
+    var running: Bool = true
 
     /// Notch swap cadence from the design handoff.
     private static let swapInterval: TimeInterval = 8
@@ -124,8 +136,9 @@ struct IdleCreature: View {
     var body: some View {
         // Render larger than the requested slot size for legibility —
         // the characters read more clearly at notch scale (10% + 20%).
-        IdleSpriteView(sprite: IdleSprite.cast[index], size: size * 1.32)
+        IdleSpriteView(sprite: IdleSprite.cast[index], size: size * 1.32, running: running)
             .onReceive(swapTimer) { _ in
+                guard running else { return }
                 index = IdleSprite.randomIndex(excluding: index)
             }
             // New character → fresh frame timeline, so each one starts

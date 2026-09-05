@@ -144,6 +144,9 @@ enum Theme {
     // ── Animations ───────────────────────────────────────────────
     enum Animations {
         static let notch = SwiftUI.Animation.spring(response: 0.42, dampingFraction: 0.78)
+        /// Pixel-art status animations stay legible at 8 FPS while avoiding
+        /// display-rate SwiftUI redraws for every visible agent card.
+        static let timelineMinimumInterval: Double = 1.0 / 8.0
         static let coffeeSteamPeriod: Double = 4.8
         static let cardioPeriod: Double = 1.5
         static let waitingPulsePeriod: Double = 1.6

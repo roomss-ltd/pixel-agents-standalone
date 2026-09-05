@@ -41,7 +41,8 @@ fi
 "$STAGED_BINARY" --config "$SOURCE_CONFIG" setup --check >/dev/null
 
 # Never replace the client while a server is alive: mixed client/server
-# versions can make an existing session inaccessible.
+# versions can make an existing session inaccessible. A same-version hotfix
+# may be installed manually after verifying that it changes no wire protocol.
 ACTIVE_SERVERS=$(ps -axo pid=,command= | awk '/[z]ellij --server / { print }')
 if [ -n "$ACTIVE_SERVERS" ]; then
   echo "REFUSING TO ACTIVATE: a Zellij server is still running:" >&2

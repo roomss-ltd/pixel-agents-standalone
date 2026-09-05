@@ -419,29 +419,59 @@ struct PixelLoopView: View {
         let active = PixelMath.activeCells(motion)
         let period = variant.period
 
-        TimelineView(.animation(paused: !running)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate * speed
-            // `((t/period) % 1 + 1) % 1` → wrap-positive [0,1).
-            let raw = t / period
-            let t01 = raw - floor(raw)
+        Group {
+            if running {
+                TimelineView(.animation(
+                    minimumInterval: Theme.Animations.timelineMinimumInterval
+                )) { context in
+                    grid(
+                        at: context.date.timeIntervalSinceReferenceDate * speed,
+                        period: period,
+                        motion: motion,
+                        active: active,
+                        gap: gap,
+                        cellSize: cellSize
+                    )
+                }
+            } else {
+                grid(
+                    at: Date().timeIntervalSinceReferenceDate * speed,
+                    period: period,
+                    motion: motion,
+                    active: active,
+                    gap: gap,
+                    cellSize: cellSize
+                )
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: running) { await runSnakes() }
+    }
 
-            VStack(spacing: gap) {
-                ForEach(0..<3, id: \.self) { y in
-                    HStack(spacing: gap) {
-                        ForEach(0..<3, id: \.self) { x in
-                            cell(x: x, y: y,
-                                 isActive: active.contains(Cell(x, y)),
-                                 t01: t01, tNow: t, motion: motion,
-                                 cellSize: cellSize)
-                        }
+    private func grid(
+        at time: Double,
+        period: Double,
+        motion: PixelLoopMotion,
+        active: Set<Cell>,
+        gap: CGFloat,
+        cellSize: CGFloat
+    ) -> some View {
+        let raw = time / period
+        let t01 = raw - floor(raw)
+        return VStack(spacing: gap) {
+            ForEach(0..<3, id: \.self) { y in
+                HStack(spacing: gap) {
+                    ForEach(0..<3, id: \.self) { x in
+                        cell(x: x, y: y,
+                             isActive: active.contains(Cell(x, y)),
+                             t01: t01, tNow: time, motion: motion,
+                             cellSize: cellSize)
                     }
                 }
             }
-            .frame(width: cellSize * 3 + gap * 2,
-                   height: cellSize * 3 + gap * 2)
         }
-        .frame(width: size, height: size)
-        .task(id: variant) { await runSnakes() }
+        .frame(width: cellSize * 3 + gap * 2,
+               height: cellSize * 3 + gap * 2)
     }
 
     /// Drive every snake from one loop.
@@ -449,13 +479,18 @@ struct PixelLoopView: View {
     /// Originally each snake had its own `.task(id:)` modifier, but
     /// stacking N identical-id task modifiers turned out to be unreliable
     /// for N ≥ 3 (visually only the first two would advance). This
-    /// version polls on a fast base tick (25 Hz) and advances each snake
-    /// independently when its own per-snake interval has elapsed, so
-    /// every snake is guaranteed to step regardless of how many there
-    /// are.
+    /// version polls once per rendered frame and advances each snake
+    /// independently when its own per-snake interval has elapsed. Polling
+    /// faster than the UI can render only wakes the CPU without producing
+    /// a visible frame.
     private func runSnakes() async {
         let n = Self.snakeStepIntervals.count
 
+        guard running else {
+            let now = Date().timeIntervalSinceReferenceDate * speed
+            snakes = Self.snakeStartCells.map { [SnakeStep(cell: $0, arrivedAt: now)] }
+            return
+        }
         guard variant == .chaosRotate else {
             snakes = Array(repeating: [], count: n)
             return
@@ -476,7 +511,7 @@ struct PixelLoopView: View {
             seed + Self.snakeStepIntervals[i] / max(speed, 0.01)
         }
 
-        let baseTick: Double = 0.04   // 25 Hz polling
+        let baseTick = Theme.Animations.timelineMinimumInterval
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: UInt64(baseTick * 1_000_000_000))
             let now = Date().timeIntervalSinceReferenceDate * speed

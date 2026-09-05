@@ -52,6 +52,17 @@ struct ProjectGroup: Identifiable, Equatable {
 
 @MainActor
 final class TokenTracker: ObservableObject {
+    private struct TodayCache: Codable {
+        let day: Date
+        let tokens: Int
+        let cursors: [String: UInt64]
+    }
+
+    private static let defaultProjectsDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude/projects")
+    private static let defaultCacheURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/AgentTAB/token-tracker-today.json")
+
     /// Total tokens spent across all agents on the local machine today.
     @Published private(set) var todayTokens: Int = 0
 
@@ -106,6 +117,7 @@ final class TokenTracker: ObservableObject {
     }
 
     private let projectsDir: URL
+    private let cacheURL: URL?
     private var timer: AnyCancellable?
 
     /// Compact human formatting: 1_234 → "1.2K", 5_000_000 → "5.0M",
@@ -149,9 +161,14 @@ final class TokenTracker: ObservableObject {
     }()
     private let isoFormatterNoFraction = ISO8601DateFormatter()
 
-    init(projectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects")) {
+    init(projectsDir: URL = TokenTracker.defaultProjectsDir, cacheURL: URL? = nil) {
         self.projectsDir = projectsDir
+        self.cacheURL = cacheURL ?? (
+            projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
+                ? Self.defaultCacheURL
+                : nil
+        )
+        restoreCache()
     }
 
     func start() {
@@ -199,6 +216,36 @@ final class TokenTracker: ObservableObject {
             todayTokens += added
             AgentLog.engine.info("token tracker +\(added) → \(self.todayTokens)")
         }
+        persistCache()
+    }
+
+    /// Persist the daily total and per-file byte cursors so relaunching the
+    /// menu-bar app does not reparse hundreds of megabytes of today's logs.
+    private func persistCache() {
+        guard let cacheURL else { return }
+        let cache = TodayCache(
+            day: currentDay,
+            tokens: todayTokens,
+            cursors: Dictionary(uniqueKeysWithValues: fileCursors.map { ($0.key.path, $0.value) })
+        )
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        try? FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: cacheURL, options: .atomic)
+    }
+
+    private func restoreCache() {
+        guard let cacheURL,
+              let data = try? Data(contentsOf: cacheURL),
+              let cache = try? JSONDecoder().decode(TodayCache.self, from: data),
+              Calendar.current.isDate(cache.day, inSameDayAs: currentDay)
+        else { return }
+        todayTokens = cache.tokens
+        fileCursors = Dictionary(uniqueKeysWithValues: cache.cursors.map {
+            (URL(fileURLWithPath: $0.key), $0.value)
+        })
     }
 
     /// Returns the tokens found in the bytes appended to `url` since the

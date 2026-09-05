@@ -152,52 +152,119 @@ final class ActivityEngine: ObservableObject {
     func focus(_ session: Session) {
         switch session.terminalKind {
         case .zellij(let info):
-            // 1. Bring the terminal app forward FIRST so the user sees
-            //    the tab swap happen, not just a flash later. Activating
-            //    after firing the zellij command races with zellij's
-            //    own redraw and is the most common reason the toast
-            //    redirect "sometimes" doesn't seem to do anything.
-            let knownTerminals: Set<String> = [
-                "com.apple.Terminal",
-                "com.googlecode.iterm2",
-                "io.alacritty",
-                "net.kovidgoyal.kitty",
-                "com.mitchellh.ghostty",
-                "dev.warp.Warp-Stable",
-                "com.zeit.hyper",
-                "co.zeit.hyper",
-                "dev.zed.Zed",
-            ]
-            for app in NSWorkspace.shared.runningApplications {
-                if let bundleId = app.bundleIdentifier,
-                   knownTerminals.contains(bundleId) {
-                    app.activate(options: [.activateIgnoringOtherApps])
-                    break
+            let zellijPath = Self.zellijExecutablePath
+            Task { [weak self] in
+                let clientCount = await Task.detached {
+                    Self.connectedClientCount(
+                        session: info.zellijSession,
+                        zellijPath: zellijPath
+                    )
+                }.value
+                guard let self else { return }
+                if clientCount == 0 {
+                    self.reattachInGhostty(info, zellijPath: zellijPath)
+                } else {
+                    self.focusAttachedZellij(info, zellijPath: zellijPath)
                 }
-            }
-
-            // 2. Run the zellij focus command through a login shell so
-            //    PATH (cargo / brew / etc.) is loaded.
-            let escapedSession = info.zellijSession
-                .replacingOccurrences(of: "'", with: "'\\''")
-            var cmd = "zellij"
-            if !info.zellijSession.isEmpty {
-                cmd += " -s '\(escapedSession)'"
-            }
-            cmd += " action go-to-tab \(info.tabIndex)"
-
-            let task = Process()
-            task.launchPath = "/bin/zsh"
-            task.arguments = ["-l", "-c", cmd]
-            do {
-                try task.run()
-            } catch {
-                print("[Engine] zellij focus failed: \(error)")
             }
         case .generic:
             NSWorkspace.shared.activateFileViewerSelecting(
                 [URL(fileURLWithPath: session.projectPath)]
             )
+        }
+    }
+
+    private func focusAttachedZellij(_ info: ZellijInfo, zellijPath: String) {
+        // 1. Bring the terminal app forward FIRST so the user sees
+        //    the tab swap happen, not just a flash later. Activating
+        //    after firing the zellij command races with zellij's
+        //    own redraw and is the most common reason the toast
+        //    redirect "sometimes" doesn't seem to do anything.
+        let knownTerminals: Set<String> = [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "io.alacritty",
+            "net.kovidgoyal.kitty",
+            "com.mitchellh.ghostty",
+            "dev.warp.Warp-Stable",
+            "com.zeit.hyper",
+            "co.zeit.hyper",
+            "dev.zed.Zed",
+        ]
+        for app in NSWorkspace.shared.runningApplications {
+            if let bundleId = app.bundleIdentifier,
+               knownTerminals.contains(bundleId) {
+                app.activate(options: [.activateIgnoringOtherApps])
+                break
+            }
+        }
+
+        // 2. Use the same patched binary that owns the live session.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: zellijPath)
+        task.arguments = ["-s", info.zellijSession, "action", "go-to-tab", "\(info.tabIndex)"]
+        do {
+            try task.run()
+        } catch {
+            print("[Engine] zellij focus failed: \(error)")
+        }
+    }
+
+    nonisolated static func connectedClientCount(from output: String) -> Int? {
+        let lines = output.split(whereSeparator: \Character.isNewline)
+        guard lines.first?.contains("CLIENT_ID") == true else { return nil }
+        return max(0, lines.count - 1)
+    }
+
+    private static var zellijExecutablePath: String {
+        let localPath = NSHomeDirectory() + "/.local/bin/zellij"
+        if FileManager.default.isExecutableFile(atPath: localPath) {
+            return localPath
+        }
+        return "/opt/homebrew/bin/zellij"
+    }
+
+    private nonisolated static func connectedClientCount(
+        session: String,
+        zellijPath: String
+    ) -> Int? {
+        guard !session.isEmpty else { return nil }
+
+        let output = Pipe()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: zellijPath)
+        task.arguments = ["-s", session, "action", "list-clients"]
+        task.standardOutput = output
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            AgentLog.engine.error("zellij client check failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard task.terminationStatus == 0,
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return connectedClientCount(from: text)
+    }
+
+    private func reattachInGhostty(_ info: ZellijInfo, zellijPath: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = [
+            "-na", "Ghostty.app", "--args", "-e",
+            zellijPath, "attach", info.zellijSession,
+        ]
+        do {
+            try task.run()
+            AgentLog.engine.info("reattaching detached zellij session=\(info.zellijSession, privacy: .public)")
+        } catch {
+            AgentLog.engine.error("zellij reattach failed: \(String(describing: error), privacy: .public)")
         }
     }
 

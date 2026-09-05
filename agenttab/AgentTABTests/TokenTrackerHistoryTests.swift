@@ -157,4 +157,23 @@ final class TokenTrackerHistoryTests: XCTestCase {
         XCTAssertEqual(weekProjects.map(\.name), ["repoA"])
         XCTAssertEqual(Set(windowProjects.map(\.name)), ["repoA", "repoB"])
     }
+
+    func testTodayCacheRestoresTotalAndOnlyScansAppendedBytes() throws {
+        let cacheURL = tempRoot.appendingPathComponent("token-cache.json")
+        try writeAssistantLine(project: "-Users-x-repoA", session: "s1",
+                               daysAgo: 0, input: 1_000)
+
+        let first = TokenTracker(projectsDir: tempRoot, cacheURL: cacheURL)
+        first.refresh()
+        XCTAssertEqual(first.todayTokens, 1_000)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.path))
+
+        let restored = TokenTracker(projectsDir: tempRoot, cacheURL: cacheURL)
+        XCTAssertEqual(restored.todayTokens, 1_000)
+
+        try writeAssistantLine(project: "-Users-x-repoA", session: "s1",
+                               daysAgo: 0, output: 250)
+        restored.refresh()
+        XCTAssertEqual(restored.todayTokens, 1_250)
+    }
 }

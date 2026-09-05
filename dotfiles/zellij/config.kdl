@@ -351,6 +351,9 @@ web_client {
 // 
 // pane_frames false
 
+// Keep the full side rails so pane focus and navigation mode stay visible.
+pane_frame_style "full"
+
 ui {
     pane_frames {
         rounded_corners true

@@ -1,6 +1,10 @@
 import Foundation
 
 final class JSONLWatcher {
+    /// A live transcript can be hundreds of megabytes. On launch we only
+    /// need its recent state, not a replay of the entire conversation.
+    private let initialCatchUpBytes: UInt64 = 2 * 1024 * 1024
+
     private let projectsDir: URL
     private var directorySource: DispatchSourceFileSystemObject?
     private var fileSources: [URL: DispatchSourceFileSystemObject] = [:]
@@ -134,6 +138,7 @@ final class JSONLWatcher {
     }
 
     private func readNewLines(from fileURL: URL) {
+        let isInitialRead = fileOffsets[fileURL] == nil
         let lastOffset = fileOffsets[fileURL] ?? 0
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
         defer { try? handle.close() }
@@ -148,10 +153,15 @@ final class JSONLWatcher {
             // watcher.
             let endOffset = (try? handle.seekToEnd()) ?? 0
             let offset: UInt64
+            var dropsLeadingPartialLine = false
             if endOffset < lastOffset {
                 AgentLog.watcher.warning("file shrank, resetting offset path=\(fileURL.lastPathComponent, privacy: .public) was=\(lastOffset) now=\(endOffset)")
-                offset = 0
+                offset = endOffset > initialCatchUpBytes ? endOffset - initialCatchUpBytes : 0
+                dropsLeadingPartialLine = offset > 0
                 lineBuffers[fileURL] = ""
+            } else if isInitialRead, endOffset > initialCatchUpBytes {
+                offset = endOffset - initialCatchUpBytes
+                dropsLeadingPartialLine = true
             } else {
                 offset = lastOffset
             }
@@ -166,6 +176,9 @@ final class JSONLWatcher {
             let buffer = (lineBuffers[fileURL] ?? "") + (String(data: data, encoding: .utf8) ?? "")
             var lines = buffer.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             lineBuffers[fileURL] = lines.popLast() ?? ""
+            if dropsLeadingPartialLine, !lines.isEmpty {
+                lines.removeFirst()
+            }
 
             for line in lines where !line.isEmpty {
                 onLine?(fileURL, line)

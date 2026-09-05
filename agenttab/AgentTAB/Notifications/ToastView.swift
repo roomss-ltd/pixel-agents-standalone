@@ -74,7 +74,7 @@ struct ToastView: View {
     /// around the toast perimeter. 4s rotation feels alive without
     /// being distracting.
     private var animatedBorder: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: Theme.Animations.timelineMinimumInterval)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let angle = (t.truncatingRemainder(dividingBy: 4) / 4) * 360
             RoundedRectangle(cornerRadius: 14, style: .continuous)
