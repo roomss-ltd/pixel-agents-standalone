@@ -302,7 +302,8 @@ struct RotatingLoader: View {
                       coreOverride: palette.core,
                       glowOverride: palette.glow,
                       size: size,
-                      running: running)
+                      running: running,
+                      paletteCrossfadeDuration: Self.crossfadeSeconds)
             .frame(width: size, height: size)
             .onAppear {
                 // Stagger so multiple RotatingLoaders mounted simultaneously
@@ -314,13 +315,7 @@ struct RotatingLoader: View {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
                     guard !Task.isCancelled else { return }
-                    // Wrap in `withAnimation` so SwiftUI interpolates the
-                    // `coreOverride` and `glowOverride` Color params on
-                    // PixelLoopView between the old and new palette —
-                    // this is what gives the smooth tint shift.
-                    withAnimation(.easeInOut(duration: Self.crossfadeSeconds)) {
-                        paletteIndex = (paletteIndex + 1) % PixelLoopPalette.allCases.count
-                    }
+                    paletteIndex = (paletteIndex + 1) % PixelLoopPalette.allCases.count
                 }
             }
     }

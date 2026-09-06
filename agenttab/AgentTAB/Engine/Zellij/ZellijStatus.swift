@@ -23,6 +23,10 @@ struct ZellijSession: Codable {
     /// Agent working directory, forwarded from the Claude/Codex hook's
     /// `cwd`. Nil for older plugin builds that didn't write it.
     let cwd: String?
+    /// Agent family reported by the bridge. Optional keeps status files from
+    /// older plugin builds readable during upgrades.
+    let agentKind: String?
+    let agentTitle: String?
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id"
@@ -30,6 +34,8 @@ struct ZellijSession: Codable {
         case tabNum = "tab_num"
         case tabName = "tab_name"
         case icon, detail, activity, cwd
+        case agentKind = "agent_kind"
+        case agentTitle = "agent_title"
     }
 }
 

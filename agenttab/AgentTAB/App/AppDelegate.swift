@@ -23,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var rootHostingView: NSHostingView<AnyView>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The unit-test bundle uses AgentTAB as a host process. Do not start
+        // production listeners, panels, polling, or Sparkle in that process;
+        // doing so would compete with the installed app's Unix socket and
+        // inspect the user's live terminal session during an isolated test.
+        guard UpdaterCoordinator.shouldStartUpdater() else { return }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.button?.title = "AT"
         statusItem?.menu = makeMenu()

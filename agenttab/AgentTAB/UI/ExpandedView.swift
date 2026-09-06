@@ -271,8 +271,13 @@ struct ExpandedView: View {
                 .frame(width: 5, height: 5)
                 .shadow(color: color.opacity(0.7), radius: 1.2)
             Text("\(count)")
-                .font(.system(size: 12.5, weight: .semibold))
+                .font(.system(
+                    size: CountBadgeTypography.size(base: 12.5, count: count),
+                    weight: .semibold
+                ))
                 .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .foregroundStyle(color)
         .padding(.horizontal, 6)

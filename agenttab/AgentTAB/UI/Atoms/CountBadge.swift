@@ -8,6 +8,14 @@
 
 import SwiftUI
 
+enum CountBadgeTypography {
+    static func size(base: CGFloat, count: Int) -> CGFloat {
+        if count >= 100 { return base * 0.65 }
+        if count >= 10 { return base * 0.78 }
+        return base
+    }
+}
+
 struct CountBadge: View {
     enum Kind { case blue, green, amber }
 
@@ -21,7 +29,7 @@ struct CountBadge: View {
                 .font(.system(size: countFontSize, weight: .semibold))
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .fixedSize(horizontal: true, vertical: false)
                 .allowsTightening(true)
                 .layoutPriority(1)
         }
@@ -40,9 +48,7 @@ struct CountBadge: View {
     }
 
     private var countFontSize: CGFloat {
-        if count >= 100 { return 9.5 }
-        if count >= 10 { return 10.5 }
-        return 11.5
+        CountBadgeTypography.size(base: 11.5, count: count)
     }
 
     @ViewBuilder

@@ -56,6 +56,19 @@ targets:
         SUScheduledCheckInterval: 86400
         SUEnableInstallerLauncherService: true
     preBuildScripts:
+      - name: "Embed matching Zellij client"
+        script: |
+          SOURCE="${SRCROOT}/../zellij-patched/target/release/zellij"
+          DESTINATION="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/agenttab-zellij"
+          if [ -x "$SOURCE" ]; then
+            mkdir -p "$(dirname "$DESTINATION")"
+            cp "$SOURCE" "$DESTINATION"
+            chmod 755 "$DESTINATION"
+          else
+            rm -f "$DESTINATION"
+            echo "warning: matching Zellij client not built; AgentTAB will use a safe system install"
+          fi
+    postBuildScripts:
       - name: "Inject Sparkle public key"
         script: |
           if [ ! -f "${SRCROOT}/sparkle-public-key.txt" ]; then

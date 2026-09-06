@@ -20,13 +20,18 @@ fn next_run_id(
 }
 
 pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
+    if let Some(name) = &payload.zellij_session_name {
+        if !name.is_empty() {
+            state.zellij_session_name = name.clone();
+        }
+    }
     let event = payload.hook_event.as_str();
 
     // Focus → switch the current client to the tracked terminal pane. This is
     // driven by clicking a row in the Hammerspoon widget and must not mutate
     // status state.
     if event == "Focus" {
-        focus_terminal_pane(payload.pane_id, false);
+        focus_terminal_pane(payload.pane_id, false, false);
         return;
     }
 
@@ -34,11 +39,15 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     // Sent by the overlay's long-press handler. Distinct from SessionEnd so
     // legitimate session restarts within the same pane still work.
     if event == "Dismiss" {
+        let tab_to_update = state.pane_to_tab.get(&payload.pane_id).copied();
         state.sessions.remove(&payload.pane_id);
         state.dismissed_until.insert(
             payload.pane_id,
             unix_now() + crate::state::DISMISS_BLOCK_SECS,
         );
+        if let Some(tab) = tab_to_update {
+            tab_manager::update_tab_indicator(state, tab);
+        }
         status_writer::write_status_file(state);
         return;
     }
@@ -59,6 +68,9 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         }
 
         if changed {
+            if let Some(&tab) = state.pane_to_tab.get(&payload.pane_id) {
+                tab_manager::update_tab_indicator(state, tab);
+            }
             status_writer::write_status_file(state);
         }
         return;
@@ -73,7 +85,11 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
 
     // SessionEnd → remove session from the status overlay.
     if event == "SessionEnd" {
+        let tab_to_update = state.pane_to_tab.get(&payload.pane_id).copied();
         state.sessions.remove(&payload.pane_id);
+        if let Some(tab) = tab_to_update {
+            tab_manager::update_tab_indicator(state, tab);
+        }
         status_writer::write_status_file(state);
         return;
     }
@@ -108,12 +124,20 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
         .or_insert_with(|| SessionInfo {
             session_id: payload.session_id.clone().unwrap_or_default(),
             run_id: assigned_run_id.clone().unwrap_or_default(),
+            agent_kind: payload
+                .agent_kind
+                .clone()
+                .unwrap_or_else(|| "unknown".into()),
+            agent_title: None,
             pane_id: payload.pane_id,
             activity: Activity::Init,
             last_event_ts: 0,
             last_tool_name: None,
             cwd: payload.cwd.clone(),
         });
+    if let Some(agent_kind) = &payload.agent_kind {
+        session.agent_kind = agent_kind.clone();
+    }
     if let Some(run_id) = assigned_run_id {
         session.run_id = run_id;
     }
@@ -147,6 +171,12 @@ pub fn handle_hook_event(state: &mut PluginState, payload: HookPayload) {
     // sent a hook event before PaneUpdate arrived.
     if !state.pane_to_tab.contains_key(&payload.pane_id) {
         tab_manager::rebuild_pane_map(state);
+    }
+
+    if activity_changed {
+        if let Some(&tab) = state.pane_to_tab.get(&payload.pane_id) {
+            tab_manager::update_tab_indicator(state, tab);
+        }
     }
 
     // Write status file on activity transitions (real-time updates).

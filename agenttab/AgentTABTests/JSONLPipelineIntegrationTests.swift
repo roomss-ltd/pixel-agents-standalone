@@ -41,6 +41,38 @@ final class JSONLPipelineIntegrationTests: XCTestCase {
         try? FileManager.default.removeItem(at: statusDir)
     }
 
+    func testEngineTracksActiveClaudeSubagentFromProgress() async throws {
+        let projectsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agenttab-subagent-\(UUID().uuidString)")
+        let projectDir = projectsDir.appendingPathComponent("-Users-test-Desktop-myapp")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let statusDir = try makeIsolatedStatusDir()
+        defer {
+            try? FileManager.default.removeItem(at: projectsDir)
+            try? FileManager.default.removeItem(at: statusDir)
+        }
+
+        let transcript = """
+        {"type":"assistant","message":{"content":[{"type":"tool_use","id":"parent_t","name":"Task","input":{"description":"Find auth bugs"}}]}}
+        {"type":"progress","parentToolUseID":"parent_t","data":{"type":"agent_progress","message":{"type":"assistant","message":{"content":[{"type":"tool_use","id":"sub_t","name":"Bash","input":{"command":"rg auth"}}]}}}}
+
+        """
+        try transcript.write(
+            to: projectDir.appendingPathComponent("session-subagent.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let engine = await ActivityEngine(projectsDir: projectsDir, zellijStatusDir: statusDir)
+        await engine.start()
+        try await Task.sleep(for: .seconds(2))
+
+        await MainActor.run {
+            XCTAssertEqual(engine.sessions.first?.activeSubagentCount, 1)
+            XCTAssertEqual(engine.sessions.first?.subagentTools["parent_t"], ["sub_t"])
+        }
+    }
+
     func testEmptyZellijSnapshotDoesNotExposeUnmatchedTranscriptHistory() async throws {
         let projectsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("agenttab-empty-zellij-\(UUID().uuidString)")
@@ -76,6 +108,58 @@ final class JSONLPipelineIntegrationTests: XCTestCase {
                 engine.displaySessions.isEmpty,
                 "an empty live Zellij snapshot must render an empty agent list"
             )
+        }
+    }
+
+    func testCodexAndDevinPanesKeepTheirProviderAndLiveState() async throws {
+        let projectsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agenttab-providers-\(UUID().uuidString)")
+        let codexDir = projectsDir.appendingPathComponent("codex/2026/09/05")
+        try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+        let statusDir = try makeIsolatedStatusDir()
+        defer {
+            try? FileManager.default.removeItem(at: projectsDir)
+            try? FileManager.default.removeItem(at: statusDir)
+        }
+
+        let codexId = "codex-live-id"
+        try "{}\n".write(
+            to: codexDir.appendingPathComponent("rollout-\(codexId).jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let now = Int(Date().timeIntervalSince1970)
+        let status = """
+        {"sessions":[
+          {"pane_id":4,"run_id":"\(codexId):4:\(now):1","tab_num":1,"tab_name":"Codex",\
+           "icon":"⚡","detail":"Bash","activity":"Tool","cwd":"/tmp/codex"},
+          {"pane_id":7,"run_id":"devin-pane-7:7:\(now):auto","tab_num":2,"tab_name":"Devin",\
+           "icon":"●","detail":null,"activity":"Thinking","cwd":null,"agent_kind":"devin","agent_title":"Fix dashboard"}
+        ],"counts":{"active":2,"waiting":0,"done":0},"updated_at":\(now)}
+        """
+        try status.write(
+            to: statusDir.appendingPathComponent("providers.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let engine = await ActivityEngine(
+            projectsDir: projectsDir,
+            zellijStatusDir: statusDir,
+            codexSessionsDir: projectsDir.appendingPathComponent("codex")
+        )
+        await engine.start()
+        try await Task.sleep(for: .seconds(2))
+
+        await MainActor.run {
+            let codex = engine.sessions.first { $0.claudeSessionId == codexId }
+            XCTAssertEqual(codex?.agentKind, .codex)
+            XCTAssertEqual(codex?.activity, .tool("Bash"))
+
+            let devin = engine.sessions.first { $0.claudeSessionId == "devin-pane-7" }
+            XCTAssertEqual(devin?.agentKind, .devin)
+            XCTAssertEqual(devin?.providerSessionTitle, "Fix dashboard")
+            XCTAssertEqual(devin?.activity, .thinking)
         }
     }
 
@@ -271,6 +355,82 @@ final class JSONLPipelineIntegrationTests: XCTestCase {
             let labels = engine.displaySessions.map { engine.displayLabel(for: $0) }
             XCTAssertEqual(labels.count, 2)
             XCTAssertEqual(Set(labels), ["2"], "tab numbers are per-session, not global")
+        }
+    }
+
+    func testSamePaneIdInDifferentZellijSessionsStaysDistinct() async throws {
+        let projectsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agenttab-pane-identity-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+        let statusDir = try makeIsolatedStatusDir()
+        defer {
+            try? FileManager.default.removeItem(at: projectsDir)
+            try? FileManager.default.removeItem(at: statusDir)
+        }
+
+        let now = Int(Date().timeIntervalSince1970)
+        let sharedRun = "same-codex-session"
+        let alpha = """
+        {"sessions":[
+          {"pane_id":1,"run_id":"\(sharedRun):1:\(now):1","tab_num":1,"tab_name":"Alpha","icon":"✓","detail":"1m ago","activity":"Idle","cwd":null},
+          {"pane_id":2,"run_id":"alpha-2:2:\(now):2","tab_num":1,"tab_name":"Alpha","icon":"⚡","detail":"Bash","activity":"Tool","cwd":null}
+        ],"counts":{"active":1,"waiting":0,"done":1},"updated_at":\(now)}
+        """
+        let beta = """
+        {"sessions":[
+          {"pane_id":1,"run_id":"\(sharedRun):1:\(now):1","tab_num":2,"tab_name":"Beta","icon":"⚡","detail":"Write","activity":"Tool","cwd":null}
+        ],"counts":{"active":1,"waiting":0,"done":0},"updated_at":\(now)}
+        """
+        try alpha.write(
+            to: statusDir.appendingPathComponent("alpha.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try beta.write(
+            to: statusDir.appendingPathComponent("beta.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let engine = await ActivityEngine(projectsDir: projectsDir, zellijStatusDir: statusDir)
+        await engine.start()
+        try await Task.sleep(for: .seconds(2))
+
+        await MainActor.run {
+            XCTAssertEqual(engine.displaySessions.count, 3)
+            let betaSession = engine.displaySessions.first { engine.displayName(for: $0) == "Beta" }
+            XCTAssertEqual(betaSession.map { engine.displayLabel(for: $0) }, "2")
+            XCTAssertEqual(betaSession?.activity, .tool("Write"))
+            XCTAssertEqual(
+                engine.displaySessions.first {
+                    guard case .zellij(let info) = $0.terminalKind else { return false }
+                    return info.zellijSession == "alpha" && info.paneId == 1
+                }?.activity,
+                .idle
+            )
+            XCTAssertEqual(
+                Set(engine.displaySessions.filter { engine.displayName(for: $0) == "Alpha" }
+                    .map { engine.displayLabel(for: $0) }),
+                ["1.1", "1.2"]
+            )
+        }
+
+        // Cross the reader's five-second safety poll. Re-reading both files
+        // must update the same three physical pane rows rather than letting
+        // whichever session's pane 1 is scanned last replace the other one.
+        try await Task.sleep(for: .seconds(4))
+        await MainActor.run {
+            XCTAssertEqual(engine.displaySessions.count, 3)
+            XCTAssertEqual(
+                Set(engine.displaySessions.filter { engine.displayName(for: $0) == "Alpha" }
+                    .map { engine.displayLabel(for: $0) }),
+                ["1.1", "1.2"]
+            )
+            XCTAssertEqual(
+                engine.displaySessions.first { engine.displayName(for: $0) == "Beta" }
+                    .map { engine.displayLabel(for: $0) },
+                "2"
+            )
         }
     }
 

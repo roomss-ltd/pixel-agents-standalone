@@ -1,7 +1,7 @@
 // ActivityHistoryView — activity dashboard shown in place of the agent
 // grid when the user taps the token counter. Three ranges sharing the
 // same view: 7-day bar chart, 30-day dense bar variant, and a
-// 119-day GitHub-style squares heatmap. Hand-rolled (no Charts
+// 364-day GitHub-style squares heatmap. Hand-rolled (no Charts
 // dependency) so it matches the pitch-black neon theme exactly:
 // daily token spend, agent count per day, and the projects worked
 // on across the active range.
@@ -131,33 +131,90 @@ struct ActivityHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            summaryStrip
-            switch range {
-            case .week:
-                VStack(alignment: .leading, spacing: 6) {
-                    barHoverChip
-                    barChart(tracker.days(for: .week), dense: false, mode: barMode)
+            if tracker.isHistoryLoading && tracker.daysWindow.isEmpty {
+                initialLoadingView
+            } else {
+                if tracker.isHistoryLoading {
+                    refreshProgress
                 }
-            case .month:
-                VStack(alignment: .leading, spacing: 6) {
-                    barHoverChip
-                    barChart(tracker.days(for: .month), dense: true, mode: barMode)
+                summaryStrip
+                switch range {
+                case .week:
+                    VStack(alignment: .leading, spacing: 6) {
+                        barHoverChip
+                        barChart(tracker.days(for: .week), dense: false, mode: barMode)
+                    }
+                case .month:
+                    VStack(alignment: .leading, spacing: 6) {
+                        barHoverChip
+                        barChart(tracker.days(for: .month), dense: true, mode: barMode)
+                    }
+                case .window:
+                    VStack(alignment: .leading, spacing: 6) {
+                        barHoverChip
+                        SquaresHistoryGrid(
+                            days: tracker.days(for: .window),
+                            hoveredDay: $hoveredDay,
+                            mode: barMode
+                        )
+                        legend
+                    }
                 }
-            case .window:
-                VStack(alignment: .leading, spacing: 6) {
-                    barHoverChip
-                    SquaresHistoryGrid(
-                        days: tracker.days(for: .window),
-                        hoveredDay: $hoveredDay,
-                        mode: barMode
-                    )
-                    legend
-                }
+                projectsList
             }
-            projectsList
         }
         .animation(.easeOut(duration: 0.18), value: range)
         .animation(.easeOut(duration: 0.18), value: barMode)
+    }
+
+    private var scanPercent: Int {
+        Int((tracker.historyScanProgress * 100).rounded())
+    }
+
+    /// First launch has no history to keep on screen. Show the app's existing
+    /// pixel loader plus measured file-scan progress instead of false zeroes.
+    private var initialLoadingView: some View {
+        VStack(spacing: 12) {
+            RotatingLoader(size: 30, color: Theme.Neon.blue)
+            Text("Scanning agent history…")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textDim)
+            ProgressView(value: tracker.historyScanProgress, total: 1)
+                .progressViewStyle(.linear)
+                .tint(Theme.Neon.blue)
+                .frame(width: 240)
+            Text("\(scanPercent)%")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textFaint)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 60)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Scanning agent history, \(scanPercent) percent")
+    }
+
+    /// Keep already-loaded history visible during later refreshes and use a
+    /// slim status row so a rescan does not disrupt the dashboard layout.
+    private var refreshProgress: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                RotatingLoader(size: 12, color: Theme.Neon.blue)
+                Text("Updating history")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.textFaint)
+                Spacer()
+                Text("\(scanPercent)%")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textFaint)
+            }
+            ProgressView(value: tracker.historyScanProgress, total: 1)
+                .progressViewStyle(.linear)
+                .tint(Theme.Neon.blue)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Updating agent history, \(scanPercent) percent")
     }
 
     /// Floating readout above the bar chart. The dense 30d columns are

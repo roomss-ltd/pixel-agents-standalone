@@ -51,7 +51,13 @@ fn build_status_json(state: &PluginState) -> String {
         let tab_index = state.pane_to_tab.get(&session.pane_id).copied();
         let tab_name = tab_index
             .and_then(|idx| state.tabs.iter().find(|tab| tab.position == idx))
-            .map(|tab| tab.name.as_str())
+            .map(|tab| {
+                state
+                    .tab_base_names
+                    .get(&tab.tab_id)
+                    .map(String::as_str)
+                    .unwrap_or(tab.name.as_str())
+            })
             .unwrap_or("unknown");
         // Zellij tab positions are 0-based; display as 1-based.
         let tab_num = tab_index.map(|i| i + 1).unwrap_or(0);
@@ -101,8 +107,13 @@ fn build_status_json(state: &PluginState) -> String {
             _ => "null".to_string(),
         };
 
+        let title_json = match &session.agent_title {
+            Some(title) if !title.is_empty() => format!("\"{}\"", escape_json_string(title)),
+            _ => "null".to_string(),
+        };
+
         sessions_json.push(format!(
-            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\",\"cwd\":{}}}",
+            "{{\"pane_id\":{},\"run_id\":\"{}\",\"tab_num\":{},\"tab_name\":\"{}\",\"icon\":\"{}\",\"detail\":{},\"activity\":\"{}\",\"cwd\":{},\"agent_kind\":\"{}\",\"agent_title\":{}}}",
             session.pane_id,
             escape_json_string(&session.run_id),
             tab_num,
@@ -111,6 +122,8 @@ fn build_status_json(state: &PluginState) -> String {
             detail_json,
             activity_str,
             cwd_json,
+            escape_json_string(&session.agent_kind),
+            title_json,
         ));
     }
 

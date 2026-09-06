@@ -1,10 +1,10 @@
 # Pixel Agents Standalone
 
-A standalone web application for visualizing Claude Code AI agents as pixel art characters in a virtual office — plus a full dev environment setup for running Claude Code inside Zellij with real-time session tracking.
+A standalone web application for visualizing coding agents as pixel art characters in a virtual office — plus a full dev environment setup for running Claude Code, Codex, and Devin inside Zellij with real-time session tracking.
 
 ## Features
 
-- **Auto-detect Claude Code sessions** running in any terminal (Ghostty, Zellij, iTerm, etc.)
+- **Auto-detect agent sessions** for Claude Code, Codex, and Devin
 - **Real-time activity tracking** - characters animate based on actual tool usage
 - **Multi-project support** - displays sessions from all your git worktrees
 - **Office layout editor** - customize your pixel art office
@@ -23,9 +23,9 @@ The `dotfiles/` directory contains a complete, reproducible dev environment conf
 | **Roomss patched Zellij** | Private Zellij fork with visual-position tab renames, plus custom keybinds and mocha-custom theme |
 | **zjstatus** | Zellij status bar plugin with Catppuccin Mocha palette |
 | **room** | Fuzzy tab switcher plugin for Zellij (`Ctrl+R`) |
-| **claude-tab-status** | Zellij WASM plugin that tracks Claude Code session activity per tab |
-| **Claude Code hooks** | Hook scripts that pipe session events to the Zellij plugin |
-| **Hammerspoon overlay** | macOS floating widget showing all Claude sessions in real-time |
+| **claude-tab-status** | Zellij WASM plugin that tracks Claude, Codex, and Devin activity per tab |
+| **Agent hooks** | Claude and Codex hook scripts plus automatic Devin pane discovery |
+| **AgentTAB / Hammerspoon overlay** | macOS floating surfaces showing live agent sessions |
 
 ### Prerequisites
 
@@ -67,7 +67,7 @@ The install script will:
 - Copy Zellij config and layout (`~/.config/zellij/`)
 - Download zjstatus and room plugins if not already installed
 - Build and install the claude-tab-status WASM plugin
-- Install the Claude Code hook script and register hooks in `~/.claude/settings.json`
+- Install Claude and Codex hook bridges; Devin panes are discovered directly from Zellij
 - Symlink the Hammerspoon overlay module and patch `~/.hammerspoon/init.lua`
 
 The patched Zellij fork lives at `zellij-patched/` and is pinned by this repo as a submodule:

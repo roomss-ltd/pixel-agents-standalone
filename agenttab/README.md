@@ -1,6 +1,6 @@
 # AgentTAB
 
-Native macOS notch app for tracking [Claude Code](https://claude.ai/code) session activity. Live cardio pulse when Claude is working, coffee idle when it's resting, hover to expand into a tab-grouped session list with click-to-focus.
+Native macOS notch app for tracking Claude Code, Codex, and Devin session activity. Live cardio pulse while agents work, coffee idle while they rest, and a tab-grouped session list with click-to-focus.
 
 ![pill in the notch animates with whatever Claude is doing right now]
 
@@ -25,9 +25,10 @@ Then launch normally.
 
 ## What it does
 
-- Watches every Claude Code session in `~/.claude/projects/` and shows live activity in the notch.
+- Tracks Claude transcripts, Codex rollouts, and Devin CLI sessions, including token spend and active subagents.
 - Optionally registers Claude hooks (consented during onboarding) for instant <100ms transitions.
 - Auto-detects existing `claude-tab-status` Zellij setups and runs in **drop-in mode** — modifies nothing on your machine, just reads the live data.
+- Prefixes each card's existing activity line with `Claude`, `Codex`, or `Devin`.
 - Self-updates via [Sparkle](https://sparkle-project.org). Daily background check, EdDSA-signed payloads.
 
 ## Uninstall
@@ -73,7 +74,7 @@ The full design is at [`docs/plans/2026-05-07-agenttab-design.md`](../docs/plans
 ## Requirements
 
 - macOS 14 (Sonoma) or later (uses `safeAreaInsets`, `.symbolEffect`, `SMAppService`).
-- [Claude Code](https://claude.ai/code) installed.
+- At least one supported agent CLI: Claude Code, Codex, or Devin.
 
 ## License
 

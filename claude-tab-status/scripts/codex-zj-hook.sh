@@ -14,13 +14,15 @@
 INPUT=$(cat 2>/dev/null) || exit 0
 [ -z "$INPUT" ] && exit 0
 
-PAYLOAD=$(echo "$INPUT" | jq -c --arg pid "$ZELLIJ_PANE_ID" '
+PAYLOAD=$(echo "$INPUT" | jq -c --arg pid "$ZELLIJ_PANE_ID" --arg zsession "$ZELLIJ_SESSION_NAME" '
   select(.hook_event_name != null and .hook_event_name != "") |
   {
     pane_id: ($pid | tonumber),
     session_id: .session_id,
     hook_event: .hook_event_name,
     tool_name: .tool_name,
+    agent_kind: "codex",
+    zellij_session_name: $zsession,
     cwd: .cwd
   }
 ' 2>/dev/null) || exit 0

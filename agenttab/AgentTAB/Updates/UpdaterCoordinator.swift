@@ -3,19 +3,31 @@ import Sparkle
 
 @MainActor
 final class UpdaterCoordinator: NSObject {
-    let updater: SPUStandardUpdaterController
+    private let updater: SPUStandardUpdaterController?
 
     override init() {
-        // startingUpdater: true → Sparkle starts background scheduler immediately
-        updater = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
+        // XCTest launches the app target as its host. Starting Sparkle there
+        // can surface configuration/network alerts over the user's desktop,
+        // even though no update was requested. Production launches retain the
+        // same once-per-day automatic checks.
+        updater = Self.shouldStartUpdater()
+            ? SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+            : nil
         super.init()
     }
 
     func checkForUpdates() {
-        updater.checkForUpdates(self)
+        updater?.checkForUpdates(self)
+    }
+
+    nonisolated static func shouldStartUpdater(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["XCTestConfigurationFilePath"] == nil
+            && environment["XCTestBundlePath"] == nil
     }
 }

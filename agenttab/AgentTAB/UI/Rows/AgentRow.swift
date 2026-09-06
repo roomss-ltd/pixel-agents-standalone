@@ -69,19 +69,15 @@ struct AgentRow: View {
                     .foregroundStyle(textColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 4) {
-                    Text(activityText)
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(activityColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    // Surfaced only when something is actually spawning
-                    // — keeps the row uncluttered for normal sessions.
-                    if session.activeSubagentCount > 0 {
-                        subagentBadge(count: session.activeSubagentCount)
-                    }
-                }
+                Text("\(session.agentKind.displayName) · \(activityText)")
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(activityColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(agentDetail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -192,27 +188,6 @@ struct AgentRow: View {
                 object: nil
             )
         }
-    }
-
-    // MARK: - Subagent badge
-
-    /// Small inline pill — "⌥ N" — rendered next to the activity text
-    /// when this session is currently running N subagents (Task /
-    /// Agent invocations with in-flight tool calls). Hidden otherwise.
-    private func subagentBadge(count: Int) -> some View {
-        HStack(spacing: 2) {
-            Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 7.5, weight: .bold))
-            Text("\(count)")
-                .font(.system(size: 9, weight: .bold))
-                .monospacedDigit()
-        }
-        .foregroundStyle(Theme.Neon.blue)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
-        .background(Capsule().fill(Theme.Neon.blueSoft))
-        .overlay(Capsule().stroke(Theme.Neon.blueEdge, lineWidth: 0.5))
-        .help("\(count) subagent\(count == 1 ? "" : "s") active")
     }
 
     // MARK: - Hover actions
@@ -362,6 +337,12 @@ struct AgentRow: View {
     }
 
     private var chipId: String { engine.displayLabel(for: session) }
+
+    private var agentDetail: String {
+        guard session.activeSubagentCount > 0 else { return session.agentKind.displayName }
+        let count = session.activeSubagentCount
+        return "\(session.agentKind.displayName) · \(count) active subagent\(count == 1 ? "" : "s")"
+    }
 
     private var activityText: String {
         if let tool = session.currentTool, !tool.isEmpty {

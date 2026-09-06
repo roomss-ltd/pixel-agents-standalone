@@ -1,9 +1,8 @@
 // TokenTracker — per-machine daily token-spend counter.
 //
-// Sums token usage across every Claude Code agent that ran today by
-// scanning ~/.claude/projects/**/*.jsonl. Only `assistant` lines with
-// a today-dated `timestamp` are counted; the total is
-// input + output + cache_creation + cache_read tokens.
+// Sums token usage across Claude, Codex, and Devin agents that ran today.
+// Claude and Codex usage comes from their native JSONL transcripts; Devin
+// usage comes from the CLI's cumulative session metrics database.
 //
 // Scanning is incremental — each file keeps a byte cursor so a refresh
 // only parses bytes appended since the last pass. The counter resets
@@ -14,7 +13,7 @@ import Foundation
 import Combine
 
 /// One day's slice of agent activity, used by the history dashboard.
-struct DailyActivity: Identifiable, Equatable {
+struct DailyActivity: Identifiable, Equatable, Codable {
     var id: Date { day }
     let day: Date           // start of day
     let tokens: Int         // total tokens spent that day
@@ -31,7 +30,7 @@ struct DailyActivity: Identifiable, Equatable {
 
 /// A project's total token spend over the active history range —
 /// "what the agents were working on."
-struct ProjectSpend: Identifiable, Equatable {
+struct ProjectSpend: Identifiable, Equatable, Codable {
     var id: String { name }
     let name: String
     let tokens: Int
@@ -42,12 +41,80 @@ struct ProjectSpend: Identifiable, Equatable {
 /// nested under it. The history dashboard shows a root row by default
 /// and lets the user expand it to see per-worktree totals. `tokens`
 /// and `activeDays` are summed/de-duplicated across the worktrees.
-struct ProjectGroup: Identifiable, Equatable {
+struct ProjectGroup: Identifiable, Equatable, Codable {
     var id: String { rootName }
     let rootName: String
     let tokens: Int
     let activeDays: Int
     let worktrees: [ProjectSpend]   // sorted by tokens desc; .name is "root/branch" (or just "root" for single-worktree)
+}
+
+struct DevinUsageSnapshot: Decodable, Equatable {
+    let id: String
+    let workingDirectory: String
+    let title: String
+    let createdAt: TimeInterval
+    let lastActivityAt: TimeInterval
+    let tokens: Int
+    let activeToolCount: Int
+    let activeSubagentCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, tokens
+        case workingDirectory = "working_directory"
+        case createdAt = "created_at"
+        case lastActivityAt = "last_activity_at"
+        case activeToolCount = "active_tools"
+        case activeSubagentCount = "active_subagents"
+    }
+}
+
+enum DevinUsageReader {
+    /// Devin keeps cumulative token counters and tool lifecycle state in its
+    /// local CLI database. `-readonly` guarantees polling cannot mutate it.
+    nonisolated static func read(databaseURL: URL) -> [DevinUsageSnapshot] {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return [] }
+        let sql = """
+        SELECT s.id, s.working_directory, COALESCE(s.title, '') AS title,
+               s.created_at, s.last_activity_at,
+               CAST(COALESCE((
+                 SELECT SUM(CASE json_extract(metric.value, '$.uid')
+                   WHEN 'input_tokens' THEN json_extract(metric.value, '$.kind.CumulativeMetric.value')
+                   WHEN 'output_tokens' THEN json_extract(metric.value, '$.kind.CumulativeMetric.value')
+                   WHEN 'cached_input_tokens' THEN json_extract(metric.value, '$.kind.CumulativeMetric.value')
+                   WHEN 'cache_write_input_tokens' THEN json_extract(metric.value, '$.kind.CumulativeMetric.value')
+                   ELSE 0 END)
+                 FROM json_each(s.metadata, '$.response_dimensions') AS metric
+               ), 0) AS INTEGER) AS tokens,
+               (SELECT COUNT(*) FROM tool_call_state AS tool
+                WHERE tool.session_id = s.id
+                  AND (tool.tool_call_update_json IS NULL
+                    OR json_extract(tool.tool_call_update_json, '$.status') NOT IN ('completed', 'failed'))) AS active_tools,
+               (SELECT COUNT(*) FROM tool_call_state AS tool
+                WHERE tool.session_id = s.id
+                  AND tool.tool_call_json LIKE '%inferenceToolName%run_subagent%'
+                  AND (tool.tool_call_update_json IS NULL
+                    OR json_extract(tool.tool_call_update_json, '$.status') NOT IN ('completed', 'failed'))) AS active_subagents
+        FROM sessions AS s
+        WHERE COALESCE(s.hidden, 0) = 0;
+        """
+
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-readonly", "-json", databaseURL.path, sql]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return [] }
+            return (try? JSONDecoder().decode([DevinUsageSnapshot].self, from: data)) ?? []
+        } catch {
+            return []
+        }
+    }
 }
 
 @MainActor
@@ -56,12 +123,43 @@ final class TokenTracker: ObservableObject {
         let day: Date
         let tokens: Int
         let cursors: [String: UInt64]
+        let devinCursors: [String: Int]?
     }
 
-    private static let defaultProjectsDir = FileManager.default.homeDirectoryForCurrentUser
+    private struct HistoryCache: Codable {
+        let daysShort: [DailyActivity]
+        let daysMonth: [DailyActivity]
+        let daysWindow: [DailyActivity]
+        let projectsShort: [ProjectSpend]
+        let projectsMonth: [ProjectSpend]
+        let projectsWindow: [ProjectSpend]
+        let groupsShort: [ProjectGroup]
+        let groupsMonth: [ProjectGroup]
+        let groupsWindow: [ProjectGroup]
+    }
+
+    private struct UsageLedger: Codable {
+        var days: [String: LedgerDay] = [:]
+    }
+
+    private struct LedgerDay: Codable {
+        var tokens = 0
+        var sessionIds: Set<String> = []
+        var projectTokens: [String: Int] = [:]
+    }
+
+    nonisolated private static let defaultProjectsDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/projects")
-    private static let defaultCacheURL = FileManager.default.homeDirectoryForCurrentUser
+    nonisolated private static let defaultCodexSessionsDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex/sessions")
+    nonisolated private static let defaultDevinDatabaseURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local/share/devin/cli/sessions.db")
+    nonisolated private static let defaultCacheURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/AgentTAB/token-tracker-today.json")
+    nonisolated private static let defaultLedgerURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/AgentTAB/provider-usage-ledger.json")
+    nonisolated private static let defaultHistoryCacheURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/AgentTAB/token-history.json")
 
     /// Total tokens spent across all agents on the local machine today.
     @Published private(set) var todayTokens: Int = 0
@@ -78,6 +176,12 @@ final class TokenTracker: ObservableObject {
     @Published private(set) var daysShort:  [DailyActivity] = []
     @Published private(set) var daysMonth:  [DailyActivity] = []
     @Published private(set) var daysWindow: [DailyActivity] = []
+
+    /// Full-history scans walk every Claude/Codex transcript in the window.
+    /// Expose their lifecycle so the dashboard never presents temporary zeroes
+    /// as finished data while that background work is still running.
+    @Published private(set) var isHistoryLoading = false
+    @Published private(set) var historyScanProgress: Double = 0
 
     /// Per-range project rollups, sorted by token spend descending.
     /// Populated alongside the matching `days*` array.
@@ -117,15 +221,20 @@ final class TokenTracker: ObservableObject {
     }
 
     private let projectsDir: URL
+    private let codexSessionsDir: URL?
+    private let devinDatabaseURL: URL?
     private let cacheURL: URL?
+    private let ledgerURL: URL?
+    private let historyCacheURL: URL?
     private var timer: AnyCancellable?
+    private var usageLedger = UsageLedger()
 
     /// Compact human formatting: 1_234 → "1.2K", 5_000_000 → "5.0M",
-    /// 2_000_000_000 → "2.0B", 3_000_000_000_000 → "3.0T".
+    /// 2_000_000_000 → "2.00B", 3_000_000_000_000 → "3.00T".
     static func format(_ n: Int) -> String {
         let d = Double(n)
-        if d >= 1_000_000_000_000 { return String(format: "%.1fT", d / 1_000_000_000_000) }
-        if d >= 1_000_000_000     { return String(format: "%.1fB", d / 1_000_000_000) }
+        if d >= 1_000_000_000_000 { return String(format: "%.2fT", d / 1_000_000_000_000) }
+        if d >= 1_000_000_000     { return String(format: "%.2fB", d / 1_000_000_000) }
         if d >= 1_000_000         { return String(format: "%.1fM", d / 1_000_000) }
         if d >= 1_000             { return String(format: "%.1fK", d / 1_000) }
         return "\(n)"
@@ -148,6 +257,8 @@ final class TokenTracker: ObservableObject {
 
     /// Per-file scan cursor — byte offset already summed.
     private var fileCursors: [URL: UInt64] = [:]
+    private var devinCursors: [String: Int] = [:]
+    private var codexUsageRecordFiles: Set<URL> = []
 
     /// The start-of-day the running total belongs to. When the wall
     /// clock crosses midnight we reset everything.
@@ -161,14 +272,43 @@ final class TokenTracker: ObservableObject {
     }()
     private let isoFormatterNoFraction = ISO8601DateFormatter()
 
-    init(projectsDir: URL = TokenTracker.defaultProjectsDir, cacheURL: URL? = nil) {
+    init(
+        projectsDir: URL = TokenTracker.defaultProjectsDir,
+        cacheURL: URL? = nil,
+        codexSessionsDir: URL? = nil,
+        devinDatabaseURL: URL? = nil,
+        ledgerURL: URL? = nil,
+        historyCacheURL: URL? = nil
+    ) {
         self.projectsDir = projectsDir
+        self.codexSessionsDir = codexSessionsDir ?? (
+            projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
+                ? Self.defaultCodexSessionsDir
+                : nil
+        )
+        self.devinDatabaseURL = devinDatabaseURL ?? (
+            projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
+                ? Self.defaultDevinDatabaseURL
+                : nil
+        )
         self.cacheURL = cacheURL ?? (
             projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
                 ? Self.defaultCacheURL
                 : nil
         )
+        self.ledgerURL = ledgerURL ?? (
+            projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
+                ? Self.defaultLedgerURL
+                : nil
+        )
+        self.historyCacheURL = historyCacheURL ?? (
+            projectsDir.standardizedFileURL == Self.defaultProjectsDir.standardizedFileURL
+                ? Self.defaultHistoryCacheURL
+                : nil
+        )
+        restoreLedger()
         restoreCache()
+        restoreHistoryCache()
     }
 
     func start() {
@@ -186,29 +326,35 @@ final class TokenTracker: ObservableObject {
         if today != currentDay {
             currentDay = today
             fileCursors.removeAll()
+            devinCursors.removeAll()
             todayTokens = 0
             AgentLog.engine.info("token tracker reset for new day")
         }
 
-        guard let projects = try? FileManager.default.contentsOfDirectory(
-            at: projectsDir, includingPropertiesForKeys: nil
-        ) else { return }
-
         var added = 0
-        for project in projects {
-            guard let isDir = (try? project.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory,
-                  isDir,
-                  let files = try? FileManager.default.contentsOfDirectory(
-                    at: project, includingPropertiesForKeys: [.contentModificationDateKey]
-                  )
-            else { continue }
+        for source in Self.usageFiles(
+            projectsDir: projectsDir,
+            codexSessionsDir: codexSessionsDir,
+            modifiedSince: currentDay
+        ) {
+            added += scanFile(source)
+        }
 
-            for file in files where file.pathExtension == "jsonl" {
-                let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                // A file untouched today can't contain today's lines.
-                guard mtime >= currentDay else { continue }
-                added += scanFile(file)
+        if let devinDatabaseURL {
+            for snapshot in DevinUsageReader.read(databaseURL: devinDatabaseURL) {
+                let delta: Int
+                if let previous = devinCursors[snapshot.id] {
+                    delta = max(0, snapshot.tokens - previous)
+                } else if snapshot.createdAt >= currentDay.timeIntervalSince1970 {
+                    // Count all of a session created today. For an older
+                    // running session, first sight establishes a baseline.
+                    delta = snapshot.tokens
+                } else {
+                    delta = 0
+                }
+                added += delta
+                recordDevinUsage(snapshot, tokens: delta)
+                devinCursors[snapshot.id] = snapshot.tokens
             }
         }
 
@@ -217,6 +363,36 @@ final class TokenTracker: ObservableObject {
             AgentLog.engine.info("token tracker +\(added) → \(self.todayTokens)")
         }
         persistCache()
+        persistLedger()
+    }
+
+    private func recordDevinUsage(_ snapshot: DevinUsageSnapshot, tokens: Int) {
+        guard tokens > 0 else { return }
+        let key = Self.dayKey(currentDay)
+        var day = usageLedger.days[key] ?? LedgerDay()
+        day.tokens += tokens
+        day.sessionIds.insert(snapshot.id)
+        day.projectTokens[SessionDiscovery.pathToProjectName(snapshot.workingDirectory), default: 0] += tokens
+        usageLedger.days[key] = day
+    }
+
+    private func persistLedger() {
+        guard let ledgerURL,
+              let data = try? JSONEncoder().encode(usageLedger)
+        else { return }
+        try? FileManager.default.createDirectory(
+            at: ledgerURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: ledgerURL, options: .atomic)
+    }
+
+    private func restoreLedger() {
+        guard let ledgerURL,
+              let data = try? Data(contentsOf: ledgerURL),
+              let ledger = try? JSONDecoder().decode(UsageLedger.self, from: data)
+        else { return }
+        usageLedger = ledger
     }
 
     /// Persist the daily total and per-file byte cursors so relaunching the
@@ -226,7 +402,8 @@ final class TokenTracker: ObservableObject {
         let cache = TodayCache(
             day: currentDay,
             tokens: todayTokens,
-            cursors: Dictionary(uniqueKeysWithValues: fileCursors.map { ($0.key.path, $0.value) })
+            cursors: Dictionary(uniqueKeysWithValues: fileCursors.map { ($0.key.path, $0.value) }),
+            devinCursors: devinCursors
         )
         guard let data = try? JSONEncoder().encode(cache) else { return }
         try? FileManager.default.createDirectory(
@@ -246,12 +423,51 @@ final class TokenTracker: ObservableObject {
         fileCursors = Dictionary(uniqueKeysWithValues: cache.cursors.map {
             (URL(fileURLWithPath: $0.key), $0.value)
         })
+        devinCursors = cache.devinCursors ?? [:]
+    }
+
+    private func persistHistoryCache() {
+        guard let historyCacheURL else { return }
+        let cache = HistoryCache(
+            daysShort: daysShort,
+            daysMonth: daysMonth,
+            daysWindow: daysWindow,
+            projectsShort: projectsShort,
+            projectsMonth: projectsMonth,
+            projectsWindow: projectsWindow,
+            groupsShort: groupsShort,
+            groupsMonth: groupsMonth,
+            groupsWindow: groupsWindow
+        )
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        try? FileManager.default.createDirectory(
+            at: historyCacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: historyCacheURL, options: .atomic)
+    }
+
+    private func restoreHistoryCache() {
+        guard let historyCacheURL,
+              let data = try? Data(contentsOf: historyCacheURL),
+              let cache = try? JSONDecoder().decode(HistoryCache.self, from: data)
+        else { return }
+        daysShort = cache.daysShort
+        daysMonth = cache.daysMonth
+        daysWindow = cache.daysWindow
+        projectsShort = cache.projectsShort
+        projectsMonth = cache.projectsMonth
+        projectsWindow = cache.projectsWindow
+        groupsShort = cache.groupsShort
+        groupsMonth = cache.groupsMonth
+        groupsWindow = cache.groupsWindow
     }
 
     /// Returns the tokens found in the bytes appended to `url` since the
     /// last scan, and advances the file cursor past the last complete
     /// line (a trailing partial line is left for the next refresh).
-    private func scanFile(_ url: URL) -> Int {
+    private func scanFile(_ source: UsageFile) -> Int {
+        let url = source.url
         let cursor = fileCursors[url] ?? 0
         guard let handle = try? FileHandle(forReadingFrom: url) else { return 0 }
         defer { try? handle.close() }
@@ -271,30 +487,74 @@ final class TokenTracker: ObservableObject {
         let consumed = complete.utf8.count + 1   // +1 for the newline
         fileCursors[url] = start + UInt64(consumed)
 
+        if source.provider == .codex,
+           Self.containsCodexUsageRecords(String(complete)) {
+            codexUsageRecordFiles.insert(url)
+        }
+        let includeLegacyCodexEvents = source.provider == .codex
+            && !codexUsageRecordFiles.contains(url)
+
         var sum = 0
         for line in complete.split(separator: "\n") where !line.isEmpty {
-            sum += tokensInLine(String(line))
+            sum += tokensInLine(String(line), includeLegacyCodexEvents: includeLegacyCodexEvents)
         }
         return sum
     }
 
-    private func tokensInLine(_ line: String) -> Int {
+    private func tokensInLine(_ line: String, includeLegacyCodexEvents: Bool = false) -> Int {
         guard let data = line.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              json["type"] as? String == "assistant",
-              let message = json["message"] as? [String: Any],
-              let usage = message["usage"] as? [String: Any]
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return 0 }
 
         // A file modified today can still hold lines from a session
         // that started yesterday — only count today's.
         if let ts = json["timestamp"] as? String, !isToday(ts) { return 0 }
 
-        let input  = usage["input_tokens"] as? Int ?? 0
-        let output = usage["output_tokens"] as? Int ?? 0
-        let cacheCreate = usage["cache_creation_input_tokens"] as? Int ?? 0
-        let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
-        return input + output + cacheCreate + cacheRead
+        return Self.tokenCount(in: json, includeLegacyCodexEvents: includeLegacyCodexEvents) ?? 0
+    }
+
+    /// Claude reports cache tokens alongside uncached input, so all four
+    /// fields are additive. Codex's `total_tokens` already includes input and
+    /// output (cached and reasoning values are breakdowns), so count it once.
+    nonisolated private static func tokenCount(
+        in json: [String: Any],
+        includeLegacyCodexEvents: Bool = false
+    ) -> Int? {
+        switch json["type"] as? String {
+        case "assistant":
+            let message = json["message"] as? [String: Any]
+            let usage = message?["usage"] as? [String: Any]
+            return (usage?["input_tokens"] as? Int ?? 0)
+                + (usage?["output_tokens"] as? Int ?? 0)
+                + (usage?["cache_creation_input_tokens"] as? Int ?? 0)
+                + (usage?["cache_read_input_tokens"] as? Int ?? 0)
+        case "token_usage_record":
+            let payload = json["payload"] as? [String: Any]
+            let usage = payload?["usage"] as? [String: Any]
+            if let total = usage?["total_tokens"] as? Int { return total }
+            return (usage?["input_tokens"] as? Int ?? 0)
+                + (usage?["output_tokens"] as? Int ?? 0)
+        case "event_msg":
+            guard includeLegacyCodexEvents,
+                  let payload = json["payload"] as? [String: Any],
+                  payload["type"] as? String == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  let usage = info["last_token_usage"] as? [String: Any]
+            else { return nil }
+            if let total = usage["total_tokens"] as? Int { return total }
+            return (usage["input_tokens"] as? Int ?? 0)
+                + (usage["output_tokens"] as? Int ?? 0)
+        default:
+            return nil
+        }
+    }
+
+    /// Modern Codex mirrors each response into both `event_msg/token_count`
+    /// and `token_usage_record`. Prefer the latter whenever it is present in
+    /// a file; older transcripts only have the event form.
+    nonisolated private static func containsCodexUsageRecords(_ text: String) -> Bool {
+        text.contains(#""type":"token_usage_record""#)
+            || text.contains(#""type": "token_usage_record""#)
     }
 
     private func isToday(_ iso: String) -> Bool {
@@ -357,9 +617,25 @@ final class TokenTracker: ObservableObject {
     /// Cheap to call on every history open — stale buckets stay visible
     /// while the rescan runs.
     func refreshHistory() {
+        guard !isHistoryLoading else { return }
+        isHistoryLoading = true
+        historyScanProgress = 0
+
         let dir = projectsDir
+        let codexDir = codexSessionsDir
+        let ledger = usageLedger
+        let reportProgress: @Sendable (Double) -> Void = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.historyScanProgress = progress
+            }
+        }
         Task.detached(priority: .utility) {
-            let result = Self.scanRanges(projectsDir: dir)
+            let result = Self.scanRanges(
+                projectsDir: dir,
+                codexSessionsDir: codexDir,
+                providerLedger: ledger,
+                progress: reportProgress
+            )
             await MainActor.run { [weak self] in
                 self?.daysShort      = result.short.days
                 self?.daysMonth      = result.month.days
@@ -370,6 +646,9 @@ final class TokenTracker: ObservableObject {
                 self?.groupsShort    = result.short.groups
                 self?.groupsMonth    = result.month.groups
                 self?.groupsWindow   = result.window.groups
+                self?.historyScanProgress = 1
+                self?.isHistoryLoading = false
+                self?.persistHistoryCache()
             }
         }
     }
@@ -379,7 +658,10 @@ final class TokenTracker: ObservableObject {
     /// derive per-range day buckets AND per-range per-project rollups
     /// (both flat-by-worktree and grouped-by-root) from a single pass.
     private nonisolated static func scanRanges(
-        projectsDir: URL
+        projectsDir: URL,
+        codexSessionsDir: URL? = nil,
+        providerLedger: UsageLedger = UsageLedger(),
+        progress: (@Sendable (Double) -> Void)? = nil
     ) -> (
         short:  (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]),
         month:  (days: [DailyActivity], projects: [ProjectSpend], groups: [ProjectGroup]),
@@ -410,30 +692,25 @@ final class TokenTracker: ObservableObject {
         // stretch. Bounded by stretch count, not line count.
         var dayActiveStretches: [Date: [String: [(start: Double, end: Double)]]] = [:]
 
-        let fm = FileManager.default
-        guard let projects = try? fm.contentsOfDirectory(
-            at: projectsDir, includingPropertiesForKeys: nil
-        ) else { return (([], [], []), ([], [], []), ([], [], [])) }
+        let sources = usageFiles(
+            projectsDir: projectsDir,
+            codexSessionsDir: codexSessionsDir,
+            modifiedSince: windowStart
+        )
+        progress?(sources.isEmpty ? 1 : 0.02)
+        let progressStep = max(1, sources.count / 100)
 
-        for project in projects {
-            guard let isDir = (try? project.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory,
-                  isDir
-            else { continue }
-            let projectName = SessionDiscovery.hashToProjectName(project.lastPathComponent)
+        for (sourceIndex, source) in sources.enumerated() {
+            let file = source.url
+            let projectName = source.projectName
+            let sessionId = file.deletingPathExtension().lastPathComponent
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+                continue
+            }
+            let includeLegacyCodexEvents = source.provider == .codex
+                && !containsCodexUsageRecords(text)
 
-            guard let files = try? fm.contentsOfDirectory(
-                at: project, includingPropertiesForKeys: [.contentModificationDateKey]
-            ) else { continue }
-
-            for file in files where file.pathExtension == "jsonl" {
-                let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                // A file untouched in the window can't hold a window line.
-                guard mtime >= windowStart else { continue }
-                let sessionId = file.deletingPathExtension().lastPathComponent
-                guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-
-                for line in text.split(separator: "\n") where !line.isEmpty {
+            for line in text.split(separator: "\n") where !line.isEmpty {
                     guard let data = line.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let tsString = json["timestamp"] as? String,
@@ -457,20 +734,32 @@ final class TokenTracker: ObservableObject {
                     }
                     dayActiveStretches[day, default: [:]][sessionId] = stretches
 
-                    // Tokens: assistant lines only.
-                    guard json["type"] as? String == "assistant" else { continue }
-                    let message = json["message"] as? [String: Any]
-                    let usage = message?["usage"] as? [String: Any]
-                    let tokens = (usage?["input_tokens"] as? Int ?? 0)
-                        + (usage?["output_tokens"] as? Int ?? 0)
-                        + (usage?["cache_creation_input_tokens"] as? Int ?? 0)
-                        + (usage?["cache_read_input_tokens"] as? Int ?? 0)
+                    // Tokens: Claude assistant usage or Codex's additive
+                    // per-response token_usage_record.
+                    guard let tokens = tokenCount(
+                        in: json,
+                        includeLegacyCodexEvents: includeLegacyCodexEvents
+                    ) else { continue }
 
                     dayTokens[day, default: 0] += tokens
                     daySessions[day, default: []].insert(sessionId)
                     dayProjects[day, default: []].insert(projectName)
                     dayProjectTokens[day, default: [:]][projectName, default: 0] += tokens
-                }
+            }
+
+            let completed = sourceIndex + 1
+            if completed == sources.count || completed.isMultiple(of: progressStep) {
+                progress?(0.02 + (Double(completed) / Double(sources.count)) * 0.98)
+            }
+        }
+
+        for (key, entry) in providerLedger.days {
+            guard let day = day(fromKey: key), day >= windowStart, day <= todayStart else { continue }
+            dayTokens[day, default: 0] += entry.tokens
+            daySessions[day, default: []].formUnion(entry.sessionIds.map { "devin:\($0)" })
+            dayProjects[day, default: []].formUnion(entry.projectTokens.keys)
+            for (project, tokens) in entry.projectTokens {
+                dayProjectTokens[day, default: [:]][project, default: 0] += tokens
             }
         }
 
@@ -558,5 +847,100 @@ final class TokenTracker: ObservableObject {
             month:  slice(daysBack: 30),
             window: slice(daysBack: 364)
         )
+    }
+
+    private enum UsageProvider {
+        case claude, codex
+    }
+
+    private struct UsageFile {
+        let url: URL
+        let projectName: String
+        let provider: UsageProvider
+    }
+
+    private nonisolated static func dayKey(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = Calendar.current.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private nonisolated static func day(fromKey key: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = Calendar.current.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: key).map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    private nonisolated static func usageFiles(
+        projectsDir: URL,
+        codexSessionsDir: URL?,
+        modifiedSince: Date
+    ) -> [UsageFile] {
+        let fm = FileManager.default
+        var result: [UsageFile] = []
+
+        let projects = (try? fm.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: nil)) ?? []
+        for project in projects {
+            guard (try? project.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            let projectName = SessionDiscovery.hashToProjectName(project.lastPathComponent)
+            guard let enumerator = fm.enumerator(
+                at: project,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            // Claude stores child-agent transcripts below
+            // `<parent-session>/subagents/`; recurse so their spend is part of
+            // the same project total as the pane that spawned them.
+            for case let file as URL in enumerator where file.pathExtension == "jsonl" {
+                let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true,
+                      (values?.contentModificationDate ?? .distantPast) >= modifiedSince
+                else { continue }
+                result.append(UsageFile(url: file, projectName: projectName, provider: .claude))
+            }
+        }
+
+        if let codexSessionsDir,
+           let enumerator = fm.enumerator(
+                at: codexSessionsDir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+           ) {
+            for case let file as URL in enumerator where file.pathExtension == "jsonl" {
+                let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true,
+                      (values?.contentModificationDate ?? .distantPast) >= modifiedSince
+                else { continue }
+                result.append(UsageFile(url: file, projectName: codexProjectName(for: file), provider: .codex))
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func codexProjectName(for file: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return file.deletingLastPathComponent().lastPathComponent
+        }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: 128 * 1024)
+        guard let text = String(data: data, encoding: .utf8) else {
+            return file.deletingLastPathComponent().lastPathComponent
+        }
+        for line in text.split(separator: "\n") {
+            guard let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  json["type"] as? String == "session_meta",
+                  let payload = json["payload"] as? [String: Any],
+                  let cwd = payload["cwd"] as? String
+            else { continue }
+            return SessionDiscovery.pathToProjectName(cwd)
+        }
+        return file.deletingLastPathComponent().lastPathComponent
     }
 }

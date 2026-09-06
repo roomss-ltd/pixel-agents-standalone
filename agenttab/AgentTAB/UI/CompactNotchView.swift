@@ -159,8 +159,13 @@ struct CompactNotchView: View {
                 .frame(width: 6, height: 6)
                 .shadow(color: color.opacity(0.7), radius: 1.8)
             Text("\(count)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(
+                    size: CountBadgeTypography.size(base: 13, count: count),
+                    weight: .semibold
+                ))
                 .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .foregroundStyle(color)
         .padding(.horizontal, 7)

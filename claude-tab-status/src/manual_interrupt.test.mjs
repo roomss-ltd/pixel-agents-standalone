@@ -12,11 +12,10 @@ test("ManualInterrupt payload is run scoped so stale widget clicks cannot clear 
   assert.match(manualInterruptBody, /payload_run_id\.is_empty\(\) \|\| payload_run_id == session\.run_id/);
 });
 
-test("ManualInterrupt marks the session done without dismissing the pane or renaming the tab", () => {
+test("ManualInterrupt marks the session done without dismissing the pane", () => {
   assert.match(manualInterruptBody, /session\.activity = Activity::Done/);
   assert.match(manualInterruptBody, /session\.last_event_ts = now/);
   assert.match(manualInterruptBody, /status_writer::write_status_file\(state\)/);
-  assert.doesNotMatch(manualInterruptBody, /rename_tab|update_tab_name/);
   assert.doesNotMatch(manualInterruptBody, /state\.sessions\.remove/);
   assert.doesNotMatch(manualInterruptBody, /dismissed_until\.insert/);
 });

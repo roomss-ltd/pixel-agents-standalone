@@ -134,12 +134,15 @@ final class ToastPanel: NSPanel {
         AgentLog.notify.info("toast shown taskId=\(toast.taskId, privacy: .public)")
     }
 
-    private func dismiss() {
+    func dismiss() {
         autoDismissTask?.cancel()
         autoDismissTask = nil
         removeEngagementHotkeyMonitor()
         disengage()
         orderOut(nil)
+        // A hidden NSHostingView continues driving SwiftUI TimelineViews.
+        // Release it with the toast so the animated border actually stops.
+        contentView = nil
         currentToast = nil
         currentOnTap = nil
     }

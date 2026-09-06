@@ -20,6 +20,8 @@
 // The rotating loader (`Loaders.swift:RotatingLoader`) cycles through
 // both axes on the `Theme.Animations.loaderRotationSeconds` interval.
 
+import AppKit
+import QuartzCore
 import SwiftUI
 
 // MARK: - Palette
@@ -264,7 +266,34 @@ func nextSnakeStep(current: Cell, previous: Cell?, blocked: Set<Cell> = []) -> C
 // covers that cell. Each visit contributes a wrap-aware Gaussian pulse
 // centred at `i/n`. The cell's brightness is the max across visits.
 
-private enum PixelMath {
+struct PixelCellStyle {
+    let opacity: Double
+    let shadowRadius: CGFloat
+    let showsGlow: Bool
+}
+
+enum PixelMath {
+    /// Visual parameters used by both the old per-cell view path and the
+    /// single-canvas renderer. Keeping this math pure makes it easy to verify
+    /// that the optimized renderer preserves the existing brightness curve.
+    static func cellStyle(
+        isActive: Bool,
+        rawBrightness: Double,
+        brightness: Double,
+        baseOpacity: Double,
+        cellSize: CGFloat,
+        glow: Double
+    ) -> PixelCellStyle {
+        let value = min(1.0, max(0.0, rawBrightness * brightness))
+        return PixelCellStyle(
+            opacity: isActive
+                ? (baseOpacity + (1.0 - baseOpacity) * value)
+                : baseOpacity,
+            shadowRadius: cellSize * 0.95 * glow * value,
+            showsGlow: isActive && value > 0.08
+        )
+    }
+
     static func cellBrightness(_ motion: PixelLoopMotion,
                                cx: Int, cy: Int, t01: Double) -> Double {
         switch motion {
@@ -365,7 +394,7 @@ private enum PixelMath {
 
 // MARK: - PixelLoopView
 
-struct PixelLoopView: View {
+struct PixelLoopView: NSViewRepresentable {
     var variant: PixelLoopVariant
     var palette: PixelLoopPalette = .blue
     /// Explicit color override for the lit-pixel fill. When non-nil it
@@ -383,198 +412,293 @@ struct PixelLoopView: View {
     /// Dim opacity for cells that are part of the active set but not lit
     /// at this moment, and for cells the motion never touches.
     var baseOpacity: Double = 0.12
+    var paletteCrossfadeDuration: Double = 0
 
     private var coreColor: Color { coreOverride ?? palette.core }
     private var glowColor: Color { glowOverride ?? palette.glow }
 
-    /// One sliding window of recent visits per snake. Three snakes walk
-    /// the same 3×3 grid independently; their brightness contributions
-    /// are max-blended so overlaps just read as a brighter cell.
-    @State private var snakes: [[SnakeStep]] = Array(repeating: [], count: 3)
+    func makeNSView(context: Context) -> PixelLoopLayerView {
+        PixelLoopLayerView()
+    }
 
-    /// Per-snake step intervals. All three differ so the heads drift in
-    /// and out of phase instead of marching in lockstep. The first is
-    /// the `solo-rotate` pace (1.4s ÷ 9 waypoints); the other two are
-    /// chosen with no integer ratio between them so collisions on the
-    /// 3×3 grid read as occasional, not patterned.
+    func updateNSView(_ view: PixelLoopLayerView, context: Context) {
+        view.configure(
+            variant: variant,
+            size: size,
+            coreColor: NSColor(coreColor),
+            glowColor: NSColor(glowColor),
+            running: running,
+            brightness: brightness,
+            glow: glow,
+            speed: speed,
+            baseOpacity: baseOpacity,
+            paletteCrossfadeDuration: paletteCrossfadeDuration
+        )
+    }
+}
+
+/// Persistent layers let the eight-FPS loader update only nine opacity and
+/// shadow values. A SwiftUI TimelineView invalidates the whole hosting graph on
+/// every frame, which is disproportionately expensive for an always-visible
+/// menu-bar app even though the artwork itself is tiny.
+final class PixelLoopLayerView: NSView {
     private static let snakeStepIntervals: [Double] = [0.155, 0.205, 0.175]
-
-    /// Per-snake starting cells. Three of the four corners so the heads
-    /// light up well-separated parts of the grid from frame 1.
     private static let snakeStartCells: [Cell] = [Cell(0, 0), Cell(2, 2), Cell(2, 0)]
-
-    /// Gaussian tail length for the snake trail. ~2× the fastest step
-    /// interval so the head's pulse softly overlaps the cell just
-    /// behind it.
     private static let snakeSigma: Double = 0.31
+    private static let snakeWindow = 12
 
-    /// How many recent steps to retain per snake; ~5σ is enough that
-    /// any older step's contribution is below 1% brightness.
-    private static let snakeWindow: Int = 12
+    private let cellLayers: [CALayer]
+    private var timer: Timer?
+    private var variant = PixelLoopVariant.chaosRotate
+    private var motion = PixelLoopVariant.chaosRotate.motion
+    private var activeCells = PixelMath.activeCells(PixelLoopVariant.chaosRotate.motion)
+    private var snakes: [[SnakeStep]] = Array(repeating: [], count: 3)
+    private var nextStepAt: [Double] = []
+    private var running = true
+    private var brightness = 1.0
+    private var glow = 1.0
+    private var speed = 1.0
+    private var baseOpacity = 0.12
+    private var coreColor: CGColor?
+    private var glowColor: CGColor?
+    private var hasConfiguration = false
+    private var preferredSize: CGFloat = 18
 
-    var body: some View {
-        let gap = max(1.0, size * 0.08)
-        let cellSize = max(1.0, (size - 2 * gap) / 3.0)
-        let motion = variant.motion
-        let active = PixelMath.activeCells(motion)
-        let period = variant.period
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: preferredSize, height: preferredSize)
+    }
 
-        Group {
-            if running {
-                TimelineView(.animation(
-                    minimumInterval: Theme.Animations.timelineMinimumInterval
-                )) { context in
-                    grid(
-                        at: context.date.timeIntervalSinceReferenceDate * speed,
-                        period: period,
-                        motion: motion,
-                        active: active,
-                        gap: gap,
-                        cellSize: cellSize
-                    )
-                }
-            } else {
-                grid(
-                    at: Date().timeIntervalSinceReferenceDate * speed,
-                    period: period,
-                    motion: motion,
-                    active: active,
-                    gap: gap,
-                    cellSize: cellSize
+    override init(frame frameRect: NSRect) {
+        cellLayers = (0..<9).map { _ in
+            let layer = CALayer()
+            layer.cornerRadius = 2
+            layer.cornerCurve = .continuous
+            layer.shadowOffset = .zero
+            layer.actions = [
+                "backgroundColor": NSNull(),
+                "bounds": NSNull(),
+                "position": NSNull(),
+                "opacity": NSNull(),
+                "shadowColor": NSNull(),
+                "shadowOpacity": NSNull(),
+                "shadowPath": NSNull(),
+                "shadowRadius": NSNull(),
+            ]
+            return layer
+        }
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        layer?.isGeometryFlipped = true
+        cellLayers.forEach { layer?.addSublayer($0) }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    deinit { timer?.invalidate() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateTimer()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        cellLayers.forEach { $0.contentsScale = scale }
+    }
+
+    override func layout() {
+        super.layout()
+        let edge = min(bounds.width, bounds.height)
+        let gap = max(1.0, edge * 0.08)
+        let cellSize = max(1.0, (edge - 2 * gap) / 3.0)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for y in 0..<3 {
+            for x in 0..<3 {
+                let cellLayer = cellLayers[y * 3 + x]
+                cellLayer.frame = CGRect(
+                    x: CGFloat(x) * (cellSize + gap),
+                    y: CGFloat(y) * (cellSize + gap),
+                    width: cellSize,
+                    height: cellSize
+                )
+                cellLayer.shadowPath = CGPath(
+                    roundedRect: cellLayer.bounds,
+                    cornerWidth: 2,
+                    cornerHeight: 2,
+                    transform: nil
                 )
             }
         }
-        .frame(width: size, height: size)
-        .task(id: running) { await runSnakes() }
+        CATransaction.commit()
+        refresh(at: Date().timeIntervalSinceReferenceDate * speed)
     }
 
-    private func grid(
-        at time: Double,
-        period: Double,
-        motion: PixelLoopMotion,
-        active: Set<Cell>,
-        gap: CGFloat,
-        cellSize: CGFloat
-    ) -> some View {
-        let raw = time / period
-        let t01 = raw - floor(raw)
-        return VStack(spacing: gap) {
-            ForEach(0..<3, id: \.self) { y in
-                HStack(spacing: gap) {
-                    ForEach(0..<3, id: \.self) { x in
-                        cell(x: x, y: y,
-                             isActive: active.contains(Cell(x, y)),
-                             t01: t01, tNow: time, motion: motion,
-                             cellSize: cellSize)
+    func configure(
+        variant: PixelLoopVariant,
+        size: CGFloat,
+        coreColor: NSColor,
+        glowColor: NSColor,
+        running: Bool,
+        brightness: Double,
+        glow: Double,
+        speed: Double,
+        baseOpacity: Double,
+        paletteCrossfadeDuration: Double
+    ) {
+        let variantChanged = self.variant != variant
+        let runningChanged = self.running != running
+        if preferredSize != size {
+            preferredSize = size
+            invalidateIntrinsicContentSize()
+        }
+        self.variant = variant
+        self.motion = variant.motion
+        self.activeCells = PixelMath.activeCells(motion)
+        self.running = running
+        self.brightness = brightness
+        self.glow = glow
+        self.speed = speed
+        self.baseOpacity = baseOpacity
+
+        let newCore = coreColor.usingColorSpace(.deviceRGB)?.cgColor ?? coreColor.cgColor
+        let newGlow = glowColor.usingColorSpace(.deviceRGB)?.cgColor ?? glowColor.cgColor
+        if self.coreColor != newCore || self.glowColor != newGlow {
+            setPalette(
+                core: newCore,
+                glow: newGlow,
+                duration: hasConfiguration && running ? paletteCrossfadeDuration : 0
+            )
+        }
+
+        if variantChanged || runningChanged || snakes[0].isEmpty {
+            resetSnakes(at: Date().timeIntervalSinceReferenceDate * speed)
+        }
+        hasConfiguration = true
+        updateTimer()
+        needsLayout = true
+        refresh(at: Date().timeIntervalSinceReferenceDate * speed)
+    }
+
+    private func setPalette(core: CGColor, glow: CGColor, duration: Double) {
+        let previousCore = cellLayers.first?.presentation()?.backgroundColor
+            ?? cellLayers.first?.backgroundColor
+        let previousGlow = cellLayers.first?.presentation()?.shadowColor
+            ?? cellLayers.first?.shadowColor
+        self.coreColor = core
+        self.glowColor = glow
+        for cellLayer in cellLayers {
+            cellLayer.backgroundColor = core
+            cellLayer.shadowColor = glow
+            guard duration > 0 else { continue }
+            let timing = CAMediaTimingFunction(name: .easeInEaseOut)
+            let fill = CABasicAnimation(keyPath: "backgroundColor")
+            fill.fromValue = previousCore
+            fill.toValue = core
+            fill.duration = duration
+            fill.timingFunction = timing
+            cellLayer.add(fill, forKey: "agenttab.palette.fill")
+            let shadow = CABasicAnimation(keyPath: "shadowColor")
+            shadow.fromValue = previousGlow
+            shadow.toValue = glow
+            shadow.duration = duration
+            shadow.timingFunction = timing
+            cellLayer.add(shadow, forKey: "agenttab.palette.glow")
+        }
+    }
+
+    private func updateTimer() {
+        guard running, window != nil else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
+        guard timer == nil else { return }
+        let interval = Theme.Animations.timelineMinimumInterval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let now = Date().timeIntervalSinceReferenceDate * self.speed
+            self.advanceSnakes(at: now)
+            self.refresh(at: now)
+        }
+        timer.tolerance = interval * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func resetSnakes(at now: Double) {
+        snakes = Self.snakeStartCells.map { [SnakeStep(cell: $0, arrivedAt: now)] }
+        nextStepAt = Self.snakeStepIntervals.map {
+            now + $0 / max(speed, 0.01)
+        }
+    }
+
+    private func advanceSnakes(at now: Double) {
+        guard case .chaos = motion else { return }
+        for i in snakes.indices where now >= nextStepAt[i] {
+            let history = snakes[i]
+            let current = history.last?.cell ?? Self.snakeStartCells[i]
+            let previous = history.count >= 2 ? history[history.count - 2].cell : nil
+            var blocked: Set<Cell> = []
+            for j in snakes.indices where j != i {
+                if let head = snakes[j].last?.cell { blocked.insert(head) }
+            }
+            let next = nextSnakeStep(current: current, previous: previous, blocked: blocked)
+            var updated = history
+            updated.append(SnakeStep(cell: next, arrivedAt: now))
+            if updated.count > Self.snakeWindow {
+                updated.removeFirst(updated.count - Self.snakeWindow)
+            }
+            snakes[i] = updated
+            nextStepAt[i] = now + Self.snakeStepIntervals[i] / max(speed, 0.01)
+        }
+    }
+
+    private func refresh(at time: Double) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let edge = min(bounds.width, bounds.height)
+        let gap = max(1.0, edge * 0.08)
+        let cellSize = max(1.0, (edge - 2 * gap) / 3.0)
+        let rawTime = time / variant.period
+        let t01 = rawTime - floor(rawTime)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for y in 0..<3 {
+            for x in 0..<3 {
+                let cell = Cell(x, y)
+                let isActive = activeCells.contains(cell)
+                let raw: Double
+                if case .chaos = motion {
+                    raw = snakes.reduce(0) { current, history in
+                        max(current, PixelMath.snakeBrightness(
+                            cx: x, cy: y, now: time,
+                            history: history,
+                            sigma: Self.snakeSigma
+                        ))
                     }
+                } else {
+                    raw = isActive
+                        ? PixelMath.cellBrightness(motion, cx: x, cy: y, t01: t01)
+                        : 0
                 }
+                let style = PixelMath.cellStyle(
+                    isActive: isActive,
+                    rawBrightness: raw,
+                    brightness: brightness,
+                    baseOpacity: baseOpacity,
+                    cellSize: cellSize,
+                    glow: glow
+                )
+                let cellLayer = cellLayers[y * 3 + x]
+                cellLayer.opacity = Float(style.opacity)
+                cellLayer.shadowRadius = style.shadowRadius
+                cellLayer.shadowOpacity = style.showsGlow ? 0.4 : 0
             }
         }
-        .frame(width: cellSize * 3 + gap * 2,
-               height: cellSize * 3 + gap * 2)
-    }
-
-    /// Drive every snake from one loop.
-    ///
-    /// Originally each snake had its own `.task(id:)` modifier, but
-    /// stacking N identical-id task modifiers turned out to be unreliable
-    /// for N ≥ 3 (visually only the first two would advance). This
-    /// version polls once per rendered frame and advances each snake
-    /// independently when its own per-snake interval has elapsed. Polling
-    /// faster than the UI can render only wakes the CPU without producing
-    /// a visible frame.
-    private func runSnakes() async {
-        let n = Self.snakeStepIntervals.count
-
-        guard running else {
-            let now = Date().timeIntervalSinceReferenceDate * speed
-            snakes = Self.snakeStartCells.map { [SnakeStep(cell: $0, arrivedAt: now)] }
-            return
-        }
-        guard variant == .chaosRotate else {
-            snakes = Array(repeating: [], count: n)
-            return
-        }
-
-        // Seed each snake at its start cell so all heads are lit from
-        // frame 1 and there are no empty histories for the head-collision
-        // check to trip over.
-        let seed = Date().timeIntervalSinceReferenceDate * speed
-        for i in 0..<n where snakes[i].isEmpty {
-            snakes[i] = [SnakeStep(cell: Self.snakeStartCells[i], arrivedAt: seed)]
-        }
-
-        // Per-snake "next eligible step time" in the same clock as the
-        // SnakeStep.arrivedAt values, so step timing stays consistent
-        // with the Gaussian trail's age calculation.
-        var nextStepAt: [Double] = (0..<n).map { i in
-            seed + Self.snakeStepIntervals[i] / max(speed, 0.01)
-        }
-
-        let baseTick = Theme.Animations.timelineMinimumInterval
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: UInt64(baseTick * 1_000_000_000))
-            let now = Date().timeIntervalSinceReferenceDate * speed
-            for i in 0..<n where now >= nextStepAt[i] {
-                let history  = snakes[i]
-                let current  = history.last?.cell ?? Self.snakeStartCells[i]
-                let previous = history.count >= 2 ? history[history.count - 2].cell : nil
-
-                // Heads must not collide; trails (bodies) may overlap
-                // freely. Block only the other snakes' current head cells.
-                var blocked: Set<Cell> = []
-                for j in 0..<n where j != i {
-                    if let head = snakes[j].last?.cell { blocked.insert(head) }
-                }
-
-                let next = nextSnakeStep(current: current, previous: previous, blocked: blocked)
-                var updated = history
-                updated.append(SnakeStep(cell: next, arrivedAt: now))
-                if updated.count > Self.snakeWindow {
-                    updated.removeFirst(updated.count - Self.snakeWindow)
-                }
-                snakes[i] = updated
-                nextStepAt[i] = now + Self.snakeStepIntervals[i] / max(speed, 0.01)
-            }
-        }
-    }
-
-    private func rawBrightness(x: Int, y: Int, isActive: Bool,
-                               t01: Double, tNow: Double,
-                               motion: PixelLoopMotion) -> Double {
-        if case .chaos = motion {
-            // Max-blend across all snakes so overlapping heads just read
-            // as one brighter cell rather than fighting for the pixel.
-            var maxB = 0.0
-            for history in snakes {
-                let b = PixelMath.snakeBrightness(cx: x, cy: y, now: tNow,
-                                                  history: history,
-                                                  sigma: Self.snakeSigma)
-                if b > maxB { maxB = b }
-            }
-            return maxB
-        }
-        return isActive
-            ? PixelMath.cellBrightness(motion, cx: x, cy: y, t01: t01)
-            : 0
-    }
-
-    @ViewBuilder
-    private func cell(x: Int, y: Int, isActive: Bool, t01: Double, tNow: Double,
-                      motion: PixelLoopMotion, cellSize: CGFloat) -> some View {
-        let raw = rawBrightness(x: x, y: y, isActive: isActive,
-                                t01: t01, tNow: tNow, motion: motion)
-        let v = min(1.0, max(0.0, raw * brightness))
-        let opacity = isActive
-            ? (baseOpacity + (1.0 - baseOpacity) * v)
-            : baseOpacity
-        let blurPx = cellSize * 0.95 * glow * v
-
-        RoundedRectangle(cornerRadius: 2, style: .continuous)
-            .fill(coreColor)
-            .opacity(opacity)
-            .shadow(color: (isActive && v > 0.08) ? glowColor.opacity(0.4) : .clear,
-                    radius: blurPx)
+        CATransaction.commit()
     }
 }
 

@@ -58,6 +58,108 @@ final class TokenTrackerHistoryTests: XCTestCase {
         try handle.close()
     }
 
+    private func writeCodexUsageLine(
+        root: URL? = nil,
+        project: String,
+        session: String,
+        daysAgo: Int,
+        total: Int
+    ) throws {
+        let projectDir = (root ?? tempRoot).appendingPathComponent(project)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let file = projectDir.appendingPathComponent("\(session).jsonl")
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let day = Calendar.current.date(byAdding: .day, value: -daysAgo, to: todayStart)!
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let line: [String: Any] = [
+            "type": "token_usage_record",
+            "timestamp": iso.string(from: day),
+            "payload": [
+                "session_id": session,
+                "usage": [
+                    "input_tokens": total - 25,
+                    "cached_input_tokens": total - 50,
+                    "output_tokens": 25,
+                    "reasoning_output_tokens": 10,
+                    "total_tokens": total,
+                ]
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: line)
+        try append(data: data, to: file)
+    }
+
+    /// Codex transcripts written before `token_usage_record` was added store
+    /// the same per-response total in `event_msg.payload.info.last_token_usage`.
+    private func writeLegacyCodexUsageLine(
+        root: URL? = nil,
+        project: String,
+        session: String,
+        daysAgo: Int,
+        total: Int
+    ) throws {
+        let projectDir = (root ?? tempRoot).appendingPathComponent(project)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let file = projectDir.appendingPathComponent("\(session).jsonl")
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let day = Calendar.current.date(byAdding: .day, value: -daysAgo, to: todayStart)!
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let line: [String: Any] = [
+            "type": "event_msg",
+            "timestamp": iso.string(from: day),
+            "payload": [
+                "type": "token_count",
+                "info": ["last_token_usage": ["total_tokens": total]],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: line)
+        try append(data: data, to: file)
+    }
+
+    private func append(data: Data, to file: URL) throws {
+        if !FileManager.default.fileExists(atPath: file.path) {
+            FileManager.default.createFile(atPath: file.path, contents: nil)
+        }
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        handle.write(data)
+        handle.write(Data("\n".utf8))
+        try handle.close()
+    }
+
+    private func writeDevinDatabase(_ database: URL, input: Int, output: Int, cached: Int) throws {
+        let created = Int(Date().timeIntervalSince1970)
+        let metadata = #"{"response_dimensions":[{"uid":"input_tokens","kind":{"CumulativeMetric":{"value":INPUT}}},{"uid":"output_tokens","kind":{"CumulativeMetric":{"value":OUTPUT}}},{"uid":"cached_input_tokens","kind":{"CumulativeMetric":{"value":CACHED}}}]}"#
+            .replacingOccurrences(of: "INPUT", with: "\(input)")
+            .replacingOccurrences(of: "OUTPUT", with: "\(output)")
+            .replacingOccurrences(of: "CACHED", with: "\(cached)")
+        let sql = """
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY, working_directory TEXT, created_at INTEGER,
+          last_activity_at INTEGER, title TEXT, hidden INTEGER, metadata TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tool_call_state (
+          session_id TEXT, tool_call_id TEXT, tool_call_json TEXT, tool_call_update_json TEXT
+        );
+        INSERT OR REPLACE INTO sessions VALUES (
+          'devin-test', '/tmp/devin-repo', \(created), \(created), 'Fix dashboard', 0, '\(metadata)'
+        );
+        DELETE FROM tool_call_state;
+        INSERT INTO tool_call_state VALUES (
+          'devin-test', 'run_subagent:1',
+          '{"_meta":{"cognition.ai/inferenceToolName":"run_subagent"}}', NULL
+        );
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [database.path, sql]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
     /// Wait for the detached scan in `refreshHistory()` to publish.
     /// Subscribes to the window publisher and fulfills on the first
     /// non-empty emission — deterministic and fast on the happy path,
@@ -102,6 +204,78 @@ final class TokenTrackerHistoryTests: XCTestCase {
         XCTAssertEqual(win.reduce(0) { $0 + $1.tokens }, 8_000)
         // 400-days-ago line excluded.
         XCTAssertFalse(win.contains { $0.tokens == 9_999 })
+    }
+
+    func testHistoryLoadingStateCompletesWithMeasuredProgress() async throws {
+        try writeAssistantLine(project: "-Users-x-repoA", session: "s1",
+                               daysAgo: 0, input: 1_000)
+        let tracker = TokenTracker(projectsDir: tempRoot)
+
+        XCTAssertFalse(tracker.isHistoryLoading)
+        XCTAssertEqual(tracker.historyScanProgress, 0)
+
+        tracker.refreshHistory()
+        XCTAssertTrue(tracker.isHistoryLoading)
+        await waitForScan(tracker)
+
+        XCTAssertFalse(tracker.isHistoryLoading)
+        XCTAssertEqual(tracker.historyScanProgress, 1)
+    }
+
+    func testCompletedHistoryIsRestoredImmediatelyOnRelaunch() async throws {
+        let historyCache = tempRoot.appendingPathComponent("history.json")
+        try writeAssistantLine(project: "-Users-x-repoA", session: "s1",
+                               daysAgo: 40, input: 2_500)
+
+        let first = TokenTracker(projectsDir: tempRoot, historyCacheURL: historyCache)
+        first.refreshHistory()
+        await waitForScan(first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyCache.path))
+
+        let restored = TokenTracker(projectsDir: tempRoot, historyCacheURL: historyCache)
+        XCTAssertEqual(restored.days(for: .window).count, 364)
+        XCTAssertEqual(restored.days(for: .window).reduce(0) { $0 + $1.tokens }, 2_500)
+        XCTAssertFalse(restored.isHistoryLoading)
+    }
+
+    func testLegacyCodexHistoryFillsOlderDaysWithoutDoubleCountingModernRecords() async throws {
+        let claudeRoot = tempRoot.appendingPathComponent("claude")
+        let codexRoot = tempRoot.appendingPathComponent("codex")
+        try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
+
+        // The user's April-June transcripts use this legacy event format.
+        try writeLegacyCodexUsageLine(
+            root: codexRoot,
+            project: "2026/05/08",
+            session: "legacy",
+            daysAgo: 120,
+            total: 1_500
+        )
+
+        // Current Codex writes both representations for one response. When a
+        // file has additive records, the legacy mirror must be ignored.
+        try writeLegacyCodexUsageLine(
+            root: codexRoot,
+            project: "2026/09/03",
+            session: "modern",
+            daysAgo: 2,
+            total: 700
+        )
+        try writeCodexUsageLine(
+            root: codexRoot,
+            project: "2026/09/03",
+            session: "modern",
+            daysAgo: 2,
+            total: 700
+        )
+
+        let tracker = TokenTracker(projectsDir: claudeRoot, codexSessionsDir: codexRoot)
+        tracker.refreshHistory()
+        await waitForScan(tracker)
+
+        let window = tracker.days(for: .window)
+        XCTAssertEqual(window.first(where: { Calendar.current.isDate($0.day, inSameDayAs: Calendar.current.date(byAdding: .day, value: -120, to: Date())!) })?.tokens, 1_500)
+        XCTAssertEqual(window.first(where: { Calendar.current.isDate($0.day, inSameDayAs: Calendar.current.date(byAdding: .day, value: -2, to: Date())!) })?.tokens, 700)
     }
 
     func testProjectGroupsByRoot() async throws {
@@ -175,5 +349,106 @@ final class TokenTrackerHistoryTests: XCTestCase {
                                daysAgo: 0, output: 250)
         restored.refresh()
         XCTAssertEqual(restored.todayTokens, 1_250)
+    }
+
+    func testClaudeSubagentTranscriptsContributeToParentProjectSpend() async throws {
+        let project = "-Users-x-Desktop-repoA"
+        try writeAssistantLine(
+            project: project,
+            session: "parent",
+            daysAgo: 0,
+            input: 1_000
+        )
+        try writeAssistantLine(
+            project: project,
+            session: "agent-child",
+            daysAgo: 0,
+            output: 250
+        )
+
+        let projectDir = tempRoot.appendingPathComponent(project)
+        let childDir = projectDir.appendingPathComponent("parent/subagents")
+        try FileManager.default.createDirectory(at: childDir, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(
+            at: projectDir.appendingPathComponent("agent-child.jsonl"),
+            to: childDir.appendingPathComponent("agent-child.jsonl")
+        )
+
+        let tracker = TokenTracker(projectsDir: tempRoot)
+        tracker.refresh()
+        XCTAssertEqual(tracker.todayTokens, 1_250, "parent and Claude subagent spend should both count")
+
+        tracker.refreshHistory()
+        await waitForScan(tracker)
+        XCTAssertEqual(tracker.days(for: .week).last?.tokens, 1_250)
+        XCTAssertEqual(tracker.projects(for: .week).first?.name, "repoA")
+    }
+
+    func testCodexUsageRecordsCountTotalTokensWithoutDoubleCountingCachedOrReasoning() async throws {
+        let claudeRoot = tempRoot.appendingPathComponent("claude")
+        let codexRoot = tempRoot.appendingPathComponent("codex")
+        let codexDay = codexRoot.appendingPathComponent("2026/09/05")
+        try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
+        try writeCodexUsageLine(
+            root: codexDay,
+            project: "rollouts",
+            session: "codex-parent",
+            daysAgo: 0,
+            total: 1_250
+        )
+        try writeCodexUsageLine(
+            root: codexDay,
+            project: "-Users-x-Desktop-codex-repo",
+            session: "codex-subagent",
+            daysAgo: 0,
+            total: 400
+        )
+
+        let tracker = TokenTracker(projectsDir: claudeRoot, codexSessionsDir: codexRoot)
+        tracker.refresh()
+        XCTAssertEqual(tracker.todayTokens, 1_650, "parent and subagent spend should both count")
+
+        tracker.refreshHistory()
+        await waitForScan(tracker)
+        XCTAssertEqual(tracker.days(for: .week).last?.tokens, 1_650)
+        XCTAssertEqual(tracker.days(for: .week).last?.agentCount, 2)
+    }
+
+    func testDevinCumulativeUsageAddsOnlyNewSpend() async throws {
+        let database = tempRoot.appendingPathComponent("devin.db")
+        let cache = tempRoot.appendingPathComponent("today.json")
+        let ledger = tempRoot.appendingPathComponent("ledger.json")
+        try writeDevinDatabase(database, input: 100, output: 20, cached: 40)
+
+        let tracker = TokenTracker(
+            projectsDir: tempRoot,
+            cacheURL: cache,
+            devinDatabaseURL: database,
+            ledgerURL: ledger
+        )
+        tracker.refresh()
+        XCTAssertEqual(tracker.todayTokens, 160)
+
+        try writeDevinDatabase(database, input: 130, output: 25, cached: 55)
+        tracker.refresh()
+        XCTAssertEqual(tracker.todayTokens, 210)
+
+        let snapshot = try XCTUnwrap(DevinUsageReader.read(databaseURL: database).first)
+        XCTAssertEqual(snapshot.activeSubagentCount, 1)
+        XCTAssertEqual(snapshot.title, "Fix dashboard")
+
+        let restored = TokenTracker(
+            projectsDir: tempRoot,
+            cacheURL: cache,
+            devinDatabaseURL: database,
+            ledgerURL: ledger
+        )
+        restored.refresh()
+        XCTAssertEqual(restored.todayTokens, 210)
+        restored.refreshHistory()
+        await waitForScan(restored)
+        XCTAssertEqual(restored.days(for: .week).last?.tokens, 210)
+        XCTAssertEqual(restored.days(for: .week).last?.agentCount, 1)
+        XCTAssertEqual(restored.projects(for: .week).first?.name, "devin-repo")
     }
 }
