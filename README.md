@@ -76,6 +76,7 @@ The patched Zellij fork lives at `zellij-patched/` and is pinned by this repo as
 - Patch commit: `8e24963f Preserve scrollback and user-owned tab names`
 - Tab titles are user-owned: `claude-tab-status` never renames tabs. Agent activity icons remain in the Hammerspoon overlay and status JSON only.
 - Codex runs with `--no-alt-screen` inside Zellij, preserving scrollback; merge `dotfiles/codex/config.toml.snippet` into `~/.codex/config.toml` for the same behavior outside the wrapper.
+- `scroll_mode_sync false` in `dotfiles/zellij/config.kdl` stops mouse-wheel scrolling from auto-entering Scroll mode (Zellij >= 0.45 default), so trackpad scrolls no longer hijack the keyboard. Scroll mode remains available via `Ctrl+S`.
 
 ### Existing Zellij users
 

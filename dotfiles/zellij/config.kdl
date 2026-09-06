@@ -351,6 +351,11 @@ web_client {
 // 
 // pane_frames false
 
+// Do not auto-enter Scroll mode on mouse-wheel scroll (Zellij >= 0.45 defaults this on).
+// Codex/Claude run on the primary screen, so every trackpad scroll would hijack the
+// keyboard until Enter/Esc. Scroll mode is still reachable via Ctrl+S.
+scroll_mode_sync false
+
 // Keep the full side rails so pane focus and navigation mode stay visible.
 pane_frame_style "full"
 
